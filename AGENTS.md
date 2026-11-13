@@ -1,6 +1,6 @@
 # 仓库贡献指南
 
-Git 提交信息一律使用英文。
+Git 提交信息一律使用中文，说明做了什么、为什么这么做，不写任务编号与内部决议号。这是本 fork 的自有约定，与上游仓库的写法不同；将来同步上游若在此处产生冲突，保留我们的中文规则，不要改回英文。
 
 ## 项目是什么
 
@@ -79,3 +79,43 @@ Cargo workspace：根包是桌面应用 `shellrs`，单个二进制 crate，带 
 ## 测试约定
 
 UI 测试（`tests/ui/`）在无头窗口里渲染真实的 `Workspace`，通过 `gpui_kit::test::TestWindowExt`（`click`、`double_click`、`input`、`press`、`find`、`within`）驱动。`Workspace::new` 要求外部传入 `Entity<HostStore>`：生产环境由 `main.rs` 从数据库加载，测试用 `open_workspace_with_store` 注入 `HostStore::seed()`（或一个临时文件上的真库）。**不要用右键菜单驱动测试**：菜单项的 ElementId 只是序号，而且 `PopupMenu` 实体会让测试以「leaked handles」失败；直接 `window.dispatch_action` 派发菜单会派发的那个动作。测试模块里要显式导入类型，`use gpui_kit::*` 会遮蔽 `#[test]`。被测试查询的元素带稳定的领域 id，自定义 `div` 还要加 `.test_support()`：`("host-row", id)`、`("host-os", id)` 与开始页的 `("recent-host-os", id)`（`aria_label` 是系统名，未探测时是「未探测到系统」）、`("group-row", id)`、`("terminal", id)`、`("explorer", id)`、`("local-pane"|"remote-pane", id)`、`("close-terminal", id)`、`("close-explorer", id)`、`recent-hosts`、`("recent-host", id)`、`recent-new-host`、`host-search`、`new-host`、`new-group`、`theme-toggle`、`status-connection`、`commit`、`ok`（确认对话框）、`form-error`、`host-name` / `host-address` / `host-port` / `-user` / `-auth` / `-key-path` / `-password` / `-passphrase`、`group-name`、`remote-path`。被遮蔽的输入框在测试里读不到值（`ElementSnapshot::value()` 返回 `None`），所以密码相关的断言一律查注入的 `InMemorySecretStore`，不查界面。动作派发和 `set_active` 都是延迟执行的：先退出 `update_window`，调用 `cx.run_until_parked()`，再 `render_frame` 后断言。种子主机 id 按插入顺序（`web-01`=1 … `dev-box`=6），种子分组同理（`生产`=1、`测试`=2、`开发`=3）；`web-01` 与 `staging-api` 初始为已连接并已打开终端标签。
+
+## 与上游的关系与同步
+
+本仓库是 [since2006/shell-rs](https://github.com/since2006/shell-rs) 的 fork，自己的地址是 [yunerduo/shell-rs](https://github.com/yunerduo/shell-rs)。上游是他人项目，我们只有自己 fork 的写权限。
+
+远端约定：
+
+- `origin` 指向自己的 fork，`upstream` 指向原作者仓库。
+- 只从 `upstream` 拉取，只往 `origin` 推送，**任何情况下都不向 `upstream` 推送**。
+- `main` 是上游镜像，不承载自有改动；同步 `main` 只用 fast-forward，不使用 merge commit 或 rebase 改写它。
+- 自有开发在 `feat/*` 分支上进行；每次同步完上游，把当前功能分支 rebase 到新的 `main` 上。
+
+同步上游：
+
+```bash
+git fetch upstream
+git switch main
+git merge --ff-only upstream/main
+git push origin main          # 让自己的 fork 的 main 也保持镜像；可选
+git switch feat/xshell-import
+git rebase main
+```
+
+`merge --ff-only` 失败说明 `main` 上出现了本地提交，这是不该发生的状态：停下检查，不要用 merge commit 掩盖。
+
+rebase 出问题时：
+
+```bash
+git rebase --abort            # 放弃这次 rebase，分支回到 rebase 前的提交
+git reflog                    # 已结束但结果不对时，找到 rebase 前的旧 tip
+git reset --hard <旧 tip>     # 只回退本地功能分支；不要 force push 远端
+```
+
+提交约定：
+
+- 按主题拆分提交；一个完整文件只放进一笔提交，不要把一个文件劈成两笔。
+- 提交信息说明做了什么、为什么这么做，不写任务编号或内部决议号。
+- 提交前排除构建产物、临时日志、诊断文件（qa-report 之类），以及任何密钥或明文密码；先看 `git status` 和 `git diff --cached` 自查。
+- 不 amend、不 force、不改 git 配置。
+- 推送只推功能分支：`git push -u origin <branch>`。
