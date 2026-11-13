@@ -42,6 +42,9 @@ gpui_kit::actions!(
         ImportSshConfig,
         /// Open the import dialog for the hosts `~/.ssh/known_hosts` names.
         ImportKnownHosts,
+        /// Open the import dialog for Xshell's sessions: a `.xts` export,
+        /// a `.xsh` file, or the `Sessions` folder.
+        ImportXshell,
         /// Open a new local login-shell terminal.
         NewLocalTerminal,
         /// Start 命令广播, which turns terminal tab marks into checkboxes,

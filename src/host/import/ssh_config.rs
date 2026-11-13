@@ -117,13 +117,9 @@ impl SshConfig {
             let identity = resolved
                 .identity
                 .and_then(|identity| identity_path(&identity, home, local_user, &address, &user));
-            hosts.push(ImportCandidate {
-                name,
-                address,
-                port,
-                user,
-                identity,
-            });
+            let mut candidate = ImportCandidate::ssh(name, address, port, user);
+            candidate.identity = identity;
+            hosts.push(candidate);
         }
         hosts
     }

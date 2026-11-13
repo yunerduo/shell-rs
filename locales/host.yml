@@ -535,6 +535,9 @@ host.menu.import_ssh_config:
 host.menu.import_known_hosts:
   zh-CN: 从 ~/.ssh/known_hosts 导入…
   en: Import from ~/.ssh/known_hosts…
+host.menu.import_xshell:
+  zh-CN: 从 Xshell 导入…
+  en: Import from Xshell…
 host.menu.connect_group:
   zh-CN: 连接组内主机
   en: Connect all in group
@@ -826,6 +829,9 @@ host.import.title.ssh_config:
 host.import.title.known_hosts:
   zh-CN: 从 ~/.ssh/known_hosts 导入
   en: Import from ~/.ssh/known_hosts
+host.import.title.xshell:
+  zh-CN: 从 Xshell 导入
+  en: Import from Xshell
 host.import.note.ssh_config:
   zh-CN: 列出 Host 行里写明名称的主机，通配符条目里的设置会带上。ProxyJump 和 ProxyCommand 不导入，主机按直接连接导入；Match 块不读。
   en: Lists the hosts named on Host lines, with the settings of the wildcard entries that match them. ProxyJump and ProxyCommand aren’t imported, so the hosts connect directly; Match blocks are skipped.
@@ -837,18 +843,62 @@ host.import.note.hashed.one:
 host.import.note.hashed.other:
   zh-CN: 另有 %{count} 条经过哈希的记录，读不出地址。
   en: "%{count} hashed entries can’t be read."
+host.import.note.xshell:
+  zh-CN: 列出 Xshell 的会话，按它自己的文件夹还原分组。导入地址、端口、用户名、私钥和描述；填入主密码后还会解开已保存的密码一并导入。私钥口令、登录脚本、远程命令、代理、端口转发、字符集和终端类型不导入。
+  en: "Lists Xshell's sessions and keeps their folders as groups. The address, port, username, private key and description are imported, and with the master password the saved passwords too; key passphrases, login scripts, remote commands, proxies, port forwarding, character sets and terminal types are not."
+host.import.master_label:
+  zh-CN: 主密码
+  en: Master password
+host.import.master_placeholder:
+  zh-CN: 可选：Xshell 主密码，用于解开已保存的密码
+  en: "Optional: Xshell master password, to open saved passwords"
+host.import.master_hint:
+  zh-CN: 只在内存中使用，不会保存。
+  en: Used in memory only; never saved.
+host.import.note.needs_password.one:
+  en: "%{count} host had a password saved in Xshell; enter the master password to import it, or it is asked for on the next connection."
+host.import.note.needs_password.other:
+  zh-CN: 有 %{count} 台主机的密码保存在 Xshell 里；填入主密码可一并导入，否则首次连接时要求输入。
+  en: "%{count} hosts had passwords saved in Xshell; enter the master password to import them, or each is asked for on the next connection."
+host.import.note.missing_key.one:
+  en: "%{count} host names a private key that isn’t in Xshell’s UserKeys folder; choose it again after importing."
+host.import.note.missing_key.other:
+  zh-CN: 有 %{count} 台主机引用的私钥在 Xshell 的 UserKeys 里找不到，导入后需要重新指定。
+  en: "%{count} hosts name private keys that aren’t in Xshell’s UserKeys folder; choose them again after importing."
+host.import.note.missing_key_detail:
+  zh-CN: 私钥「%{name}」没找到
+  en: "The key “%{name}” wasn’t found"
+host.import.note.partial.one:
+  en: "%{count} host has settings with no place here; its status says what was left out."
+host.import.note.partial.other:
+  zh-CN: 有 %{count} 台主机带有没能导入的设置，状态列写明了哪些。
+  en: "%{count} hosts have settings with no place here; their status says what was left out."
+host.import.note.skipped.one:
+  en: "%{count} session couldn’t be imported; point at this note to see why."
+host.import.note.skipped.other:
+  zh-CN: 有 %{count} 个会话没能导入，鼠标停在说明上可看原因。
+  en: "%{count} sessions couldn’t be imported; point at this note to see why."
 host.import.source:
   zh-CN: 来源：%{path}
   en: "Source: %{path}"
 host.import.choose_file:
   zh-CN: 选择文件…
   en: Choose file…
+host.import.choose_folder:
+  zh-CN: 选择文件夹…
+  en: Choose folder…
 host.import.choose_prompt.ssh_config:
   zh-CN: 选择 OpenSSH 配置文件
   en: Choose an OpenSSH config file
 host.import.choose_prompt.known_hosts:
   zh-CN: 选择 known_hosts 文件
   en: Choose a known_hosts file
+host.import.choose_prompt.xshell:
+  zh-CN: 选择 Xshell 的 .xts 导出或 .xsh 会话
+  en: Choose an Xshell .xts export or a .xsh session
+host.import.choose_prompt.xshell_folder:
+  zh-CN: 选择 Sessions 文件夹或解压后的目录
+  en: Choose the Sessions folder or an extracted folder
 host.import.count.found.one:
   en: "%{count} host"
 host.import.count.found.other:
@@ -918,6 +968,9 @@ host.import.empty.ssh_config:
 host.import.empty.known_hosts:
   zh-CN: 这个文件里没有读得出的主机
   en: This file has no readable hosts
+host.import.empty.xshell:
+  zh-CN: 这里没有可导入的 Xshell 会话
+  en: There are no Xshell sessions to import here
 host.import.commit.one:
   en: Import %{count} host
 host.import.commit.other:
@@ -937,8 +990,60 @@ host.import.done.one:
 host.import.done.other:
   zh-CN: 已导入 %{count} 台主机
   en: Imported %{count} hosts
+host.import.status.needs_password:
+  zh-CN: 需重新输入密码
+  en: Password needed
+host.import.status.password_ready:
+  zh-CN: 密码可解密
+  en: Password decrypts
+host.import.status.password_ready_detail:
+  zh-CN: 已用主密码解开，导入后写入系统钥匙串。
+  en: Opened with the master password; the keychain keeps it after the import.
+host.import.status.missing_key:
+  zh-CN: 私钥缺失
+  en: Key missing
+host.import.status.partial:
+  zh-CN: 部分设置未导入
+  en: Settings skipped
+host.import.discarded.passphrase:
+  zh-CN: 私钥口令：首次使用这把私钥时会询问
+  en: "The key passphrase: it is asked for the first time the key is used"
+host.import.discarded.login_script:
+  zh-CN: 登录脚本
+  en: The login script
+host.import.discarded.remote_command:
+  zh-CN: 远程命令
+  en: The remote command
+host.import.discarded.port_forwarding:
+  zh-CN: 端口转发
+  en: Port forwarding
+host.import.discarded.proxy:
+  zh-CN: 代理
+  en: The proxy
+host.import.discarded.settings:
+  zh-CN: 字符集、终端类型或初始目录
+  en: The character set, terminal type or initial directory
+host.import.skip.unsupported_protocol:
+  zh-CN: 不支持 %{protocol} 协议
+  en: "%{protocol} sessions aren’t supported"
+host.import.skip.missing_address:
+  zh-CN: 没有地址
+  en: It has no address
+host.import.skip.unreadable:
+  zh-CN: 读不出来：%{error}
+  en: "It can’t be read: %{error}"
 host.import.new_credentials.one:
   en: Added %{count} key credential.
 host.import.new_credentials.other:
   zh-CN: 新建了 %{count} 个密钥凭据。
   en: Added %{count} key credentials.
+host.import.passwords_saved.one:
+  en: Saved %{count} password from Xshell.
+host.import.passwords_saved.other:
+  zh-CN: 有 %{count} 个密码已解开并写入系统钥匙串。
+  en: Saved %{count} passwords from Xshell.
+host.import.passwords_asked.one:
+  en: "%{count} host asks for its password on the first connection."
+host.import.passwords_asked.other:
+  zh-CN: 有 %{count} 台主机的密码将在首次连接时输入。
+  en: "%{count} hosts ask for their password on the first connection."

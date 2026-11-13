@@ -8,8 +8,8 @@ use gpui_kit::component::{WindowExt as _, notification::Notification};
 use gpui_kit::*;
 
 use crate::analytics::Counter;
-use crate::app::{ImportKnownHosts, ImportSshConfig};
-use crate::host::{ImportOutcome, ImportSource, open_import_dialog};
+use crate::app::{ImportKnownHosts, ImportSshConfig, ImportXshell};
+use crate::host::{ImportOutcome, ImportSource, join_sentences, open_import_dialog};
 use crate::i18n::tn;
 
 use super::workspace_view::Workspace;
@@ -31,6 +31,15 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.open_import(ImportSource::KnownHosts, window, cx);
+    }
+
+    pub(super) fn on_import_xshell(
+        &mut self,
+        _: &ImportXshell,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_import(ImportSource::Xshell, window, cx);
     }
 
     /// Where 导入 reads from: tests point it at a temporary directory.
@@ -68,16 +77,25 @@ impl Workspace {
         self.count(match outcome.source {
             ImportSource::SshConfig => Counter::ImportSshConfig,
             ImportSource::KnownHosts => Counter::ImportKnownHosts,
+            ImportSource::Xshell => Counter::ImportXshell,
         });
         if outcome.failed {
             return;
         }
         let title = tn!("host.import.done", outcome.hosts);
-        let notification = match outcome.credentials {
-            0 => Notification::success(title),
-            credentials => {
-                Notification::success(tn!("host.import.new_credentials", credentials)).title(title)
-            }
+        let mut sentences = Vec::new();
+        if outcome.credentials > 0 {
+            sentences.push(tn!("host.import.new_credentials", outcome.credentials));
+        }
+        if outcome.passwords > 0 {
+            sentences.push(tn!("host.import.passwords_saved", outcome.passwords));
+        }
+        if outcome.passwords_asked > 0 {
+            sentences.push(tn!("host.import.passwords_asked", outcome.passwords_asked));
+        }
+        let notification = match join_sentences(sentences) {
+            Some(body) => Notification::success(body).title(title),
+            None => Notification::success(title),
         };
         window.push_notification(notification, cx);
     }

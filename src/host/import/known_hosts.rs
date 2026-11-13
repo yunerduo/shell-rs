@@ -32,13 +32,12 @@ pub fn parse(text: &str) -> ImportScan {
             continue;
         };
         if seen.insert((address.to_lowercase(), port)) {
-            scan.candidates.push(ImportCandidate {
-                name: address.clone(),
+            scan.candidates.push(ImportCandidate::ssh(
+                address.clone(),
                 address,
                 port,
-                user: DEFAULT_USER.to_string(),
-                identity: None,
-            });
+                DEFAULT_USER.to_string(),
+            ));
         }
     }
     scan

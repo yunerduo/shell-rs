@@ -66,6 +66,11 @@ async-channel = "2"
 async-io = "2"
 base64 = "0.22"
 flate2 = "1"
+# Xshell exports `.xts` as a zip; deflate through flate2 keeps the default
+# Rust backend. The Windows portable package uses the same reader.
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
+# Xshell zip entry names are GBK when the UTF-8 flag is absent.
+encoding_rs = "0.8"
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
 # Canonical local paths without the `\\?\` prefix std adds on Windows.
@@ -174,9 +179,6 @@ windows-sys = { version = "0.61", features = [
 ] }
 # The window's handle, to restore it from maximized: GPUI only maximizes.
 raw-window-handle = "0.6"
-# The Windows portable package updates itself from a zip. Deflate through
-# flate2, which keeps its default Rust backend: our own `flate2` asks for it.
-zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 
 # The icon in the Windows executables (build.rs).
 [target.'cfg(windows)'.build-dependencies]

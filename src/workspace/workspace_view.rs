@@ -3055,6 +3055,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_new_group))
             .on_action(cx.listener(Self::on_import_ssh_config))
             .on_action(cx.listener(Self::on_import_known_hosts))
+            .on_action(cx.listener(Self::on_import_xshell))
             .on_action(cx.listener(Self::on_expand_all_groups))
             .on_action(cx.listener(Self::on_collapse_all_groups))
             .on_action(cx.listener(Self::on_new_child_group))

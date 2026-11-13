@@ -23,8 +23,8 @@ use crate::app::{
     CatalogIcon, CollapseAllGroups, CollapseSelectedGroup, ConnectGroup, ConnectHost,
     ConnectSelected, CopyHostAddress, CopyHostId, DeleteGroup, DeleteHost, DuplicateHost, EditHost,
     ExpandAllGroups, ExpandSelectedGroup, HOST_PANEL_CONTEXT, HOST_TREE_CONTEXT, ImportKnownHosts,
-    ImportSshConfig, MoveHostNode, NewChildGroup, NewGroup, NewHost, NewHostInGroup, OpenExplorer,
-    RenameGroup, SelectNextHostRow, SelectPreviousHostRow, ToggleHostDetails,
+    ImportSshConfig, ImportXshell, MoveHostNode, NewChildGroup, NewGroup, NewHost, NewHostInGroup,
+    OpenExplorer, RenameGroup, SelectNextHostRow, SelectPreviousHostRow, ToggleHostDetails,
 };
 
 use crate::i18n::{UiLocale, t, tn};
@@ -1266,6 +1266,11 @@ pub fn import_menu_items(menu: PopupMenu) -> PopupMenu {
         t!("host.menu.import_known_hosts"),
         Icon::new(CatalogIcon::Import),
         Box::new(ImportKnownHosts),
+    )
+    .menu_with_icon(
+        t!("host.menu.import_xshell"),
+        Icon::new(CatalogIcon::Import),
+        Box::new(ImportXshell),
     )
 }
 

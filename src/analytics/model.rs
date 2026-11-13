@@ -112,13 +112,16 @@ pub enum Counter {
     ImportSshConfig,
     /// Hosts imported from `~/.ssh/known_hosts`, once per import.
     ImportKnownHosts,
+    /// Hosts imported from Xshell's `.xts` export or `Sessions` folder,
+    /// once per import.
+    ImportXshell,
     /// A project's terminal opened from 项目 (not the ones a launch
     /// opens again).
     ProjectTerminal,
 }
 
 impl Counter {
-    pub const ALL: [Counter; 57] = [
+    pub const ALL: [Counter; 58] = [
         Self::Ssh,
         Self::SshJump,
         Self::SshProxy,
@@ -175,6 +178,7 @@ impl Counter {
         Self::ExternalCliOff,
         Self::ImportSshConfig,
         Self::ImportKnownHosts,
+        Self::ImportXshell,
         Self::ProjectTerminal,
     ];
 
@@ -236,6 +240,7 @@ impl Counter {
             Self::ExternalCliOff => "external_cli_off",
             Self::ImportSshConfig => "import_ssh_config",
             Self::ImportKnownHosts => "import_known_hosts",
+            Self::ImportXshell => "import_xshell",
             Self::ProjectTerminal => "project_terminal",
         }
     }

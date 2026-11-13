@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use gpui_kit::{Context, SharedString};
+use zeroize::Zeroizing;
 
 use crate::i18n::t;
 
@@ -12,7 +13,7 @@ use super::super::{
     AuthKind, CredentialDraft, CredentialId, CredentialKind, DEFAULT_USER, ErrorMessage as _,
     GroupPathError, HostDraft, HostDraftError, HostStore, read_small,
 };
-use super::{ImportCandidate, ImportScan};
+use super::{ImportCandidate, ImportProtocol, ImportScan, passwords};
 
 /// How an imported host logs in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,6 +41,10 @@ pub struct ImportRow {
     /// Whether a saved SSH host is already at this address and port. Such a
     /// row is shown but never imported.
     pub existing: bool,
+    /// Whether a master password opened this row's stored password: the
+    /// table then says it will be saved, not asked for. Only for display;
+    /// the plan opens it again when the import is made.
+    pub password_ready: bool,
 }
 
 impl ImportRow {
@@ -55,18 +60,32 @@ pub fn import_rows(scan: &ImportScan, store: &HostStore) -> Vec<ImportRow> {
     scan.candidates
         .iter()
         .map(|candidate| {
-            let existing = is_saved(store, &candidate.address, candidate.port);
+            let existing = is_saved(store, candidate);
             ImportRow {
                 candidate: candidate.clone(),
                 selected: !existing,
                 name: candidate.name.clone(),
-                group: String::new(),
+                group: candidate.group.clone(),
                 user: candidate.user.clone(),
                 auth: default_auth(candidate, store),
                 existing,
+                password_ready: false,
             }
         })
         .collect()
+}
+
+/// Mark the rows whose stored password the master password opens. The
+/// master password stays in the dialog: only this flag is kept.
+pub fn mark_passwords(rows: &mut [ImportRow], master: &str) {
+    for row in rows {
+        row.password_ready = row.candidate.needs_password
+            && row
+                .candidate
+                .password_cipher
+                .as_deref()
+                .is_some_and(|stored| passwords::decrypt(master, stored).is_some());
+    }
 }
 
 /// Bring rows up to date with a store that changed while the dialog was
@@ -74,7 +93,7 @@ pub fn import_rows(scan: &ImportScan, store: &HostStore) -> Vec<ImportRow> {
 /// deleted meanwhile leaves its rows without a password.
 pub fn refresh_rows(rows: &mut [ImportRow], store: &HostStore) {
     for row in rows {
-        let existing = is_saved(store, &row.candidate.address, row.candidate.port);
+        let existing = is_saved(store, &row.candidate);
         if existing && !row.existing {
             row.selected = false;
         }
@@ -87,10 +106,16 @@ pub fn refresh_rows(rows: &mut [ImportRow], store: &HostStore) {
     }
 }
 
-/// Whether a saved SSH host is at this address (any case) and port.
-fn is_saved(store: &HostStore, address: &str, port: u16) -> bool {
+/// Whether a saved host of the same protocol is at this address (any case)
+/// and port.
+fn is_saved(store: &HostStore, candidate: &ImportCandidate) -> bool {
     store.hosts().iter().any(|host| {
-        host.is_ssh() && host.port == port && host.address.eq_ignore_ascii_case(address)
+        host.port == candidate.port
+            && host.address.eq_ignore_ascii_case(&candidate.address)
+            && match candidate.protocol {
+                ImportProtocol::Ssh => host.is_ssh(),
+                ImportProtocol::Telnet => host.protocol.is_telnet(),
+            }
     })
 }
 
@@ -100,6 +125,7 @@ fn default_auth(candidate: &ImportCandidate, store: &HostStore) -> RowAuth {
             Some(id) => RowAuth::Credential(id),
             None => RowAuth::NewKey,
         },
+        None if candidate.needs_password => RowAuth::Password,
         None => RowAuth::NoPassword,
     }
 }
@@ -135,7 +161,23 @@ fn login_user(user: &str) -> String {
 #[derive(Debug)]
 pub struct ImportPlan {
     entries: Vec<Entry>,
-    credentials: Vec<CredentialDraft>,
+    credentials: Vec<PlannedCredential>,
+}
+
+/// A credential to write, and the password opened for it when there is
+/// one. The password is never printed: [`Debug`] shows only that it exists.
+struct PlannedCredential {
+    draft: CredentialDraft,
+    secret: Option<Zeroizing<String>>,
+}
+
+impl std::fmt::Debug for PlannedCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PlannedCredential")
+            .field("draft", &self.draft)
+            .field("secret", &self.secret.as_ref().map(|_| "<hidden>"))
+            .finish()
+    }
 }
 
 #[derive(Debug)]
@@ -194,13 +236,19 @@ impl ImportError {
 /// Check the rows to import and work out what to write: nothing is
 /// written when any of them is wrong. A key file shared by rows logging in
 /// as the same user gets one credential, an existing one when there is.
-pub fn plan_import(rows: &[ImportRow], store: &HostStore) -> Result<ImportPlan, ImportError> {
+/// `master` is the Xshell master password, when one was typed: a saved
+/// password it opens becomes a password credential of the row.
+pub fn plan_import(
+    rows: &[ImportRow],
+    store: &HostStore,
+    master: Option<&str>,
+) -> Result<ImportPlan, ImportError> {
     let mut entries = Vec::new();
     let mut credentials = Vec::new();
     let mut new_keys: HashMap<(PathBuf, String), usize> = HashMap::new();
     for row in rows.iter().filter(|row| row.will_import()) {
         let candidate = &row.candidate;
-        if is_saved(store, &candidate.address, candidate.port) {
+        if is_saved(store, candidate) {
             continue;
         }
         let shown_name = match row.name.trim() {
@@ -213,41 +261,80 @@ pub fn plan_import(rows: &[ImportRow], store: &HostStore) -> Result<ImportPlan, 
                 name: shown_name.clone(),
                 error,
             })?;
-        let user = login_user(&row.user);
-        let (auth, login) = match row.auth {
-            RowAuth::NoPassword => (AuthKind::NoPassword, Login::Own),
-            RowAuth::Password => (AuthKind::Password, Login::Own),
-            RowAuth::Credential(id) if store.credential(id).is_some() => {
-                (AuthKind::default(), Login::Saved(id))
-            }
-            RowAuth::Credential(_) => (AuthKind::NoPassword, Login::Own),
-            RowAuth::NewKey => match &candidate.identity {
-                Some(path) => match saved_key(store, path, &user) {
-                    Some(id) => (AuthKind::default(), Login::Saved(id)),
-                    None => {
-                        let index =
-                            *new_keys
+        let user = match candidate.protocol {
+            ImportProtocol::Ssh => login_user(&row.user),
+            // Telnet 的用户名可以为空：没有自动登录时由远端提示输入。
+            ImportProtocol::Telnet => row.user.trim().to_string(),
+        };
+        let (auth, login) = match candidate.protocol {
+            ImportProtocol::Telnet => match row.auth {
+                RowAuth::Password => (AuthKind::Password, Login::Own),
+                _ => (AuthKind::NoPassword, Login::Own),
+            },
+            ImportProtocol::Ssh => match row.auth {
+                RowAuth::NoPassword => (AuthKind::NoPassword, Login::Own),
+                RowAuth::Password => match opened_password(candidate, master) {
+                    Some(secret) => {
+                        credentials.push(PlannedCredential {
+                            draft: CredentialDraft::new(
+                                shown_name.clone(),
+                                CredentialKind::Password,
+                                user.clone(),
+                            ),
+                            secret: Some(secret),
+                        });
+                        (AuthKind::default(), Login::New(credentials.len() - 1))
+                    }
+                    // 没有主密码、主密码不对，或这条本来就没存密码：首次连接时再问。
+                    None => (AuthKind::Password, Login::Own),
+                },
+                RowAuth::Credential(id) if store.credential(id).is_some() => {
+                    (AuthKind::default(), Login::Saved(id))
+                }
+                RowAuth::Credential(_) => (AuthKind::NoPassword, Login::Own),
+                RowAuth::NewKey => match &candidate.identity {
+                    Some(path) => match saved_key(store, path, &user) {
+                        Some(id) => (AuthKind::default(), Login::Saved(id)),
+                        None => {
+                            let index = *new_keys
                                 .entry((path.clone(), user.clone()))
                                 .or_insert_with(|| {
-                                    credentials.push(key_credential(path, &user));
+                                    credentials.push(PlannedCredential {
+                                        draft: key_credential(path, &user),
+                                        secret: None,
+                                    });
                                     credentials.len() - 1
                                 });
-                        (AuthKind::default(), Login::New(index))
-                    }
+                            (AuthKind::default(), Login::New(index))
+                        }
+                    },
+                    None => (AuthKind::NoPassword, Login::Own),
                 },
-                None => (AuthKind::NoPassword, Login::Own),
             },
         };
-        let draft = HostDraft::new(
-            row.name.trim().to_string(),
-            candidate.address.clone(),
-            candidate.port,
-            user,
-            auth,
-            None,
-        )
-        .validated()
-        .map_err(|error| ImportError::Host {
+        let mut draft = match candidate.protocol {
+            ImportProtocol::Ssh => HostDraft::new(
+                row.name.trim().to_string(),
+                candidate.address.clone(),
+                candidate.port,
+                user,
+                auth,
+                None,
+            ),
+            ImportProtocol::Telnet => {
+                let mut draft = HostDraft::telnet(
+                    row.name.trim().to_string(),
+                    candidate.address.clone(),
+                    candidate.port,
+                    None,
+                );
+                draft.user = user.into();
+                draft.auth = auth;
+                draft
+            }
+        };
+        draft.notes = candidate.notes.clone().into();
+        let draft = draft.validated().map_err(|error| ImportError::Host {
             name: shown_name,
             error,
         })?;
@@ -261,6 +348,17 @@ pub fn plan_import(rows: &[ImportRow], store: &HostStore) -> Result<ImportPlan, 
         entries,
         credentials,
     })
+}
+
+/// The password a saved value opens, when a master password opens it. Only
+/// rows that log in with a password ask: a key or a chosen credential does
+/// not take one from here.
+fn opened_password(candidate: &ImportCandidate, master: Option<&str>) -> Option<Zeroizing<String>> {
+    if !candidate.needs_password {
+        return None;
+    }
+    let stored = candidate.password_cipher.as_deref()?;
+    passwords::decrypt(master?, stored)
 }
 
 /// A key credential for a file, named after it.
@@ -278,6 +376,11 @@ fn key_credential(path: &Path, user: &str) -> CredentialDraft {
 pub struct Imported {
     pub hosts: usize,
     pub credentials: usize,
+    /// The passwords opened with the master password and handed to the
+    /// keychain.
+    pub passwords: usize,
+    /// The rows that will ask for a password on their first connection.
+    pub passwords_asked: usize,
     /// The writes that did not reach the database, already reported as
     /// `PersistFailed`.
     pub failures: Vec<SharedString>,
@@ -294,26 +397,33 @@ pub fn apply_import(
         entries,
         credentials,
     } = plan;
+    let passwords_asked = entries
+        .iter()
+        .filter(|entry| matches!(entry.login, Login::Own) && entry.draft.auth == AuthKind::Password)
+        .count();
     let mut not_copied = Vec::new();
     // Each key file is copied among ShellRS's own keys, which is what
-    // syncs; one that cannot be is used where it is.
-    let credentials: Vec<CredentialDraft> = credentials
-        .into_iter()
-        .map(|draft| {
-            let Some(path) = draft.key_path.clone() else {
-                return draft;
-            };
-            match store.keep_key_file(None, &path) {
-                Ok(Some(kept)) => draft.with_key_path(kept),
-                Ok(None) => draft,
-                Err(error) => {
-                    not_copied.push(t!("host.import.key_not_copied", error = error.message()));
-                    draft
-                }
-            }
-        })
-        .collect();
-    let (credentials, mut failures) = store.capture_failures(cx, |store, cx| {
+    // syncs; one that cannot be is used where it is. The opened passwords
+    // are kept apart, so they reach the keychain and nothing prints them.
+    let (credentials, secrets): (Vec<CredentialDraft>, Vec<Option<Zeroizing<String>>>) =
+        credentials
+            .into_iter()
+            .map(|planned| {
+                let Some(path) = planned.draft.key_path.clone() else {
+                    return (planned.draft, planned.secret);
+                };
+                let draft = match store.keep_key_file(None, &path) {
+                    Ok(Some(kept)) => planned.draft.with_key_path(kept),
+                    Ok(None) => planned.draft,
+                    Err(error) => {
+                        not_copied.push(t!("host.import.key_not_copied", error = error.message()));
+                        planned.draft
+                    }
+                };
+                (draft, planned.secret)
+            })
+            .collect();
+    let (made, mut failures) = store.capture_failures(cx, |store, cx| {
         store.in_one_transaction(cx, |store, cx| {
             let made: Vec<CredentialId> = credentials
                 .into_iter()
@@ -337,13 +447,28 @@ pub fn apply_import(
                 }
                 store.insert(draft, cx);
             }
-            made.len()
+            made
         })
     });
+    let mut passwords = 0;
+    for (id, secret) in made.iter().zip(secrets) {
+        let Some(secret) = secret else { continue };
+        let Some(credential) = store.credential(*id) else {
+            continue;
+        };
+        store.save_secret(
+            credential.password_secret(),
+            Some(secret.as_str().to_string()),
+            cx,
+        );
+        passwords += 1;
+    }
     failures.extend(not_copied);
     Imported {
         hosts: entries.len(),
-        credentials,
+        credentials: made.len(),
+        passwords,
+        passwords_asked,
         failures,
     }
 }
@@ -354,19 +479,15 @@ mod tests {
     use super::*;
 
     fn candidate(name: &str, address: &str, identity: Option<&str>) -> ImportCandidate {
-        ImportCandidate {
-            name: name.into(),
-            address: address.into(),
-            port: 22,
-            user: "deploy".into(),
-            identity: identity.map(PathBuf::from),
-        }
+        let mut candidate = ImportCandidate::ssh(name.into(), address.into(), 22, "deploy".into());
+        candidate.identity = identity.map(PathBuf::from);
+        candidate
     }
 
     fn scan(candidates: Vec<ImportCandidate>) -> ImportScan {
         ImportScan {
             candidates,
-            hashed: 0,
+            ..ImportScan::default()
         }
     }
 
@@ -454,11 +575,11 @@ mod tests {
         rows[2].user = " admin ".into();
         // Emptied: logs in as root, with a key of its own.
         rows[3].user = String::new();
-        let plan = plan_import(&rows, &store).unwrap();
+        let plan = plan_import(&rows, &store, None).unwrap();
         assert_eq!(plan.credentials.len(), 2);
-        assert_eq!(plan.credentials[0].user.as_ref(), "deploy");
-        assert_eq!(plan.credentials[0].name.as_ref(), "shared");
-        assert_eq!(plan.credentials[1].user.as_ref(), "root");
+        assert_eq!(plan.credentials[0].draft.user.as_ref(), "deploy");
+        assert_eq!(plan.credentials[0].draft.name.as_ref(), "shared");
+        assert_eq!(plan.credentials[1].draft.user.as_ref(), "root");
         let logins: Vec<String> = plan
             .entries
             .iter()
@@ -476,6 +597,44 @@ mod tests {
     }
 
     #[test]
+    fn a_master_password_turns_a_stored_password_into_a_credential() {
+        let store = HostStore::empty();
+        let mut sealed = candidate("web", "10.0.0.1", None);
+        sealed.needs_password = true;
+        sealed.password_cipher = Some(passwords::seal("test master", "Test1234"));
+        let mut unreadable = candidate("db", "10.0.0.2", None);
+        unreadable.needs_password = true;
+        let mut rows = import_rows(&scan(vec![sealed, unreadable]), &store);
+
+        mark_passwords(&mut rows, "test master");
+        assert!(rows[0].password_ready);
+        assert!(!rows[1].password_ready);
+
+        let plan = plan_import(&rows, &store, Some("test master")).unwrap();
+        assert_eq!(plan.entries.len(), 2);
+        assert_eq!(plan.credentials.len(), 1);
+        assert_eq!(
+            plan.credentials[0]
+                .secret
+                .as_ref()
+                .map(|secret| secret.as_str()),
+            Some("Test1234")
+        );
+        assert!(matches!(plan.entries[0].login, Login::New(0)));
+        // 没有存密码的那条仍然在首次连接时问。
+        assert!(matches!(plan.entries[1].login, Login::Own));
+
+        // 主密码不对：两条都退回询问，不写占位符。
+        let plan = plan_import(&rows, &store, Some("wrong master")).unwrap();
+        assert!(plan.credentials.is_empty());
+        assert!(
+            plan.entries
+                .iter()
+                .all(|entry| matches!(entry.login, Login::Own))
+        );
+    }
+
+    #[test]
     fn a_wrong_group_path_names_its_row_and_nothing_is_planned() {
         let mut store = HostStore::empty();
         store.insert_group_unnotified(GroupDraft::new("生产", None));
@@ -488,7 +647,7 @@ mod tests {
             &store,
         );
         rows[0].group = "a//b".into();
-        let error = plan_import(&rows, &store).unwrap_err();
+        let error = plan_import(&rows, &store, None).unwrap_err();
         assert_eq!(
             error,
             ImportError::Group {
@@ -500,7 +659,7 @@ mod tests {
         );
         rows[0].group.clear();
         rows[1].group = "生产".into();
-        let error = plan_import(&rows, &store).unwrap_err();
+        let error = plan_import(&rows, &store, None).unwrap_err();
         assert!(matches!(
             &error,
             ImportError::Group { name, .. } if name == "10.0.0.2"
@@ -519,9 +678,40 @@ mod tests {
             &store,
         );
         rows[1].selected = false;
-        assert_eq!(plan_import(&rows, &store).unwrap().entries.len(), 1);
+        assert_eq!(plan_import(&rows, &store, None).unwrap().entries.len(), 1);
         rows[0].existing = true;
-        assert_eq!(plan_import(&rows, &store).unwrap().entries.len(), 0);
+        assert_eq!(plan_import(&rows, &store, None).unwrap().entries.len(), 0);
+    }
+
+    #[gpui_kit::test]
+    fn an_opened_password_reaches_the_keychain_write(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+
+        let store = cx.new(|_| HostStore::load(HostDatabase::in_memory().unwrap()).unwrap());
+        let imported = store.update(cx, |store, cx| {
+            let mut sealed = candidate("web", "10.0.0.1", None);
+            sealed.needs_password = true;
+            sealed.password_cipher = Some(passwords::seal("test master", "Test1234"));
+            let mut unreadable = candidate("db", "10.0.0.2", None);
+            unreadable.needs_password = true;
+            let rows = import_rows(&scan(vec![sealed, unreadable]), store);
+            let plan = plan_import(&rows, store, Some("test master")).unwrap();
+            apply_import(plan, store, cx)
+        });
+        assert_eq!(imported.hosts, 2);
+        assert_eq!(imported.credentials, 1);
+        assert_eq!(imported.passwords, 1);
+        assert_eq!(imported.passwords_asked, 1);
+        assert!(imported.failures.is_empty());
+        store.read_with(cx, |store, _| {
+            assert_eq!(store.credentials().len(), 1);
+            let logins: Vec<bool> = store
+                .hosts()
+                .iter()
+                .map(|host| host.credential.is_some())
+                .collect();
+            assert_eq!(logins, [true, false]);
+        });
     }
 
     #[gpui_kit::test]
@@ -542,7 +732,7 @@ mod tests {
             rows[0].group = "生产/华东".into();
             rows[1].group = " 生产 / 华东 ".into();
             rows[2].group = "开发".into();
-            let plan = plan_import(&rows, store).unwrap();
+            let plan = plan_import(&rows, store, None).unwrap();
             let imported = apply_import(plan, store, cx);
             assert_eq!(
                 store
@@ -560,6 +750,8 @@ mod tests {
             Imported {
                 hosts: 3,
                 credentials: 1,
+                passwords: 0,
+                passwords_asked: 0,
                 failures: Vec::new()
             }
         );
@@ -612,7 +804,7 @@ mod tests {
                 &scan(vec![candidate("web", "10.0.0.1", Some(&identity))]),
                 store,
             );
-            let imported = apply_import(plan_import(&rows, store).unwrap(), store, cx);
+            let imported = apply_import(plan_import(&rows, store, None).unwrap(), store, cx);
             assert_eq!(imported.credentials, 1);
             let kept = store.credentials()[0].key_path.clone().unwrap();
             assert!(store.keeps_key_file(&kept), "{kept}");
@@ -622,7 +814,7 @@ mod tests {
                 &scan(vec![candidate("api", "10.0.0.2", Some(&identity))]),
                 store,
             );
-            let imported = apply_import(plan_import(&rows, store).unwrap(), store, cx);
+            let imported = apply_import(plan_import(&rows, store, None).unwrap(), store, cx);
             assert_eq!(imported.credentials, 0, "the copy is the same key");
             assert_eq!(store.credentials().len(), 1);
         });

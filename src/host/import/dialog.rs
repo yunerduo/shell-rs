@@ -2,7 +2,7 @@
 //! name, group and decide how each logs in before they are added.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gpui_kit::component::{
@@ -25,10 +25,10 @@ use crate::shared::{dismiss_form_error, form_error_notification};
 
 use super::super::host_dialog::credential_option;
 use super::super::{HostStore, join_sentences};
-use super::plan::refresh_rows;
+use super::plan::{mark_passwords, refresh_rows};
 use super::{
-    ImportLoad, ImportRow, ImportSource, RowAuth, apply_import, import_rows, plan_import,
-    read_source,
+    ImportLoad, ImportProtocol, ImportRow, ImportSource, RowAuth, SkippedSession, apply_import,
+    import_rows, plan_import, read_source,
 };
 
 /// What an import added, for the workspace to count and report.
@@ -37,6 +37,10 @@ pub struct ImportOutcome {
     pub source: ImportSource,
     pub hosts: usize,
     pub credentials: usize,
+    /// Passwords the master password opened and the keychain kept.
+    pub passwords: usize,
+    /// Hosts whose password is asked for on the first connection.
+    pub passwords_asked: usize,
     /// Whether some of it did not reach the database: that is reported on
     /// its own, so the import does not also claim success.
     pub failed: bool,
@@ -71,6 +75,7 @@ pub fn open_import_dialog(
             .title(match source {
                 ImportSource::SshConfig => t!("host.import.title.ssh_config"),
                 ImportSource::KnownHosts => t!("host.import.title.known_hosts"),
+                ImportSource::Xshell => t!("host.import.title.xshell"),
             })
             .w(rems(72.)
                 .to_pixels(window.rem_size())
@@ -105,15 +110,40 @@ pub fn open_import_dialog(
     });
 }
 
+/// What the system picker may take: one file, or one folder. Never both:
+/// Windows turns the dialog into a folder picker the moment it takes
+/// folders, which greys out `.xts` and `.xsh` files.
+fn path_options(source: ImportSource, files: bool) -> PathPromptOptions {
+    PathPromptOptions {
+        files,
+        directories: !files,
+        multiple: false,
+        prompt: Some(match (source, files) {
+            (ImportSource::SshConfig, _) => t!("host.import.choose_prompt.ssh_config"),
+            (ImportSource::KnownHosts, _) => t!("host.import.choose_prompt.known_hosts"),
+            (ImportSource::Xshell, true) => t!("host.import.choose_prompt.xshell"),
+            (ImportSource::Xshell, false) => t!("host.import.choose_prompt.xshell_folder"),
+        }),
+    }
+}
+
 /// Where the source's file stands.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum LoadState {
     Loading,
     Missing,
     Failed(String),
-    /// Read; `hashed` known_hosts entries could not be.
+    /// Read, with what the dialog should warn about: `hashed` known_hosts
+    /// entries could not be read, `needs_password` hosts have a password
+    /// the source saved in a form this app cannot read, `missing_keys`
+    /// hosts name a key file that is gone, `partial` hosts carry settings
+    /// with nowhere to go, and `skipped` sessions could not become hosts.
     Loaded {
         hashed: usize,
+        needs_password: usize,
+        missing_keys: usize,
+        partial: usize,
+        skipped: Vec<SkippedSession>,
     },
 }
 
@@ -137,9 +167,13 @@ pub struct ImportDialog {
     /// The rows' values; the inputs write into them.
     rows: Vec<ImportRow>,
     editors: HashMap<usize, RowEditors>,
+    /// Xshell's master password, when one is typed: it stays in this dialog,
+    /// is never saved, and only opens the rows' stored passwords.
+    master: Entity<InputState>,
     scroll: UniformListScrollHandle,
     _load: Task<()>,
     _store_changes: Subscription,
+    _master_changes: Subscription,
     _locale: Subscription,
 }
 
@@ -162,8 +196,28 @@ impl ImportDialog {
                     input.set_placeholder(t!("host.import.group_placeholder"), window, cx)
                 });
             }
+            this.master.update(cx, |input, cx| {
+                input.set_placeholder(t!("host.import.master_placeholder"), window, cx)
+            });
         });
-        let path = ssh_dir.as_deref().map(|dir| source.default_path(dir));
+        let master = cx.new(|cx| {
+            InputState::new(window, cx)
+                .masked(true)
+                .placeholder(t!("host.import.master_placeholder"))
+        });
+        let master_changes = cx.subscribe(&master, |this, input, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                let value = input.read(cx).value().to_string();
+                mark_passwords(&mut this.rows, &value);
+                cx.notify();
+            }
+        });
+        // Xshell keeps its sessions in its own place, not under `~/.ssh`;
+        // the other sources read their file there.
+        let path = match source {
+            ImportSource::Xshell => Some(source.default_path(Path::new(""))),
+            _ => ssh_dir.as_deref().map(|dir| source.default_path(dir)),
+        };
         let mut this = Self {
             source,
             ssh_dir,
@@ -172,9 +226,11 @@ impl ImportDialog {
             state: LoadState::Loading,
             rows: Vec::new(),
             editors: HashMap::new(),
+            master,
             scroll: UniformListScrollHandle::new(),
             _load: Task::ready(()),
             _store_changes: store_changes,
+            _master_changes: master_changes,
             _locale: locale,
         };
         this.load(window, cx);
@@ -210,9 +266,26 @@ impl ImportDialog {
     fn loaded(&mut self, load: ImportLoad, cx: &mut Context<Self>) {
         self.state = match load {
             ImportLoad::Loaded(scan) => {
+                let needs_password = scan.candidates.iter().filter(|c| c.needs_password).count();
+                let missing_keys = scan
+                    .candidates
+                    .iter()
+                    .filter(|c| c.missing_key.is_some())
+                    .count();
+                let partial = scan
+                    .candidates
+                    .iter()
+                    .filter(|c| !c.discarded.is_empty())
+                    .count();
                 self.rows = import_rows(&scan, self.store.read(cx));
+                let master = self.master.read(cx).value().to_string();
+                mark_passwords(&mut self.rows, &master);
                 LoadState::Loaded {
                     hashed: scan.hashed,
+                    needs_password,
+                    missing_keys,
+                    partial,
+                    skipped: scan.skipped,
                 }
             }
             ImportLoad::Missing => LoadState::Missing,
@@ -221,17 +294,21 @@ impl ImportDialog {
         cx.notify();
     }
 
-    /// Read another file of the same kind, picked with the system's picker.
+    /// Read a single file of the same kind, picked with the system's picker.
     fn choose_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let receiver = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some(match self.source {
-                ImportSource::SshConfig => t!("host.import.choose_prompt.ssh_config"),
-                ImportSource::KnownHosts => t!("host.import.choose_prompt.known_hosts"),
-            }),
-        });
+        self.choose_path(window, cx, true);
+    }
+
+    /// Xshell's `Sessions` folder, or a folder holding `.xsh` files.
+    fn choose_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.choose_path(window, cx, false);
+    }
+
+    /// The system picker, then read what it returned. Files and folders are
+    /// separate dialogs: Windows greys files out as soon as a dialog also
+    /// takes folders, which made `.xts` impossible to pick.
+    fn choose_path(&mut self, window: &mut Window, cx: &mut Context<Self>, files: bool) {
+        let receiver = cx.prompt_for_paths(path_options(self.source, files));
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(paths))) = receiver.await else {
                 return;
@@ -267,7 +344,11 @@ impl ImportDialog {
         if self.import_count() == 0 {
             return false;
         }
-        let plan = match plan_import(&self.rows, self.store.read(cx)) {
+        // The master password lives as long as this call: the plan uses it
+        // to open the stored passwords, and the keychain keeps the result.
+        let master = self.master.read(cx).value().to_string();
+        let master = (!master.is_empty()).then_some(master.as_str());
+        let plan = match plan_import(&self.rows, self.store.read(cx), master) {
             Ok(plan) => plan,
             Err(error) => {
                 window.push_notification(form_error_notification(error.message()), cx);
@@ -277,11 +358,16 @@ impl ImportDialog {
         let imported = self
             .store
             .update(cx, |store, cx| apply_import(plan, store, cx));
+        // Not kept anywhere, but clear it as soon as it is spent.
+        self.master
+            .update(cx, |input, cx| input.set_value("", window, cx));
         on_imported(
             ImportOutcome {
                 source: self.source,
                 hosts: imported.hosts,
                 credentials: imported.credentials,
+                passwords: imported.passwords,
+                passwords_asked: imported.passwords_asked,
                 failed: !imported.failures.is_empty(),
             },
             window,
@@ -310,6 +396,15 @@ impl ImportDialog {
             (t!("host.auth.no_password"), RowAuth::NoPassword),
             (t!("host.auth.password"), RowAuth::Password),
         ];
+        // Telnet has no keys: its rows only choose whether to send a
+        // password.
+        if self
+            .rows
+            .get(ix)
+            .is_some_and(|row| row.candidate.protocol == ImportProtocol::Telnet)
+        {
+            return choices;
+        }
         let store = self.store.read(cx);
         if let Some(path) = self
             .rows
@@ -421,19 +516,49 @@ impl ImportDialog {
         let mut sentences = vec![match self.source {
             ImportSource::SshConfig => t!("host.import.note.ssh_config"),
             ImportSource::KnownHosts => t!("host.import.note.known_hosts"),
+            ImportSource::Xshell => t!("host.import.note.xshell"),
         }];
-        if let LoadState::Loaded { hashed } = self.state
-            && hashed > 0
+        let mut details = Vec::new();
+        if let LoadState::Loaded {
+            hashed,
+            needs_password,
+            missing_keys,
+            partial,
+            skipped,
+        } = &self.state
         {
-            sentences.push(tn!("host.import.note.hashed", hashed));
+            if *hashed > 0 {
+                sentences.push(tn!("host.import.note.hashed", *hashed));
+            }
+            if *needs_password > 0 {
+                sentences.push(tn!("host.import.note.needs_password", *needs_password));
+            }
+            if *missing_keys > 0 {
+                sentences.push(tn!("host.import.note.missing_key", *missing_keys));
+            }
+            if *partial > 0 {
+                sentences.push(tn!("host.import.note.partial", *partial));
+            }
+            if !skipped.is_empty() {
+                sentences.push(tn!("host.import.note.skipped", skipped.len()));
+                details.extend(
+                    skipped
+                        .iter()
+                        .map(|session| format!("{}: {}", session.name, session.reason.message())),
+                );
+            }
         }
         let note = join_sentences(sentences).unwrap_or_default();
+        let details = details.join("\n");
         div()
             .id("import-note")
             .test_support()
             .aria_label(note.clone())
             .text_sm()
             .text_color(cx.theme().muted_foreground)
+            .when(!details.is_empty(), move |note| {
+                note.tooltip(move |window, cx| Tooltip::new(details.clone()).build(window, cx))
+            })
             .child(note)
     }
 
@@ -443,6 +568,11 @@ impl ImportDialog {
             None => match self.source {
                 ImportSource::SshConfig => "~/.ssh/config".to_string(),
                 ImportSource::KnownHosts => "~/.ssh/known_hosts".to_string(),
+                ImportSource::Xshell => self
+                    .source
+                    .default_path(Path::new(""))
+                    .to_string_lossy()
+                    .into_owned(),
             },
         };
         let source = t!("host.import.source", path = path);
@@ -484,7 +614,18 @@ impl ImportDialog {
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.choose_file(window, cx)),
                             ),
-                    ),
+                    )
+                    .when(self.source == ImportSource::Xshell, |row| {
+                        row.child(
+                            Button::new("import-choose-folder")
+                                .outline()
+                                .small()
+                                .label(t!("host.import.choose_folder"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.choose_folder(window, cx)
+                                })),
+                        )
+                    }),
             )
             .child(
                 div()
@@ -624,16 +765,51 @@ impl ImportDialog {
                 )
                 .into_any_element()
         };
+        // What the source could not bring over, said on the row itself and
+        // in full in the tooltip: a host that needs its password typed
+        // again, a key file that is gone, or settings with no place here.
+        let mut status_notes = Vec::new();
+        if let Some(key) = &row.candidate.missing_key {
+            status_notes.push(t!(
+                "host.import.note.missing_key_detail",
+                name = key.clone()
+            ));
+        }
+        if row.candidate.needs_password {
+            status_notes.push(if row.password_ready {
+                t!("host.import.status.password_ready_detail")
+            } else {
+                t!("host.import.status.needs_password")
+            });
+        }
+        status_notes.extend(row.candidate.discarded.iter().map(|field| field.message()));
         let status = if row.existing {
             t!("host.import.existing")
+        } else if row.candidate.missing_key.is_some() {
+            t!("host.import.status.missing_key")
+        } else if row.candidate.needs_password {
+            if row.password_ready {
+                t!("host.import.status.password_ready")
+            } else {
+                t!("host.import.status.needs_password")
+            }
+        } else if !row.candidate.discarded.is_empty() {
+            t!("host.import.status.partial")
         } else {
             t!("host.import.new")
         };
+        let status_detail = status_notes.join("\n");
         let status = div()
             .id(("import-status", ix))
             .test_support()
             .aria_label(status.clone())
+            .truncate()
             .when(row.existing, |status| status.text_color(muted))
+            .when(!status_detail.is_empty(), move |status| {
+                status.tooltip(move |window, cx| {
+                    Tooltip::new(status_detail.clone()).build(window, cx)
+                })
+            })
             .child(status)
             .into_any_element();
         let full_address = row.candidate.address.clone();
@@ -696,12 +872,18 @@ impl ImportDialog {
                     .unwrap_or_else(|| match self.source {
                         ImportSource::SshConfig => "~/.ssh/config".to_string(),
                         ImportSource::KnownHosts => "~/.ssh/known_hosts".to_string(),
+                        ImportSource::Xshell => self
+                            .source
+                            .default_path(Path::new(""))
+                            .to_string_lossy()
+                            .into_owned(),
                     })
             )),
             LoadState::Failed(error) => Some(t!("host.import.failed", error = error)),
             LoadState::Loaded { .. } if self.rows.is_empty() => Some(match self.source {
                 ImportSource::SshConfig => t!("host.import.empty.ssh_config"),
                 ImportSource::KnownHosts => t!("host.import.empty.known_hosts"),
+                ImportSource::Xshell => t!("host.import.empty.xshell"),
             }),
             LoadState::Loaded { .. } => None,
         };
@@ -759,13 +941,47 @@ impl ImportDialog {
 
 impl Render for ImportDialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
+        let mut dialog = v_flex()
             .id("import-dialog")
             .w_full()
             .gap_3()
             .child(self.render_note(cx))
-            .child(self.render_source(cx))
-            .child(self.render_table(window, cx))
+            .child(self.render_source(cx));
+        if self.source == ImportSource::Xshell {
+            dialog = dialog.child(self.render_master(cx));
+        }
+        dialog.child(self.render_table(window, cx))
+    }
+}
+
+impl ImportDialog {
+    /// The master password field: Xshell only. It opens the passwords the
+    /// sessions carry; it is not saved and is cleared once the import runs.
+    fn render_master(&self, cx: &App) -> impl IntoElement {
+        h_flex()
+            .id("import-master")
+            .test_support()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_sm()
+                    .child(t!("host.import.master_label")),
+            )
+            .child(
+                div()
+                    .w(rems(16.))
+                    .child(Input::new(&self.master).id("import-master-input").small()),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .truncate()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(t!("host.import.master_hint")),
+            )
     }
 }
 
@@ -796,7 +1012,7 @@ fn row_frame(frame: Stateful<Div>, checkbox: AnyElement, cells: [AnyElement; 7])
         .child(cell(Some(3.5), port))
         .child(cell(Some(7.), user))
         .child(cell(Some(14.), auth))
-        .child(cell(Some(4.5), status))
+        .child(cell(Some(9.), status))
 }
 
 /// A row's auth menu: the choices, the current one checked.
@@ -831,4 +1047,22 @@ fn auth_menu(
 /// after its address.
 fn row_address(row: &ImportRow) -> String {
     row.candidate.address.clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ImportSource, path_options};
+
+    #[test]
+    fn xshell_pickers_take_a_file_or_a_folder_but_never_both() {
+        let file = path_options(ImportSource::Xshell, true);
+        assert!(file.files && !file.directories);
+        let folder = path_options(ImportSource::Xshell, false);
+        assert!(!folder.files && folder.directories);
+        // The other sources only ever pick a file.
+        for source in [ImportSource::SshConfig, ImportSource::KnownHosts] {
+            let options = path_options(source, true);
+            assert!(options.files && !options.directories);
+        }
+    }
 }
