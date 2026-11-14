@@ -1,5 +1,5 @@
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     rc::Rc,
 };
@@ -20,11 +20,12 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::app::{
-    CatalogIcon, CollapseAllGroups, CollapseSelectedGroup, ConnectGroup, ConnectHost,
-    ConnectSelected, CopyHostAddress, CopyHostId, DeleteGroup, DeleteHost, DuplicateHost, EditHost,
-    ExpandAllGroups, ExpandSelectedGroup, HOST_PANEL_CONTEXT, HOST_TREE_CONTEXT, ImportKnownHosts,
-    ImportSshConfig, ImportXshell, MoveHostNode, NewChildGroup, NewGroup, NewHost, NewHostInGroup,
-    OpenExplorer, RenameGroup, SelectNextHostRow, SelectPreviousHostRow, ToggleHostDetails,
+    CatalogIcon, CollapseAllGroups, CollapseSelectedGroup, ConnectGroup, ConnectHost, ConnectHosts,
+    ConnectSelected, CopyHostAddress, CopyHostAddresses, CopyHostId, CopyHostIds, DeleteGroup,
+    DeleteHost, DeleteHosts, DuplicateHost, DuplicateHosts, EditHost, ExpandAllGroups,
+    ExpandSelectedGroup, HOST_PANEL_CONTEXT, HOST_TREE_CONTEXT, ImportKnownHosts, ImportSshConfig,
+    ImportXshell, MoveHostNode, NewChildGroup, NewGroup, NewHost, NewHostInGroup, OpenExplorer,
+    OpenExplorerHosts, RenameGroup, SelectNextHostRow, SelectPreviousHostRow, ToggleHostDetails,
 };
 
 use crate::i18n::{UiLocale, t, tn};
@@ -76,6 +77,15 @@ pub struct HostPanel {
     /// The row selected, by what it stands for, so the selection stays with
     /// its group or host while rows come and go around it.
     selected: Option<HostNode>,
+    /// The hosts selected together: one on a plain click, several with Ctrl
+    /// and Shift. Groups never enter this set; a group click selects only
+    /// the group, as before.
+    selected_hosts: HashSet<HostId>,
+    /// Where a Shift click starts extending the range from.
+    selection_anchor: Option<HostId>,
+    /// The selected hosts in the order their rows show, kept for the context
+    /// menu builder, which runs outside this entity.
+    menu_hosts: Rc<RefCell<Vec<HostId>>>,
     /// 显示主机详情, as the settings last said.
     details: bool,
     scroll_handle: VirtualListScrollHandle,
@@ -161,6 +171,9 @@ impl HostPanel {
             folded_in_search: HashSet::new(),
             rows: Rc::default(),
             selected: None,
+            selected_hosts: HashSet::new(),
+            selection_anchor: None,
+            menu_hosts: Rc::new(RefCell::new(Vec::new())),
             details: ShowHostDetails::get(cx),
             scroll_handle: VirtualListScrollHandle::new(),
             known_groups,
@@ -240,7 +253,8 @@ impl HostPanel {
     }
 
     /// Rebuild the tree from the store. The selection stays on its node
-    /// while that still shows.
+    /// while that still shows; a selection that no longer shows (deleted,
+    /// or filtered out) is forgotten rather than acted on unseen.
     fn rebuild_tree(&mut self, cx: &mut Context<Self>) {
         self.rows = Rc::new(self.tree_rows(cx));
         if self
@@ -249,7 +263,40 @@ impl HostPanel {
         {
             self.selected = None;
         }
+        let shown: HashSet<HostId> = self
+            .rows
+            .iter()
+            .filter_map(|row| row.node.host_id())
+            .collect();
+        self.selected_hosts.retain(|id| shown.contains(id));
+        if self.selection_anchor.is_some_and(|id| !shown.contains(&id)) {
+            self.selection_anchor = None;
+        }
+        if let Some(HostNode::Host(id)) = self.selected
+            && !shown.contains(&id)
+        {
+            self.selected = self
+                .rows
+                .iter()
+                .find(|row| {
+                    row.node
+                        .host_id()
+                        .is_some_and(|id| self.selected_hosts.contains(&id))
+                })
+                .map(|row| row.node);
+        }
+        self.sync_menu_hosts();
         cx.notify();
+    }
+
+    /// Keep the menu's host list in the order the rows show.
+    fn sync_menu_hosts(&self) {
+        *self.menu_hosts.borrow_mut() = self
+            .rows
+            .iter()
+            .filter_map(|row| row.node.host_id())
+            .filter(|id| self.selected_hosts.contains(id))
+            .collect();
     }
 
     fn row_index(&self, node: HostNode) -> Option<usize> {
@@ -261,15 +308,21 @@ impl HostPanel {
     }
 
     /// Select (and reveal) a row, for example a fresh duplicate or a group
-    /// just created.
+    /// just created. It is a single selection: a multi-selection ends here.
     pub fn select_node(&mut self, node: HostNode, cx: &mut Context<Self>) {
         self.rebuild_tree(cx);
         self.selected = None;
+        self.selected_hosts.clear();
+        self.selection_anchor = node.host_id();
         if let Some(ix) = self.row_index(node) {
             self.selected = Some(node);
+            if let Some(id) = node.host_id() {
+                self.selected_hosts.insert(id);
+            }
             self.scroll_handle
                 .scroll_to_item(ix, ScrollStrategy::Center);
         }
+        self.sync_menu_hosts();
     }
 
     /// Keep the moved row visible even when it was dropped into a closed group.
@@ -335,12 +388,115 @@ impl HostPanel {
     }
 
     /// A press on a row selects it; on a group it also folds or unfolds it.
-    fn press_row(&mut self, node: HostNode, cx: &mut Context<Self>) {
-        self.selected = Some(node);
-        match node {
-            HostNode::Group(group) => self.toggle_group(group, cx),
-            HostNode::Host(_) => cx.notify(),
+    /// Ctrl toggles one host, Shift extends from the last plain click; on a
+    /// group both keep the group's old click behaviour.
+    fn press_row(&mut self, node: HostNode, modifiers: Modifiers, cx: &mut Context<Self>) {
+        if let HostNode::Host(id) = node {
+            if modifiers.shift {
+                self.select_range(id, cx);
+                return;
+            }
+            if modifiers.secondary() {
+                self.toggle_host(id, cx);
+                return;
+            }
         }
+        self.selected = Some(node);
+        self.selected_hosts.clear();
+        self.selection_anchor = node.host_id();
+        if let HostNode::Host(id) = node {
+            self.selected_hosts.insert(id);
+            self.right_clicked.set(None);
+            self.sync_menu_hosts();
+            cx.notify();
+        } else if let HostNode::Group(group) = node {
+            self.toggle_group(group, cx);
+        }
+    }
+
+    /// Ctrl click: add the host, or take it out when it is already in.
+    fn toggle_host(&mut self, id: HostId, cx: &mut Context<Self>) {
+        self.right_clicked.set(None);
+        if self.selected_hosts.remove(&id) {
+            if self.selected == Some(HostNode::Host(id)) {
+                self.selected = self
+                    .rows
+                    .iter()
+                    .find(|row| {
+                        row.node
+                            .host_id()
+                            .is_some_and(|id| self.selected_hosts.contains(&id))
+                    })
+                    .map(|row| row.node);
+            }
+            if self.selection_anchor == Some(id) {
+                self.selection_anchor = self
+                    .rows
+                    .iter()
+                    .find(|row| {
+                        row.node
+                            .host_id()
+                            .is_some_and(|id| self.selected_hosts.contains(&id))
+                    })
+                    .and_then(|row| row.node.host_id());
+            }
+        } else {
+            self.selected_hosts.insert(id);
+            self.selected = Some(HostNode::Host(id));
+            self.selection_anchor = Some(id);
+        }
+        self.sync_menu_hosts();
+        cx.notify();
+    }
+
+    /// Shift click: select the hosts whose rows lie between the anchor and
+    /// this one, in the order the rows show. Groups in between are skipped:
+    /// a batch never acts on a group.
+    fn select_range(&mut self, id: HostId, cx: &mut Context<Self>) {
+        self.right_clicked.set(None);
+        let anchor = self
+            .selection_anchor
+            .filter(|anchor| self.row_index(HostNode::Host(*anchor)).is_some())
+            .unwrap_or(id);
+        let Some(from) = self.row_index(HostNode::Host(anchor)) else {
+            return;
+        };
+        let Some(to) = self.row_index(HostNode::Host(id)) else {
+            return;
+        };
+        let (start, end) = if from <= to { (from, to) } else { (to, from) };
+        self.selected_hosts = self.rows[start..=end]
+            .iter()
+            .filter_map(|row| row.node.host_id())
+            .collect();
+        self.selected = Some(HostNode::Host(id));
+        self.selection_anchor = Some(anchor);
+        self.sync_menu_hosts();
+        cx.notify();
+    }
+
+    /// A right press: the menu acts on the hosts already selected when the
+    /// row is one of them, else on this row alone. A group keeps its own
+    /// menu, and ends the hosts' selection.
+    fn press_row_right(&mut self, node: HostNode, cx: &mut Context<Self>) {
+        self.right_clicked.set(Some(node));
+        match node {
+            HostNode::Host(id) => {
+                if !self.selected_hosts.contains(&id) {
+                    self.selected_hosts.clear();
+                    self.selected_hosts.insert(id);
+                    self.selection_anchor = Some(id);
+                }
+                self.selected = Some(node);
+            }
+            HostNode::Group(_) => {
+                self.selected = Some(node);
+                self.selected_hosts.clear();
+                self.selection_anchor = None;
+            }
+        }
+        self.sync_menu_hosts();
+        cx.notify();
     }
 
     fn connect_first_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -395,6 +551,13 @@ impl HostPanel {
             (None, false) => last,
         };
         self.selected = Some(self.rows[next].node);
+        // Arrow keys move one row: a multi-selection collapses to it.
+        self.selected_hosts.clear();
+        self.selection_anchor = self.selected.and_then(|node| node.host_id());
+        if let Some(id) = self.selection_anchor {
+            self.selected_hosts.insert(id);
+        }
+        self.sync_menu_hosts();
         self.scroll_handle
             .scroll_to_item(next, ScrollStrategy::Nearest);
         cx.notify();
@@ -552,6 +715,7 @@ impl Render for HostPanel {
             group_counts,
             group_parents,
             selected: self.selected,
+            selected_hosts: self.selected_hosts.clone(),
             can_reorder,
             right_clicked: self.right_clicked.clone(),
             drop_target: self.drop_target.clone(),
@@ -672,8 +836,10 @@ impl Render for HostPanel {
                     })
                     .context_menu({
                         let store = self.store.clone();
+                        let menu_hosts = self.menu_hosts.clone();
                         move |menu, _, cx| {
-                            build_context_menu(clicked_menu.get(), store.read(cx), menu)
+                            let hosts = menu_hosts.borrow();
+                            build_context_menu(clicked_menu.get(), &hosts[..], store.read(cx), menu)
                         }
                     }),
             )
@@ -700,6 +866,8 @@ struct TreeSnapshot {
     group_counts: HashMap<GroupId, usize>,
     group_parents: Rc<HashMap<GroupId, Option<GroupId>>>,
     selected: Option<HostNode>,
+    /// The hosts selected together, for highlighting every one of them.
+    selected_hosts: HashSet<HostId>,
     /// Not while searching: the rows shown are not all there is.
     can_reorder: bool,
     right_clicked: Rc<Cell<Option<HostNode>>>,
@@ -901,6 +1069,7 @@ fn render_row(
         group_counts,
         group_parents,
         selected,
+        selected_hosts,
         can_reorder,
         right_clicked,
         drop_target,
@@ -908,9 +1077,17 @@ fn render_row(
         ..
     } = tree;
     let node = row.node;
+    // While a menu is open, the rows it acts on stay marked: the clicked one
+    // and, when the menu is a batch one, the rest of the selection.
     let selected = match right_clicked.get() {
-        Some(right_clicked) => node == right_clicked,
-        None => *selected == Some(node),
+        Some(right_clicked) if node == right_clicked => true,
+        Some(_) => node
+            .host_id()
+            .is_some_and(|id| selected_hosts.contains(&id)),
+        None => match node {
+            HostNode::Host(id) => selected_hosts.contains(&id),
+            HostNode::Group(_) => *selected == Some(node),
+        },
     };
     let (mark, row_id, details): (AnyElement, ElementId, Vec<(ElementId, SharedString)>) =
         match node {
@@ -971,12 +1148,14 @@ fn render_row(
         .child(row_content(mark, label.clone(), details, cx))
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(move |this, _, _, cx| this.press_row(node, cx)),
+            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                this.press_row(node, event.modifiers, cx)
+            }),
         )
-        .on_mouse_down(MouseButton::Right, {
-            let right_clicked = right_clicked.clone();
-            move |_, _, _| right_clicked.set(Some(node))
-        })
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |this, _, _, cx| this.press_row_right(node, cx)),
+        )
         .when_some(node.group_id(), |item, id| {
             let count = group_counts.get(&id).copied().unwrap_or(0);
             item.suffix(move |_, cx| {
@@ -1133,71 +1312,223 @@ fn valid_drop(
     }
 }
 
+/// One line of a host menu, before it becomes a `PopupMenuItem`: what it
+/// says, the icon it leads with, the action it dispatches, and whether it
+/// can be clicked. Both the single-host and the batch menus are lists of
+/// these, which keeps the two from drifting and lets tests check either
+/// without a window.
+enum HostMenuEntry {
+    Item {
+        label: SharedString,
+        // Boxed: an icon is far larger than the other fields, and a menu
+        // entry is mostly the action anyway.
+        icon: Box<Icon>,
+        action: Box<dyn Action>,
+        disabled: bool,
+    },
+    Separator,
+}
+
+impl HostMenuEntry {
+    fn item(
+        label: impl Into<SharedString>,
+        icon: CatalogIcon,
+        action: Box<dyn Action>,
+        disabled: bool,
+    ) -> Self {
+        Self::Item {
+            label: label.into(),
+            icon: Box::new(Icon::new(icon)),
+            action,
+            disabled,
+        }
+    }
+}
+
+fn menu_with_entries(menu: PopupMenu, entries: Vec<HostMenuEntry>) -> PopupMenu {
+    entries.into_iter().fold(menu, |menu, entry| match entry {
+        HostMenuEntry::Item {
+            label,
+            icon,
+            action,
+            disabled,
+        } => menu.menu_with_icon_and_disabled(label, *icon, action, disabled),
+        HostMenuEntry::Separator => menu.separator(),
+    })
+}
+
 /// The menu of one host, wherever it is listed: the host tree and the
 /// start page's recent hosts both build it here, so they cannot drift.
 /// Built as it opens, from the host as it is then.
 ///
 /// Only an SSH host has SFTP, and a serial host has no address to copy.
 pub fn host_menu(menu: PopupMenu, host: &Host) -> PopupMenu {
+    menu_with_entries(menu, single_host_menu_entries(host))
+}
+
+fn single_host_menu_entries(host: &Host) -> Vec<HostMenuEntry> {
     let id = host.id;
-    let ssh = host.is_ssh();
-    let has_address = host.kind().has_address();
     // Named after what the address is, as in the tabs' menus.
     let copy_address = if host.address_is_ip() {
         t!("host.menu.copy_ip")
     } else {
         t!("host.menu.copy_host_name")
     };
-    menu.menu_with_icon(
+    let mut entries = vec![HostMenuEntry::item(
         t!("host.menu.connect"),
-        Icon::new(CatalogIcon::Plug),
+        CatalogIcon::Plug,
         Box::new(ConnectHost(id)),
-    )
-    .when(ssh, |menu| {
-        menu.menu_with_icon(
+        false,
+    )];
+    if host.is_ssh() {
+        entries.push(HostMenuEntry::item(
             t!("host.menu.open_sftp"),
-            Icon::new(CatalogIcon::FolderTree),
+            CatalogIcon::FolderTree,
             Box::new(OpenExplorer(id)),
-        )
-    })
-    .separator()
-    .menu_with_icon(
-        t!("host.menu.edit_host"),
-        Icon::new(CatalogIcon::Pencil),
-        Box::new(EditHost(id)),
-    )
-    .menu_with_icon(
-        t!("host.menu.duplicate"),
-        Icon::new(CatalogIcon::CopyPlus),
-        Box::new(DuplicateHost(id)),
-    )
-    .separator()
-    .when(has_address, |menu| {
-        menu.menu_with_icon(
+            false,
+        ));
+    }
+    entries.extend([
+        HostMenuEntry::Separator,
+        HostMenuEntry::item(
+            t!("host.menu.edit_host"),
+            CatalogIcon::Pencil,
+            Box::new(EditHost(id)),
+            false,
+        ),
+        HostMenuEntry::item(
+            t!("host.menu.duplicate"),
+            CatalogIcon::CopyPlus,
+            Box::new(DuplicateHost(id)),
+            false,
+        ),
+        HostMenuEntry::Separator,
+    ]);
+    if host.kind().has_address() {
+        entries.push(HostMenuEntry::item(
             copy_address,
-            Icon::new(CatalogIcon::ClipboardCopy),
+            CatalogIcon::ClipboardCopy,
             Box::new(CopyHostAddress(id)),
-        )
-    })
-    .menu_with_icon(
-        t!("host.menu.copy_id"),
-        Icon::new(CatalogIcon::ClipboardCopy),
-        Box::new(CopyHostId(id)),
-    )
-    .separator()
-    .menu_with_icon(
-        t!("common.delete"),
-        Icon::new(CatalogIcon::Trash),
-        Box::new(DeleteHost(id)),
-    )
+            false,
+        ));
+    }
+    entries.extend([
+        HostMenuEntry::item(
+            t!("host.menu.copy_id"),
+            CatalogIcon::ClipboardCopy,
+            Box::new(CopyHostId(id)),
+            false,
+        ),
+        HostMenuEntry::Separator,
+        HostMenuEntry::item(
+            t!("common.delete"),
+            CatalogIcon::Trash,
+            Box::new(DeleteHost(id)),
+            false,
+        ),
+    ]);
+    entries
 }
 
-fn build_context_menu(node: Option<HostNode>, store: &HostStore, menu: PopupMenu) -> PopupMenu {
+/// The menu of several selected hosts: the same items as one host's, with
+/// the ones that only make sense for a single host shown disabled. Counts
+/// say how many hosts the item acts on.
+fn hosts_menu(menu: PopupMenu, hosts: &[&Host]) -> PopupMenu {
+    menu_with_entries(menu, batch_host_menu_entries(hosts))
+}
+
+fn batch_host_menu_entries(hosts: &[&Host]) -> Vec<HostMenuEntry> {
+    let ids: Vec<HostId> = hosts.iter().map(|host| host.id).collect();
+    let count = hosts.len();
+    let ssh_count = hosts.iter().filter(|host| host.is_ssh()).count();
+    let address_count = hosts
+        .iter()
+        .filter(|host| host.kind().has_address())
+        .count();
+    let all_ip = hosts
+        .iter()
+        .filter(|host| host.kind().has_address())
+        .all(|host| host.address_is_ip());
+    let copy_address = if all_ip {
+        tn!("host.menu.copy_ip_many", address_count)
+    } else {
+        tn!("host.menu.copy_address_many", address_count)
+    };
+    let mut entries = vec![HostMenuEntry::item(
+        tn!("host.menu.connect_many", count),
+        CatalogIcon::Plug,
+        Box::new(ConnectHosts(ids.clone())),
+        false,
+    )];
+    if ssh_count > 0 {
+        entries.push(HostMenuEntry::item(
+            tn!("host.menu.open_sftp_many", ssh_count),
+            CatalogIcon::FolderTree,
+            Box::new(OpenExplorerHosts(ids.clone())),
+            false,
+        ));
+    }
+    entries.extend([
+        HostMenuEntry::Separator,
+        // Editing one host's settings has no batch meaning: it stays
+        // visible but cannot be clicked.
+        HostMenuEntry::item(
+            t!("host.menu.edit_host"),
+            CatalogIcon::Pencil,
+            Box::new(EditHost(hosts[0].id)),
+            true,
+        ),
+        HostMenuEntry::item(
+            tn!("host.menu.duplicate_many", count),
+            CatalogIcon::CopyPlus,
+            Box::new(DuplicateHosts(ids.clone())),
+            false,
+        ),
+        HostMenuEntry::Separator,
+    ]);
+    if address_count > 0 {
+        entries.push(HostMenuEntry::item(
+            copy_address,
+            CatalogIcon::ClipboardCopy,
+            Box::new(CopyHostAddresses(ids.clone())),
+            false,
+        ));
+    }
+    entries.extend([
+        HostMenuEntry::item(
+            tn!("host.menu.copy_id_many", count),
+            CatalogIcon::ClipboardCopy,
+            Box::new(CopyHostIds(ids.clone())),
+            false,
+        ),
+        HostMenuEntry::Separator,
+        HostMenuEntry::item(
+            tn!("host.menu.delete_many", count),
+            CatalogIcon::Trash,
+            Box::new(DeleteHosts(ids)),
+            false,
+        ),
+    ]);
+    entries
+}
+
+fn build_context_menu(
+    node: Option<HostNode>,
+    selected: &[HostId],
+    store: &HostStore,
+    menu: PopupMenu,
+) -> PopupMenu {
     match node {
-        Some(HostNode::Host(id)) => match store.host(id) {
-            Some(host) => host_menu(menu, host),
-            None => menu,
-        },
+        Some(HostNode::Host(id)) => {
+            let hosts: Vec<&Host> = selected.iter().filter_map(|id| store.host(*id)).collect();
+            if hosts.len() > 1 {
+                return hosts_menu(menu, &hosts);
+            }
+            match store.host(id) {
+                Some(host) => host_menu(menu, host),
+                None => menu,
+            }
+        }
         Some(HostNode::Group(id)) => menu
             .menu_with_icon(
                 t!("host.menu.connect_group"),
@@ -1276,7 +1607,10 @@ pub fn import_menu_items(menu: PopupMenu) -> PopupMenu {
 
 #[cfg(test)]
 mod tests {
-    use super::{Host, HostStore, location, note_line};
+    use super::{
+        Host, HostMenuEntry, HostStore, batch_host_menu_entries, location, note_line,
+        single_host_menu_entries,
+    };
     use crate::host::{AuthKind, HostDraft};
 
     fn host_at(address: &str, port: u16) -> Host {
@@ -1290,6 +1624,71 @@ mod tests {
             None,
         ));
         store.host(id).unwrap().clone()
+    }
+
+    /// The lines a person can click, separators left out, with whether each
+    /// can be clicked.
+    fn item_labels(entries: &[HostMenuEntry]) -> Vec<(String, bool)> {
+        entries
+            .iter()
+            .filter_map(|entry| match entry {
+                HostMenuEntry::Item {
+                    label, disabled, ..
+                } => Some((label.to_string(), *disabled)),
+                HostMenuEntry::Separator => None,
+            })
+            .collect()
+    }
+
+    fn labels(expected: &[(&str, bool)]) -> Vec<(String, bool)> {
+        expected
+            .iter()
+            .map(|(label, disabled)| ((*label).to_string(), *disabled))
+            .collect()
+    }
+
+    #[test]
+    fn a_batch_menu_counts_hosts_and_greys_what_one_host_alone_can_do() {
+        crate::i18n::isolate_thread();
+        crate::i18n::set_locale("zh-CN");
+        let hosts = [
+            host_at("10.0.1.12", 22),
+            host_at("10.0.1.13", 22),
+            host_at("10.0.2.5", 22),
+        ];
+        let selected = hosts.iter().collect::<Vec<_>>();
+        assert_eq!(
+            item_labels(&batch_host_menu_entries(&selected)),
+            labels(&[
+                ("连接 3 台主机", false),
+                ("打开 3 台主机的 SFTP", false),
+                // Editing one host's settings is shown, but for no one.
+                ("编辑主机…", true),
+                ("创建 3 个副本", false),
+                ("复制 3 个 IP", false),
+                ("复制 3 个 ID", false),
+                ("删除 3 台主机", false),
+            ])
+        );
+    }
+
+    #[test]
+    fn one_host_keeps_every_item_clickable() {
+        crate::i18n::isolate_thread();
+        crate::i18n::set_locale("zh-CN");
+        let host = host_at("10.0.1.12", 22);
+        assert_eq!(
+            item_labels(&single_host_menu_entries(&host)),
+            labels(&[
+                ("连接", false),
+                ("打开 SFTP", false),
+                ("编辑主机…", false),
+                ("创建副本", false),
+                ("复制 IP", false),
+                ("复制 ID", false),
+                ("删除", false),
+            ])
+        );
     }
 
     #[test]

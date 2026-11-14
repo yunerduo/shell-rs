@@ -21,8 +21,8 @@ pub use describe::{
 };
 pub use group_dialog::{GroupForm, confirm_delete_group, open_group_dialog};
 pub use host_dialog::{
-    DeleteHandler, Dependents, HostForm, confirm_delete_host, join_sentences, open_host_dialog,
-    open_temporary_connection_dialog,
+    DeleteHandler, Dependents, HostForm, confirm_delete_host, confirm_delete_hosts, join_sentences,
+    open_host_dialog, open_temporary_connection_dialog,
 };
 pub use host_panel::{HostPanel, ShowHostDetails, host_menu, import_menu_items};
 pub use import::{ImportHandler, ImportOutcome, ImportSource, open_import_dialog};

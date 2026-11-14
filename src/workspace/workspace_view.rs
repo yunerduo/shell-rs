@@ -27,17 +27,18 @@ use crate::app::ExplorerDispatch as _;
 use crate::app::{
     CenterTab, ClearTerminal, CloseActiveTab, CloseEditor, CloseExplorer, CloseLocalTerminal,
     CloseSettings, CloseTabs, CloseTerminal, CollapseAllGroups, ConnectGroup, ConnectHost,
-    CopyAgentSkill, CopyHostAddress, CopyHostId, CopyTerminal, DeleteGroup, DeleteHost,
-    DisconnectTerminal, DismissTerminalFind, DuplicateHost, DuplicateTerminal, EditHost,
-    ExpandAllGroups, ExplorerAction, ExplorerCommand, ExplorerShortcut, FindInTerminal,
-    FindNextInTerminal, FindPreviousInTerminal, FocusSearch, InstallAgentSkill, InstallCliCommand,
-    MaximizeWindow, MoveHostNode, NewChildGroup, NewGroup, NewHost, NewHostInGroup,
-    NewLocalTerminal, NewTemporaryConnection, OpenExplorer, OpenSettings, PasteTerminal,
-    QuickConnect, ReconnectTerminal, RefreshCliIntegration, RemoveAgentSkill, RemoveCliCommand,
-    RenameExplorer, RenameGroup, RenameTerminal, RestartLocalTerminal, RestoreWindow,
-    SelectAllTerminal, SendBreak, SetFileSizeFormat, ShowOrHideApp, ToggleHiddenFiles,
-    ToggleHostDetails, ToggleHostPanel, ToggleTheme, ToolKind, ZoomIn, ZoomOut, ZoomReset,
-    ZoomTerminalIn, ZoomTerminalOut, ZoomTerminalReset,
+    ConnectHosts, CopyAgentSkill, CopyHostAddress, CopyHostAddresses, CopyHostId, CopyHostIds,
+    CopyTerminal, DeleteGroup, DeleteHost, DeleteHosts, DisconnectTerminal, DismissTerminalFind,
+    DuplicateHost, DuplicateHosts, DuplicateTerminal, EditHost, ExpandAllGroups, ExplorerAction,
+    ExplorerCommand, ExplorerShortcut, FindInTerminal, FindNextInTerminal, FindPreviousInTerminal,
+    FocusSearch, InstallAgentSkill, InstallCliCommand, MaximizeWindow, MoveHostNode, NewChildGroup,
+    NewGroup, NewHost, NewHostInGroup, NewLocalTerminal, NewTemporaryConnection, OpenExplorer,
+    OpenExplorerHosts, OpenSettings, PasteTerminal, QuickConnect, ReconnectTerminal,
+    RefreshCliIntegration, RemoveAgentSkill, RemoveCliCommand, RenameExplorer, RenameGroup,
+    RenameTerminal, RestartLocalTerminal, RestoreWindow, SelectAllTerminal, SendBreak,
+    SetFileSizeFormat, ShowOrHideApp, ToggleHiddenFiles, ToggleHostDetails, ToggleHostPanel,
+    ToggleTheme, ToolKind, ZoomIn, ZoomOut, ZoomReset, ZoomTerminalIn, ZoomTerminalOut,
+    ZoomTerminalReset,
 };
 use crate::cli::{CliIntegration, CliServer, IntegrationPaths, SshCliBackend};
 use crate::connection::{
@@ -55,11 +56,11 @@ use crate::forward::{
 };
 use crate::host::{
     ConnectionState, Dependents, ForwardId, GroupId, Host, HostConnection, HostId, HostLogin,
-    HostNode, HostPanel, HostStore, HostStoreEvent, SavedTerminal, SavedTerminalId,
-    confirm_delete_group, confirm_delete_host, open_group_dialog, open_host_dialog,
-    open_quick_connect_dialog, open_temporary_connection_dialog,
+    HostNode, HostPanel, HostStore, HostStoreEvent, Route, SavedTerminal, SavedTerminalId,
+    confirm_delete_group, confirm_delete_host, confirm_delete_hosts, open_group_dialog,
+    open_host_dialog, open_quick_connect_dialog, open_temporary_connection_dialog,
 };
-use crate::i18n::t;
+use crate::i18n::{t, tn};
 use crate::settings::{
     Appearance, DEFAULT_INTERFACE_FONT_SIZE, SettingsPanel, SettingsPanelEvent, SettingsStore,
     SettingsStoreEvent, WindowSettings,
@@ -117,6 +118,17 @@ pub fn notify_once_open(notification: Notification, window: &mut Window, cx: &mu
     window.defer(cx, move |window, cx| {
         window.push_notification(notification, cx)
     });
+}
+
+/// Say how many of a batch were left out because they cannot connect, so a
+/// skipped host is not silently dropped.
+fn notify_skipped(skipped: usize, window: &mut Window, cx: &mut App) {
+    if skipped > 0 {
+        window.push_notification(
+            Notification::warning(tn!("workspace.batch.skipped", skipped)),
+            cx,
+        );
+    }
 }
 
 /// Window options for the main workspace window: where it was last, as much
@@ -1353,6 +1365,47 @@ impl Workspace {
         }
     }
 
+    /// Connect each host of a multi-selection: a tab apiece, as 连接 does for
+    /// one. A host that cannot connect is left out and counted, so that one
+    /// bad entry does not stop the rest.
+    fn on_connect_hosts(
+        &mut self,
+        action: &ConnectHosts,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (ready, skipped) = self.connectable_hosts(action.0.iter().copied(), cx);
+        for host_id in ready {
+            self.connect_host(host_id, window, cx);
+        }
+        notify_skipped(skipped, window, cx);
+    }
+
+    /// The hosts among `ids` that can connect now, and how many cannot: one
+    /// that has gone, or whose configuration is incomplete (no address, or a
+    /// route with a jump host that was deleted).
+    fn connectable_hosts(
+        &self,
+        ids: impl IntoIterator<Item = HostId>,
+        cx: &App,
+    ) -> (Vec<HostId>, usize) {
+        let store = self.store.read(cx);
+        let mut ready = Vec::new();
+        let mut skipped = 0;
+        for id in ids {
+            let connectable = store.host(id).is_some_and(|host| {
+                !host.address.trim().is_empty()
+                    && !matches!(&host.route, Route::Jump(hops) if hops.iter().any(Option::is_none))
+            });
+            if connectable {
+                ready.push(id);
+            } else {
+                skipped += 1;
+            }
+        }
+        (ready, skipped)
+    }
+
     pub(super) fn connect_host(
         &mut self,
         host_id: HostId,
@@ -1418,6 +1471,20 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.open_explorer(action.0, window, cx);
+    }
+
+    /// Open SFTP for each SSH host of a multi-selection, a tab apiece. The
+    /// others have no SFTP to open; the menu's count already says how many
+    /// are meant.
+    fn on_open_explorer_hosts(
+        &mut self,
+        action: &OpenExplorerHosts,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for host_id in action.0.iter().copied() {
+            self.open_explorer(host_id, window, cx);
+        }
     }
 
     pub(super) fn open_explorer(
@@ -2107,6 +2174,62 @@ impl Workspace {
         );
     }
 
+    /// Copy the addresses of several hosts, one a line. Hosts without an
+    /// address have nothing to copy and are left out.
+    fn on_copy_host_addresses(
+        &mut self,
+        action: &CopyHostAddresses,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let addresses: Vec<String> = {
+            let store = self.store.read(cx);
+            action
+                .0
+                .iter()
+                .filter_map(|id| store.host(*id))
+                .filter(|host| host.kind().has_address() && !host.address.trim().is_empty())
+                .map(|host| host.address.to_string())
+                .collect()
+        };
+        if addresses.is_empty() {
+            return;
+        }
+        let count = addresses.len();
+        cx.write_to_clipboard(ClipboardItem::new_string(addresses.join("\n")));
+        window.push_notification(
+            Notification::success(tn!("workspace.copied_many", count)),
+            cx,
+        );
+    }
+
+    /// Copy the public IDs of several hosts, one a line.
+    fn on_copy_host_ids(
+        &mut self,
+        action: &CopyHostIds,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ids: Vec<String> = {
+            let store = self.store.read(cx);
+            action
+                .0
+                .iter()
+                .filter_map(|id| store.host(*id))
+                .map(|host| host.public_id.to_string())
+                .collect()
+        };
+        if ids.is_empty() {
+            return;
+        }
+        let count = ids.len();
+        cx.write_to_clipboard(ClipboardItem::new_string(ids.join("\n")));
+        window.push_notification(
+            Notification::success(tn!("workspace.copied_many", count)),
+            cx,
+        );
+    }
+
     fn on_restart_local_terminal(
         &mut self,
         action: &RestartLocalTerminal,
@@ -2346,6 +2469,26 @@ impl Workspace {
         }
     }
 
+    /// Duplicate each host of a multi-selection in its group, then show the
+    /// last copy: a fresh copy is a single selection, as after one duplicate.
+    fn on_duplicate_hosts(
+        &mut self,
+        action: &DuplicateHosts,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut last = None;
+        for id in action.0.iter().copied() {
+            if let Some(copy) = self.store.update(cx, |store, cx| store.duplicate(id, cx)) {
+                last = Some(copy);
+            }
+        }
+        if let Some(copy) = last {
+            self.host_panel
+                .update(cx, |panel, cx| panel.select_node(HostNode::Host(copy), cx));
+        }
+    }
+
     fn on_move_host_node(&mut self, action: &MoveHostNode, _: &mut Window, cx: &mut Context<Self>) {
         let moved = self.store.update(cx, |store, cx| {
             store.move_node(action.source, action.destination, cx)
@@ -2393,6 +2536,53 @@ impl Workspace {
         self.store.update(cx, |store, cx| {
             store.remove(id, cx);
         });
+    }
+
+    /// Delete several hosts after one question that says how many. A host
+    /// that has gone meanwhile is not counted; its tabs stay, as after any
+    /// delete.
+    fn on_delete_hosts(
+        &mut self,
+        action: &DeleteHosts,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let hosts: Vec<Host> = {
+            let store = self.store.read(cx);
+            action
+                .0
+                .iter()
+                .filter_map(|id| store.host(*id))
+                .cloned()
+                .collect()
+        };
+        if hosts.is_empty() {
+            return;
+        }
+        let ids: Vec<HostId> = hosts.iter().map(|host| host.id).collect();
+        let dependents = {
+            let store = self.store.read(cx);
+            Dependents {
+                forwards: ids.iter().map(|id| store.forwards_of(*id).count()).sum(),
+                jump_users: store.jump_users(&ids),
+            }
+        };
+        let workspace = cx.entity().downgrade();
+        confirm_delete_hosts(
+            &hosts,
+            dependents,
+            Rc::new(move |_, cx| {
+                workspace
+                    .update(cx, |this, cx| {
+                        for id in &ids {
+                            this.remove_host(*id, cx);
+                        }
+                    })
+                    .ok();
+            }),
+            window,
+            cx,
+        );
     }
 
     fn on_new_host_in_group(
@@ -3049,8 +3239,10 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_toggle_broadcast_keys))
             .on_action(cx.listener(Self::on_edit_host))
             .on_action(cx.listener(Self::on_duplicate_host))
+            .on_action(cx.listener(Self::on_duplicate_hosts))
             .on_action(cx.listener(Self::on_move_host_node))
             .on_action(cx.listener(Self::on_delete_host))
+            .on_action(cx.listener(Self::on_delete_hosts))
             .on_action(cx.listener(Self::on_new_host_in_group))
             .on_action(cx.listener(Self::on_new_group))
             .on_action(cx.listener(Self::on_import_ssh_config))
@@ -3062,12 +3254,14 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_rename_group))
             .on_action(cx.listener(Self::on_delete_group))
             .on_action(cx.listener(Self::on_connect_host))
+            .on_action(cx.listener(Self::on_connect_hosts))
             .on_action(cx.listener(Self::on_duplicate_terminal))
             .on_action(cx.listener(Self::on_connect_group))
             .on_action(cx.listener(Self::on_reconnect_terminal))
             .on_action(cx.listener(Self::on_disconnect_terminal))
             .on_action(cx.listener(Self::on_send_break))
             .on_action(cx.listener(Self::on_open_explorer))
+            .on_action(cx.listener(Self::on_open_explorer_hosts))
             .on_action(cx.listener(Self::on_explorer_action))
             .on_action(cx.listener(Self::on_explorer_shortcut))
             .on_action(cx.listener(Self::on_close_terminal))
@@ -3119,6 +3313,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_rename_explorer))
             .on_action(cx.listener(Self::on_copy_host_address))
             .on_action(cx.listener(Self::on_copy_host_id))
+            .on_action(cx.listener(Self::on_copy_host_addresses))
+            .on_action(cx.listener(Self::on_copy_host_ids))
             .on_action(cx.listener(Self::on_restart_local_terminal))
             .on_action(cx.listener(Self::on_copy_terminal))
             .on_action(cx.listener(Self::on_paste_terminal))

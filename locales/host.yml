@@ -435,6 +435,11 @@ host.delete.jump_users.one:
 host.delete.jump_users.other:
   zh-CN: 有 %{count} 台主机把它用作跳板主机，删除后要重新选择跳板主机才能连接。
   en: "%{count} hosts use it as a jump host and will need another one to connect."
+host.delete.many_name.one:
+  en: "%{count} host"
+host.delete.many_name.other:
+  zh-CN: "%{count} 台主机"
+  en: "%{count} hosts"
 
 host.count.hosts.one:
   en: "%{count} host"
@@ -523,6 +528,41 @@ host.menu.copy_host_name:
 host.menu.copy_id:
   zh-CN: 复制 ID
   en: Copy ID
+host.menu.connect_many.one:
+  en: Connect %{count} host
+host.menu.connect_many.other:
+  zh-CN: 连接 %{count} 台主机
+  en: Connect %{count} hosts
+host.menu.open_sftp_many.one:
+  en: Open SFTP for %{count} host
+host.menu.open_sftp_many.other:
+  zh-CN: 打开 %{count} 台主机的 SFTP
+  en: Open SFTP for %{count} hosts
+host.menu.duplicate_many.one:
+  en: Duplicate %{count} host
+host.menu.duplicate_many.other:
+  zh-CN: 创建 %{count} 个副本
+  en: Duplicate %{count} hosts
+host.menu.copy_ip_many.one:
+  en: Copy %{count} IP
+host.menu.copy_ip_many.other:
+  zh-CN: 复制 %{count} 个 IP
+  en: Copy %{count} IPs
+host.menu.copy_address_many.one:
+  en: Copy %{count} address
+host.menu.copy_address_many.other:
+  zh-CN: 复制 %{count} 个地址
+  en: Copy %{count} addresses
+host.menu.copy_id_many.one:
+  en: Copy %{count} ID
+host.menu.copy_id_many.other:
+  zh-CN: 复制 %{count} 个 ID
+  en: Copy %{count} IDs
+host.menu.delete_many.one:
+  en: Delete %{count} host
+host.menu.delete_many.other:
+  zh-CN: 删除 %{count} 台主机
+  en: Delete %{count} hosts
 host.menu.new_host:
   zh-CN: 新建主机…
   en: New host…

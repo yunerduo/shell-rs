@@ -296,6 +296,34 @@ macro_rules! id_actions {
     };
 }
 
+/// Commands that carry the ids of every host they act on: a multi-selection
+/// in the host list.
+macro_rules! host_id_list_actions {
+    ($($(#[$doc:meta])* $name:ident($ids:ty);)*) => {
+        $(
+            $(#[$doc])*
+            #[derive(Action, Clone, PartialEq, Eq)]
+            #[action(namespace = shellrs, no_json)]
+            pub struct $name(pub $ids);
+        )*
+    };
+}
+
+host_id_list_actions! {
+    /// Open a terminal connection for each host.
+    ConnectHosts(Vec<HostId>);
+    /// Open an SFTP tab for each host that has one.
+    OpenExplorerHosts(Vec<HostId>);
+    /// Duplicate each host in its group.
+    DuplicateHosts(Vec<HostId>);
+    /// Ask for confirmation, then delete these hosts.
+    DeleteHosts(Vec<HostId>);
+    /// Copy these hosts' addresses, one per line.
+    CopyHostAddresses(Vec<HostId>);
+    /// Copy these hosts' public ids, one per line.
+    CopyHostIds(Vec<HostId>);
+}
+
 id_actions! {
     /// Open a new terminal connection for a host.
     ConnectHost(HostId);

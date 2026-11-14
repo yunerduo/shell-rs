@@ -175,6 +175,16 @@ workspace.copied:
 workspace.copied_id:
   zh-CN: 已复制 ID %{id}
   en: Copied ID %{id}
+workspace.copied_many.one:
+  en: Copied %{count} item
+workspace.copied_many.other:
+  zh-CN: 已复制 %{count} 项
+  en: Copied %{count} items
+workspace.batch.skipped.one:
+  en: Skipped %{count} host that can’t connect
+workspace.batch.skipped.other:
+  zh-CN: 已跳过 %{count} 台无法连接的主机
+  en: Skipped %{count} hosts that can’t connect
 workspace.link.open_failed:
   zh-CN: 无法打开链接
   en: Couldn’t open the link

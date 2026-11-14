@@ -1048,3 +1048,250 @@ fn the_arrow_keys_move_through_the_host_tree(cx: &mut TestAppContext) {
         assert!(window.find(("host-row", DEV_BOX)).selected() == Some(true));
     });
 }
+
+/// Click a host row with the modifiers the multi-selection reads:
+/// `TestWindowExt::click` carries none.
+fn click_row(window: &mut Window, row: u64, modifiers: Modifiers, cx: &mut App) {
+    let position = window
+        .within("host-tree")
+        .find(("host-row", row))
+        .bounds()
+        .center();
+    click_at(window, position, modifiers, cx);
+}
+
+fn row_selected(window: &Window, row: u64) -> bool {
+    window.find(("host-row", row)).selected() == Some(true)
+}
+
+fn group_selected(window: &Window, group: u64) -> bool {
+    window.find(("group-row", group)).selected() == Some(true)
+}
+
+#[gpui_kit::test]
+fn ctrl_click_toggles_hosts_and_shift_click_takes_a_range(cx: &mut TestAppContext) {
+    let (handle, _) = open_workspace(cx);
+    let ctrl = Modifiers::secondary_key();
+    let shift = Modifiers {
+        shift: true,
+        ..Default::default()
+    };
+
+    in_frame(cx, handle, |window, cx| {
+        window.click(("host-row", WEB_01), cx);
+        click_row(window, WEB_02, ctrl, cx);
+    });
+    in_frame(cx, handle, |window, _| {
+        assert!(row_selected(window, WEB_01));
+        assert!(row_selected(window, WEB_02));
+        assert!(!row_selected(window, DB_01));
+    });
+
+    // Ctrl again takes web-02 out and leaves web-01, the anchor.
+    in_frame(cx, handle, |window, cx| click_row(window, WEB_02, ctrl, cx));
+    in_frame(cx, handle, |window, _| {
+        assert!(row_selected(window, WEB_01));
+        assert!(!row_selected(window, WEB_02));
+    });
+
+    // Shift extends from the anchor to the row clicked: the three of 生产.
+    in_frame(cx, handle, |window, cx| click_row(window, DB_01, shift, cx));
+    in_frame(cx, handle, |window, _| {
+        assert!(row_selected(window, WEB_01));
+        assert!(row_selected(window, WEB_02));
+        assert!(row_selected(window, DB_01));
+        assert!(!row_selected(window, STAGING_API));
+    });
+
+    // A plain click goes back to one host.
+    in_frame(cx, handle, |window, cx| {
+        window.click(("host-row", STAGING_API), cx)
+    });
+    in_frame(cx, handle, |window, _| {
+        assert!(!row_selected(window, WEB_01));
+        assert!(!row_selected(window, DB_01));
+        assert!(row_selected(window, STAGING_API));
+    });
+}
+
+#[gpui_kit::test]
+fn a_shift_range_across_groups_counts_only_hosts(cx: &mut TestAppContext) {
+    let (handle, _) = open_workspace(cx);
+    let shift = Modifiers {
+        shift: true,
+        ..Default::default()
+    };
+
+    in_frame(cx, handle, |window, cx| {
+        window.click(("host-row", WEB_01), cx);
+        click_row(window, DEV_BOX, shift, cx);
+    });
+    in_frame(cx, handle, |window, _| {
+        for row in [WEB_01, WEB_02, DB_01, STAGING_API, QA_RUNNER, DEV_BOX] {
+            assert!(row_selected(window, row), "host {row} should be selected");
+        }
+        // The groups the range passes over are not selected and so take no
+        // part in the batch.
+        assert!(!group_selected(window, PRODUCTION));
+        assert!(!group_selected(window, DEVELOPMENT));
+    });
+}
+
+#[gpui_kit::test]
+fn copying_several_hosts_puts_one_a_line(cx: &mut TestAppContext) {
+    let (handle, workspace) = open_workspace(cx);
+    let selected = [HostId(WEB_01), HostId(WEB_02), HostId(DB_01)];
+
+    in_frame(cx, handle, |window, cx| {
+        window.dispatch_action(Box::new(CopyHostAddresses(selected.to_vec())), cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("10.0.1.12\n10.0.1.13\n10.0.2.5".to_string())
+    );
+
+    let ids = cx.update(|cx| {
+        let store = workspace.read(cx).store().read(cx);
+        selected
+            .iter()
+            .map(|id| store.host(*id).expect("seeded host").public_id.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    });
+    in_frame(cx, handle, |window, cx| {
+        window.dispatch_action(Box::new(CopyHostIds(selected.to_vec())), cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some(ids)
+    );
+}
+
+#[gpui_kit::test]
+fn connecting_several_hosts_opens_a_tab_for_each(cx: &mut TestAppContext) {
+    let (handle, workspace) = open_workspace(cx);
+
+    in_frame(cx, handle, |window, cx| {
+        window.dispatch_action(
+            Box::new(ConnectHosts(vec![HostId(WEB_02), HostId(DB_01)])),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let workspace = workspace.read(cx);
+        // web-01 keeps the tab the fixture opened, staging-api too.
+        assert_eq!(workspace.terminal_count(HostId(WEB_01), cx), 1);
+        assert_eq!(workspace.terminal_count(HostId(STAGING_API), cx), 1);
+        // One tab each for the hosts asked for.
+        assert_eq!(workspace.terminal_count(HostId(WEB_02), cx), 1);
+        assert_eq!(workspace.terminal_count(HostId(DB_01), cx), 1);
+    });
+}
+
+#[gpui_kit::test]
+fn a_host_that_cannot_connect_is_skipped_and_said_so(cx: &mut TestAppContext) {
+    let mut store = HostStore::seed();
+    let incomplete = store.insert_unnotified(HostDraft::new(
+        "incomplete",
+        "",
+        22,
+        "root",
+        AuthKind::Password,
+        None,
+    ));
+    let (handle, workspace) = open_workspace_with_store(cx, store);
+
+    in_frame(cx, handle, |window, cx| {
+        window.dispatch_action(Box::new(ConnectHosts(vec![HostId(WEB_02), incomplete])), cx);
+    });
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let workspace = workspace.read(cx);
+        // The host that can connect does, and the one that cannot is left
+        // out rather than stopping the batch.
+        assert_eq!(workspace.terminal_count(HostId(WEB_02), cx), 1);
+        assert_eq!(workspace.terminal_count(incomplete, cx), 0);
+    });
+    in_frame(cx, handle, |window, cx| {
+        assert_eq!(window.notifications(cx).len(), 1);
+    });
+}
+
+#[gpui_kit::test]
+async fn deleting_several_hosts_asks_first_and_says_how_many(cx: &mut TestAppContext) {
+    // A store with no terminal tabs: their focus keeps a test from
+    // answering the dialog.
+    let dir = tempfile::tempdir().unwrap();
+    let database = HostDatabase::open(&dir.path().join("shellrs.db")).unwrap();
+    let seed = HostStore::seed();
+    for group in seed.groups() {
+        database.insert_group(group).unwrap();
+    }
+    for host in seed.hosts() {
+        database.insert_host(host).unwrap();
+    }
+    let (handle, workspace) = open_workspace_with_store(cx, HostStore::load(database).unwrap());
+
+    in_frame(cx, handle, |window, cx| {
+        window.dispatch_action(
+            Box::new(DeleteHosts(vec![
+                HostId(WEB_01),
+                HostId(WEB_02),
+                HostId(DB_01),
+            ])),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    // The question comes first: nothing is gone until it is answered.
+    in_frame(cx, handle, |window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("ok").visible());
+        assert!(window.find(("host-row", WEB_01)).visible());
+        assert!(window.find(("host-row", WEB_02)).visible());
+        assert!(window.find(("host-row", DB_01)).visible());
+        window.click("ok", cx);
+    });
+    cx.run_until_parked();
+    in_frame(cx, handle, |window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("ok").is_none(), "the question is answered");
+        for row in [WEB_01, WEB_02, DB_01] {
+            assert!(
+                window.try_find(("host-row", row)).is_none(),
+                "host {row} should be gone"
+            );
+        }
+        assert!(window.find(("host-row", STAGING_API)).visible());
+    });
+    cx.update(|cx| {
+        let store = workspace.read(cx).store().read(cx);
+        assert!(store.host(HostId(WEB_01)).is_none());
+        assert!(store.host(HostId(WEB_02)).is_none());
+        assert!(store.host(HostId(DB_01)).is_none());
+    });
+}
+
+#[gpui_kit::test]
+fn filtering_the_tree_drops_hidden_hosts_from_the_selection(cx: &mut TestAppContext) {
+    let (handle, _) = open_workspace(cx);
+    let ctrl = Modifiers::secondary_key();
+
+    in_frame(cx, handle, |window, cx| {
+        window.click(("host-row", WEB_01), cx);
+        click_row(window, WEB_02, ctrl, cx);
+        click_row(window, DB_01, ctrl, cx);
+    });
+    in_frame(cx, handle, |window, cx| {
+        window.click("host-search", cx);
+        window.input("web", cx);
+    });
+    in_frame(cx, handle, |window, _| {
+        // db-01 no longer shows, so it leaves the selection with the row.
+        assert!(window.try_find(("host-row", DB_01)).is_none());
+        assert!(row_selected(window, WEB_01));
+        assert!(row_selected(window, WEB_02));
+    });
+}

@@ -2760,6 +2760,24 @@ pub fn confirm_delete_host(
     );
 }
 
+/// Ask before deleting several hosts, saying how many. `on_delete` runs
+/// when the user confirms. Open tabs are not theirs: they stay.
+pub fn confirm_delete_hosts(
+    hosts: &[Host],
+    dependents: Dependents,
+    on_delete: DeleteHandler,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    confirm_delete(
+        &tn!("host.delete.many_name", hosts.len()),
+        describe_host_delete(dependents),
+        on_delete,
+        window,
+        cx,
+    );
+}
+
 /// What the delete dialog says goes with the host. `None` for a host
 /// nothing depends on.
 fn describe_host_delete(dependents: Dependents) -> Option<SharedString> {
@@ -2801,6 +2819,7 @@ fn proxy_kind_label(kind: ProxyKind) -> SharedString {
 #[cfg(test)]
 mod tests {
     use super::{Dependents, describe_host_delete};
+    use crate::i18n::tn;
 
     fn forwards(forwards: usize) -> Dependents {
         Dependents {
@@ -2847,5 +2866,15 @@ mod tests {
                 "将同时删除经由该主机的 1 条端口转发。有 2 台主机把它用作跳板主机，删除后要重新选择跳板主机才能连接。"
             )
         );
+    }
+
+    #[test]
+    fn a_batch_delete_names_how_many_hosts_it_takes() {
+        crate::i18n::isolate_thread();
+        crate::i18n::set_locale("zh-CN");
+        assert_eq!(tn!("host.delete.many_name", 3), "3 台主机");
+        crate::i18n::set_locale("en");
+        assert_eq!(tn!("host.delete.many_name", 1), "1 host");
+        assert_eq!(tn!("host.delete.many_name", 3), "3 hosts");
     }
 }

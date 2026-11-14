@@ -6,18 +6,19 @@
 pub use gpui_kit::component::{ActiveTheme as _, Root, WindowExt as _, notification::Notification};
 pub use gpui_kit::test::{TestAppContextExt, TestWindowExt};
 pub use gpui_kit::{
-    App, AppContext as _, ClipboardItem, ElementId, Entity, InputEvent as _, MouseButton,
-    MouseMoveEvent, TestAppContext, WindowHandle, point, px, size,
+    App, AppContext as _, ClipboardItem, ElementId, Entity, InputEvent as _, Modifiers,
+    MouseButton, MouseMoveEvent, TestAppContext, Window, WindowHandle, point, px, size,
 };
 pub use semver::Version;
 pub use shellrs::app::{
     CenterTab, CheckForUpdates, ClearTerminal, CloseScope, CloseTabs, CollapseAllGroups,
-    ConnectGroup, ConnectHost, CopyCredentialPublicKey, CopyHostAddress, CopyHostId,
-    DeleteCredential, DeleteForward, DeleteGroup, DeleteHost, DisconnectTerminal, EditCredential,
-    EditForward, EditHost, ExpandAllGroups, FindInTerminal, FindNextInTerminal,
-    FindPreviousInTerminal, FocusSearch, InstallCliCommand, NewHostInGroup, NewLocalTerminal,
-    OpenExplorer, OpenSettings, ReconnectTerminal, RemoveAgentSkill, RenameGroup, RenameTerminal,
-    StartForward, StopForward, ToggleHostPanel, ToggleToolSidebar,
+    ConnectGroup, ConnectHost, ConnectHosts, CopyCredentialPublicKey, CopyHostAddress,
+    CopyHostAddresses, CopyHostId, CopyHostIds, DeleteCredential, DeleteForward, DeleteGroup,
+    DeleteHost, DeleteHosts, DisconnectTerminal, EditCredential, EditForward, EditHost,
+    ExpandAllGroups, FindInTerminal, FindNextInTerminal, FindPreviousInTerminal, FocusSearch,
+    InstallCliCommand, NewHostInGroup, NewLocalTerminal, OpenExplorer, OpenSettings,
+    ReconnectTerminal, RemoveAgentSkill, RenameGroup, RenameTerminal, StartForward, StopForward,
+    ToggleHostPanel, ToggleToolSidebar,
 };
 pub use shellrs::cli::{AgentKind, IntegrationPaths};
 pub use shellrs::connection::{
@@ -79,6 +80,8 @@ pub const DB_01: u64 = 3;
 /// The first SFTP tab a test opens; tab ids count up from 1.
 pub const SFTP_TAB: u64 = 1;
 pub const STAGING_API: u64 = 4;
+/// The second 测试 host, between staging-api and 开发.
+pub const QA_RUNNER: u64 = 5;
 pub const DEV_BOX: u64 = 6;
 pub const INITIAL_WEB_TERMINAL: u64 = 1;
 pub const INITIAL_STAGING_TERMINAL: u64 = 2;
