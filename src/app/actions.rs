@@ -636,10 +636,13 @@ pub enum ToolKind {
     Gpu,
     /// 项目, the one tool of local terminals.
     Projects,
+    /// The AI assistant, which talks to the model and (from P1) runs what
+    /// it is allowed to.
+    Assistant,
 }
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 12] = [
+    pub const ALL: [ToolKind; 13] = [
         ToolKind::Snippets,
         ToolKind::History,
         ToolKind::Files,
@@ -652,6 +655,7 @@ impl ToolKind {
         ToolKind::Monitor,
         ToolKind::Gpu,
         ToolKind::Projects,
+        ToolKind::Assistant,
     ];
 
     /// What `settings.json` calls the tool in 侧栏功能, and the database
@@ -671,6 +675,7 @@ impl ToolKind {
             ToolKind::Monitor => "monitor",
             ToolKind::Gpu => "gpu",
             ToolKind::Projects => "projects",
+            ToolKind::Assistant => "assistant",
         }
     }
 
@@ -700,6 +705,7 @@ impl ToolKind {
             ToolKind::Monitor => t!("tools.kind.monitor"),
             ToolKind::Gpu => "GPU/NPU".into(),
             ToolKind::Projects => t!("tools.kind.projects"),
+            ToolKind::Assistant => t!("tools.kind.assistant"),
         }
     }
 
@@ -720,6 +726,7 @@ impl ToolKind {
             ToolKind::Monitor => CatalogIcon::Activity,
             ToolKind::Gpu => CatalogIcon::Gpu,
             ToolKind::Projects => CatalogIcon::FolderCode,
+            ToolKind::Assistant => CatalogIcon::Bot,
         })
     }
 }

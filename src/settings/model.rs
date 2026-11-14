@@ -86,6 +86,9 @@ pub struct AppSettings {
     pub app_lock_allow_cli: bool,
     /// 键盘快捷键: what the user changed of them.
     pub shortcuts: ShortcutOverrides,
+    /// The AI assistant: which model service it talks to. The API key is in
+    /// the system keychain, never here.
+    pub assistant: crate::assistant::settings::AssistantSettings,
 }
 
 /// What 界面字号 offers, in pixels.
@@ -664,6 +667,7 @@ impl AppSettings {
             .shell
             .map(|shell| shell.trim().to_string())
             .filter(|shell| !shell.is_empty());
+        self.assistant.normalize();
         self
     }
 }

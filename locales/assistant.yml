@@ -1,0 +1,125 @@
+_version: 2
+
+# The AI assistant: its panel, its provider settings, and what it says when
+# a call fails. The key itself is never a string here.
+
+tools.kind.assistant:
+  zh-CN: AI 助手
+  en: Assistant
+settings.sidebar_tools.assistant:
+  zh-CN: 与模型对话，按命令策略在已绑定的终端上执行。
+  en: Talk to a model and run commands on the bound terminals, under your command policy.
+assistant.title:
+  zh-CN: AI 助手
+  en: Assistant
+assistant.terminals.label:
+  zh-CN: 终端：
+  en: "Terminals:"
+assistant.terminal.local:
+  zh-CN: 本地终端
+  en: Local terminal
+assistant.empty_terminals:
+  zh-CN: 没有已连接的终端
+  en: No terminal is connected
+assistant.empty_state:
+  zh-CN: 绑定终端后可以开始对话。
+  en: Bind a terminal to start talking.
+assistant.placeholder:
+  zh-CN: 输入指令，Enter 发送，Shift+Enter 换行
+  en: Type an instruction; Enter sends, Shift+Enter adds a line
+assistant.streaming:
+  zh-CN: 正在生成…
+  en: Generating…
+assistant.role.user:
+  zh-CN: 你
+  en: You
+assistant.role.assistant:
+  zh-CN: 助手
+  en: Assistant
+assistant.action.copy:
+  zh-CN: 复制 Markdown
+  en: Copy Markdown
+assistant.action.copied:
+  zh-CN: 已复制
+  en: Copied
+assistant.action.settings:
+  zh-CN: 模型设置
+  en: Model settings
+assistant.action.send:
+  zh-CN: 发送
+  en: Send
+assistant.action.stop:
+  zh-CN: 停止
+  en: Stop
+assistant.action.save:
+  zh-CN: 保存
+  en: Save
+assistant.settings.protocol:
+  zh-CN: 协议
+  en: Protocol
+assistant.settings.protocol.openai:
+  zh-CN: OpenAI 兼容
+  en: OpenAI compatible
+assistant.settings.protocol.anthropic:
+  zh-CN: Anthropic 兼容
+  en: Anthropic compatible
+assistant.settings.base_url.placeholder:
+  zh-CN: 接口地址，例如 https://api.openai.com/v1
+  en: "Base URL, for example https://api.openai.com/v1"
+assistant.settings.model.placeholder:
+  zh-CN: 模型名
+  en: Model name
+assistant.settings.api_key.placeholder:
+  zh-CN: API Key（只写入系统钥匙串）
+  en: API key (kept in the system keychain)
+assistant.settings.hint:
+  zh-CN: Key 不进配置文件，也不写日志；留空则沿用已保存的 Key。
+  en: The key never goes in the settings file or the logs; leave it blank to keep the saved one.
+assistant.settings.key_saved:
+  zh-CN: Key 已存入系统钥匙串
+  en: The key is in the system keychain
+assistant.settings.key_kept:
+  zh-CN: 未填写新 Key，沿用已保存的 Key
+  en: No new key was typed; the saved one is kept
+assistant.settings.key_failed:
+  zh-CN: 保存 Key 失败：%{error}
+  en: "The key could not be saved: %{error}"
+assistant.error.no_terminal:
+  zh-CN: 先在顶部绑定一个终端
+  en: Bind a terminal at the top first
+assistant.error.no_provider:
+  zh-CN: 先在设置里填写接口地址与模型
+  en: Fill in the base URL and model in the settings first
+assistant.error.unauthorized:
+  zh-CN: 认证失败，请检查 API Key
+  en: Authentication failed; check the API key
+assistant.error.rate_limited:
+  zh-CN: 请求过于频繁，请稍后再试
+  en: Too many requests; try again later
+assistant.error.http:
+  zh-CN: 服务返回错误（HTTP %{status}）
+  en: "The service returned an error (HTTP %{status})"
+assistant.error.network:
+  zh-CN: 网络连接失败：%{reason}
+  en: "The connection failed: %{reason}"
+assistant.error.timeout:
+  zh-CN: 请求超时
+  en: The request timed out
+assistant.error.cancelled:
+  zh-CN: 已取消
+  en: Cancelled
+assistant.error.key_missing:
+  zh-CN: 还没有保存 API Key
+  en: No API key has been saved yet
+assistant.error.keychain:
+  zh-CN: 读取系统钥匙串失败：%{reason}
+  en: "The system keychain could not be read: %{reason}"
+assistant.error.server:
+  zh-CN: 服务返回错误：%{reason}
+  en: "The service returned an error: %{reason}"
+assistant.error.protocol:
+  zh-CN: 响应格式无法识别
+  en: The response could not be understood
+assistant.error.empty:
+  zh-CN: 模型没有返回内容
+  en: The model returned nothing

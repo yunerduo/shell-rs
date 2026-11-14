@@ -11,6 +11,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::app::{CatalogIcon, NewSavedTerminal, NewTerminalGroup, ToggleTool, ToolKind};
+use crate::assistant::{AssistantPanel, AssistantTerminal};
 use crate::docker::{Container, DockerObject, DockerPanel, ObjectSummary};
 use crate::explorer::ExplorerPanel;
 use crate::gpu::GpuPanel;
@@ -23,6 +24,7 @@ use crate::netstat::NetstatPanel;
 use crate::processes::{Process, ProcessDetails, ProcessPanel, ProcessSort};
 use crate::project::ProjectPanel;
 use crate::services::{Service, ServicePanel};
+use crate::settings::SettingsStore;
 use crate::snippets::SnippetPanel;
 use crate::terminal::{ExecTarget, LocalTerminalId, RemoteTerminalId, TerminalView};
 use crate::tmux::{TmuxPanel, TmuxTable};
@@ -36,8 +38,9 @@ impl ToolKind {
     }
 
     /// The tools beside a local terminal, in the switch's order: 项目, its
-    /// own, first; then 命令片段, which types into any terminal.
-    pub const LOCAL: [ToolKind; 2] = [ToolKind::Projects, ToolKind::Snippets];
+    /// own, first; then 命令片段, which types into any terminal; then the
+    /// assistant, which may run on any bound terminal.
+    pub const LOCAL: [ToolKind; 3] = [ToolKind::Projects, ToolKind::Snippets, ToolKind::Assistant];
 
     /// Whether the tool goes with local terminals alone, none beside a
     /// remote one.
@@ -55,6 +58,7 @@ impl ToolKind {
             | ToolKind::Monitor
             | ToolKind::Gpu => os.is_none_or(HostOs::is_linux),
             ToolKind::Snippets | ToolKind::Files | ToolKind::Projects => true,
+            ToolKind::Assistant => true,
             // Wherever `sh` runs `docker`, `kubectl` or `tmux`: Linux, and a
             // Mac with Docker Desktop, kubectl or tmux; and bash's history
             // file wherever `sh` reads it.
@@ -79,6 +83,7 @@ impl ToolKind {
             ToolKind::Monitor => "tool-monitor",
             ToolKind::Gpu => "tool-gpu",
             ToolKind::Projects => "tool-projects",
+            ToolKind::Assistant => "tool-assistant",
         }
     }
 }
@@ -143,6 +148,7 @@ pub struct ToolSidebar {
     dispatch: FocusHandle,
     gpu: Entity<GpuPanel>,
     projects: Entity<ProjectPanel>,
+    assistant: Entity<AssistantPanel>,
     focus_handle: FocusHandle,
 }
 
@@ -151,6 +157,7 @@ impl ToolSidebar {
     /// dispatch on.
     pub fn new(
         store: Entity<HostStore>,
+        settings: Entity<SettingsStore>,
         dispatch: FocusHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -171,6 +178,7 @@ impl ToolSidebar {
             processes: cx.new(|cx| ProcessPanel::new(dispatch.clone(), window, cx)),
             netstat: cx.new(|cx| NetstatPanel::new(dispatch.clone(), window, cx)),
             gpu: cx.new(|cx| GpuPanel::new(dispatch.clone(), cx)),
+            assistant: cx.new(|cx| AssistantPanel::new(settings, dispatch.clone(), window, cx)),
             dispatch,
             focus_handle: cx.focus_handle(),
         }
@@ -431,6 +439,19 @@ impl ToolSidebar {
             .update(cx, |panel, cx| panel.set_target(target, netstat, cx));
     }
 
+    /// Which terminals the assistant may speak to, and which one is in
+    /// front. Handed over on every target change; the panel owns the
+    /// aliases.
+    pub fn set_assistant_terminals(
+        &mut self,
+        terminals: Vec<AssistantTerminal>,
+        front: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.assistant
+            .update(cx, |panel, cx| panel.set_terminals(terminals, front, cx));
+    }
+
     /// Show another terminal's 文件, or none. A focus inside the one going
     /// away moves to the sidebar itself, as on `show`.
     pub fn set_files(
@@ -588,6 +609,7 @@ impl Render for ToolSidebar {
                     ToolKind::Monitor => self.monitor.clone().into_any_element(),
                     ToolKind::Gpu => self.gpu.clone().into_any_element(),
                     ToolKind::Projects => self.projects.clone().into_any_element(),
+                    ToolKind::Assistant => self.assistant.clone().into_any_element(),
                 };
                 sidebar.child(div().flex_1().min_h_0().child(panel))
             })

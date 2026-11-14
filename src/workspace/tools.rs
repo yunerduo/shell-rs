@@ -32,6 +32,7 @@ use crate::app::{
     ToggleAllGpuDevices, ToggleDockerProject, ToggleGpuDevice, ToggleMonitorDetail, ToggleTool,
     ToggleToolSidebar, ToolKind,
 };
+use crate::assistant::AssistantTerminal;
 use crate::docker::{
     self, ContainerCommand, ContainerSubject, DockerObject, open_container_dialog,
     open_object_dialog,
@@ -832,8 +833,15 @@ impl Workspace {
             }
             _ => None,
         };
+        let assistant_terminals = self.assistant_terminals(cx);
+        let front = match &target {
+            Some(SidebarTarget::Remote(terminal)) => Some(format!("remote:{}", terminal.id.0)),
+            Some(SidebarTarget::Local(id)) => Some(format!("local:{}", id.0)),
+            None => None,
+        };
         self.tools.update(cx, |tools, cx| {
             tools.set_files(files, window, cx);
+            tools.set_assistant_terminals(assistant_terminals, front, cx);
             tools.set_target(target, open, cx);
         });
         if self.dock_area.read(cx).is_dock_open(DockPlacement::Right) != open {
@@ -854,6 +862,33 @@ impl Workspace {
         self.sync_compose(window, cx);
         // The switch comes and goes with the terminal, and marks the tool.
         cx.notify();
+    }
+
+    /// The terminals the assistant may use: every open terminal tab, named
+    /// as its tab names it. The aliases are the panel's to make.
+    fn assistant_terminals(&self, cx: &App) -> Vec<AssistantTerminal> {
+        let mut terminals = Vec::new();
+        for tab in self.visible_center_tabs(cx) {
+            match tab {
+                CenterTab::Terminal(id) => {
+                    let Some(panel) = self.terminals.get(&id) else {
+                        continue;
+                    };
+                    terminals.push(AssistantTerminal::new(
+                        format!("remote:{}", id.0),
+                        panel.read(cx).host().name.clone(),
+                    ));
+                }
+                CenterTab::LocalTerminal(id) if self.local_terminals.contains_key(&id) => {
+                    terminals.push(AssistantTerminal::new(
+                        format!("local:{}", id.0),
+                        t!("assistant.terminal.local").to_string(),
+                    ));
+                }
+                _ => {}
+            }
+        }
+        terminals
     }
 }
 
