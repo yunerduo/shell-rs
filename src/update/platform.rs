@@ -9,6 +9,7 @@
 
 use gpui_kit::SharedString;
 
+use crate::app::PRODUCT_TOKEN;
 use crate::i18n::t;
 
 /// The manifest's key for the Windows portable zip.
@@ -50,11 +51,11 @@ pub fn platform_label(portable: bool) -> SharedString {
     }
 }
 
-/// `ShellRS/0.2.0 (macos; aarch64)`: all the update server learns about
+/// `AgreeShellAS/0.2.0 (macos; aarch64)`: all GitHub's API learns about
 /// the machine asking.
 pub fn user_agent(version: &str) -> String {
     format!(
-        "ShellRS/{version} ({}; {})",
+        "{PRODUCT_TOKEN}/{version} ({}; {})",
         std::env::consts::OS,
         std::env::consts::ARCH
     )
@@ -67,7 +68,7 @@ mod tests {
     #[test]
     fn the_user_agent_names_the_version_system_and_architecture() {
         let agent = user_agent("1.2.3");
-        assert!(agent.starts_with("ShellRS/1.2.3 ("), "{agent}");
+        assert!(agent.starts_with("AgreeShellAS/1.2.3 ("), "{agent}");
         assert!(agent.contains(std::env::consts::OS), "{agent}");
         assert!(
             agent.ends_with(&format!("{})", std::env::consts::ARCH)),

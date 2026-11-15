@@ -70,7 +70,7 @@ fn set_menu_bar(cx: &mut App) {
 fn menus() -> Vec<Menu> {
     vec![
         // macOS titles the first menu after the app, whatever it is called.
-        Menu::new("ShellRS").items([
+        Menu::new(crate::app::PRODUCT_NAME).items([
             MenuItem::action(t!("app.menu.about"), AboutApp),
             MenuItem::separator(),
             MenuItem::action(t!("app.menu.settings"), OpenSettings),
@@ -97,7 +97,7 @@ fn show_about_panel() {
         return;
     };
     let app = NSApplication::sharedApplication(main_thread);
-    let name = NSString::from_str("ShellRS");
+    let name = NSString::from_str(crate::app::PRODUCT_NAME);
     let version = NSString::from_str(VERSION);
     // Empty, the build number in brackets after the version is left out:
     // the version is what 设置 › 关于 shows too.
@@ -221,14 +221,14 @@ mod tests {
             apply_shortcuts(&ShortcutOverrides::default(), cx);
             let expected: Vec<Shown> = vec![
                 (
-                    "ShellRS".into(),
+                    crate::app::PRODUCT_NAME.into(),
                     vec![
-                        ("About ShellRS".into(), None),
+                        ("About Agree ShellAS".into(), None),
                         ("Settings…".into(), written("cmd-,")),
-                        ("Hide ShellRS".into(), written("cmd-h")),
+                        ("Hide Agree ShellAS".into(), written("cmd-h")),
                         ("Hide Others".into(), written("cmd-alt-h")),
                         ("Show All".into(), None),
-                        ("Quit ShellRS".into(), written("cmd-q")),
+                        ("Quit Agree ShellAS".into(), written("cmd-q")),
                     ],
                 ),
                 (

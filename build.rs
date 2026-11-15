@@ -13,8 +13,8 @@ fn main() {
         let mut resource = winresource::WindowsResource::new();
         resource
             .set_icon("assets/logo/shellrs.ico")
-            .set("ProductName", "ShellRS")
-            .set("FileDescription", "ShellRS")
+            .set("ProductName", "Agree ShellAS")
+            .set("FileDescription", "Agree ShellAS")
             // Bastion launchers identify Xshell and WinSCP through this resource.
             .set("OriginalFilename", "ShellRS-Xshell-WinSCP.exe");
         if let Err(error) = resource.compile() {

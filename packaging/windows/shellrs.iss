@@ -23,13 +23,13 @@
 
 [Setup]
 AppId={{45D9E9F5-84BB-4B09-ABE8-1FFE107ACF96}
-AppName=ShellRS
+AppName=Agree ShellAS
 AppVersion={#AppVersion}
-AppVerName=ShellRS {#AppVersion}
-AppPublisher=ShellRS
-AppPublisherURL=https://shellrs.com
-AppSupportURL=https://shellrs.com
-AppUpdatesURL=https://shellrs.com/download
+AppVerName=Agree ShellAS {#AppVersion}
+AppPublisher=Agree ShellAS
+AppPublisherURL=https://github.com/yunerduo/shell-rs
+AppSupportURL=https://github.com/yunerduo/shell-rs
+AppUpdatesURL=https://github.com/yunerduo/shell-rs/releases
 DefaultDirName={autopf}\ShellRS
 DisableDirPage=auto
 DisableProgramGroupPage=yes
@@ -41,7 +41,7 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\shellrs.exe
-UninstallDisplayName=ShellRS
+UninstallDisplayName=Agree ShellAS
 ; A running ShellRS is closed through the Restart Manager rather than
 ; making the setup fail on files in use.
 CloseApplications=yes
@@ -75,13 +75,13 @@ Source: "{#BuildDir}\shellrs-cli.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; The AppUserModelID ShellRS gives itself (`set_app_identity`, for its
 ; notifications): the same here keeps a pinned shortcut and the running
 ; window one taskbar button.
-Name: "{autoprograms}\ShellRS"; Filename: "{app}\shellrs.exe"; AppUserModelID: "com.shellrs.ShellRS"
-Name: "{autodesktop}\ShellRS"; Filename: "{app}\shellrs.exe"; AppUserModelID: "com.shellrs.ShellRS"; Tasks: desktopicon
+Name: "{autoprograms}\Agree ShellAS"; Filename: "{app}\shellrs.exe"; AppUserModelID: "com.shellrs.ShellRS"
+Name: "{autodesktop}\Agree ShellAS"; Filename: "{app}\shellrs.exe"; AppUserModelID: "com.shellrs.ShellRS"; Tasks: desktopicon
 
 [Run]
 ; Interactive installs only: an update is restarted by ShellRS's own helper,
 ; which waits for this setup to finish.
-Filename: "{app}\shellrs.exe"; Description: "{cm:LaunchProgram,ShellRS}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\shellrs.exe"; Description: "{cm:LaunchProgram,Agree ShellAS}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 ; Files a later version added, which this uninstaller does not list.

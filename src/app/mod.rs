@@ -45,6 +45,14 @@ use gpui_kit::*;
 use crate::host::{ErrorMessage, OpenError};
 use crate::i18n::t;
 
+/// The name the app shows: this fork's own, distinct from upstream. Data
+/// folders, the executable, the bundle id and the keychain keep `shellrs`
+/// so existing installations keep working.
+pub const PRODUCT_NAME: &str = "Agree ShellAS";
+
+/// [`PRODUCT_NAME`] as one HTTP token, for User-Agent strings.
+pub const PRODUCT_TOKEN: &str = "AgreeShellAS";
+
 /// Key context of the host panel, for bindings that only apply there.
 pub const HOST_PANEL_CONTEXT: &str = "HostPanel";
 /// Key context of the host panel's tree, inside `HOST_PANEL_CONTEXT`: the

@@ -59,7 +59,7 @@ pub fn render_title_bar(
                     div()
                         .text_sm()
                         .font_weight(FontWeight::MEDIUM)
-                        .child("ShellRS"),
+                        .child(crate::app::PRODUCT_NAME),
                 )
                 .child(
                     // Which list the sidebar shows. The choice stays marked

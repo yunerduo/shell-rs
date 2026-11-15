@@ -18,7 +18,7 @@ settings.store.unreadable:
   en: "Couldn’t read the settings, so this session uses the defaults: %{error}"
 settings.store.unsaved:
   zh-CN: 无法保存设置，本次运行的改动不会被保存：%{error}
-  en: "Settings can’t be saved, so changes last only until ShellRS quits: %{error}"
+  en: "Settings can’t be saved, so changes last only until Agree ShellAS quits: %{error}"
 settings.store.save_failed:
   zh-CN: 无法保存设置：%{error}
   en: "Couldn’t save the settings: %{error}"
@@ -29,7 +29,7 @@ settings.tab.title:
 settings.preview:
   zh-CN: 预览
   en: Preview
-# A choice that is what ShellRS uses unless told otherwise: 「13（默认）」.
+# A choice that is what Agree ShellAS uses unless told otherwise: 「13（默认）」.
 settings.default_option:
   zh-CN: "%{value}（默认）"
   en: "%{value} (default)"
@@ -271,8 +271,8 @@ settings.notifications.title:
   zh-CN: 通知
   en: Notifications
 settings.notifications.description:
-  zh-CN: ShellRS 不在前台时发系统通知；在前台但终端在别的标签时，在窗口右上角提示，点一下切过去。
-  en: When ShellRS is in the background, you get a system notification. When it’s in front but the terminal is in another tab, a notice appears at the top right of the window; click it to go there.
+  zh-CN: Agree ShellAS 不在前台时发系统通知；在前台但终端在别的标签时，在窗口右上角提示，点一下切过去。
+  en: When Agree ShellAS is in the background, you get a system notification. When it’s in front but the terminal is in another tab, a notice appears at the top right of the window; click it to go there.
 settings.notifications.programs:
   zh-CN: 程序发送的通知
   en: Notifications from programs
@@ -321,8 +321,8 @@ settings.local_terminal.keep_output:
   zh-CN: 保留终端内容
   en: Keep terminal output
 settings.local_terminal.keep_output_description:
-  zh-CN: 「项目」里的本地终端关闭或退出 ShellRS 时，记下最后 1000 行输出，下次打开时先显示出来。内容以明文存在本机的数据目录里；关掉会同时删除已保留的内容。
-  en: When a local terminal in Projects closes, or ShellRS quits, its last 1,000 lines of output are kept and shown again when it next opens. They’re stored as plain text in the data folder on this computer; turning this off deletes them.
+  zh-CN: 「项目」里的本地终端关闭或退出 Agree ShellAS 时，记下最后 1000 行输出，下次打开时先显示出来。内容以明文存在本机的数据目录里；关掉会同时删除已保留的内容。
+  en: When a local terminal in Projects closes, or Agree ShellAS quits, its last 1,000 lines of output are kept and shown again when it next opens. They’re stored as plain text in the data folder on this computer; turning this off deletes them.
 settings.local_terminal.keep_output_keywords:
   zh-CN: 保留,内容,输出,回滚,历史,恢复,项目
   en: keep,output,scrollback,history,restore,projects
@@ -475,8 +475,8 @@ settings.cli.outdated:
   zh-CN: 已安装旧版本（%{path}）
   en: An older version is installed (%{path})
 settings.cli.binary_stale:
-  zh-CN: "%{path} 指向 %{target}，已失效或不是这个 ShellRS"
-  en: "%{path} points to %{target}, which is gone or isn’t this ShellRS"
+  zh-CN: "%{path} 指向 %{target}，已失效或不是这个 Agree ShellAS"
+  en: "%{path} points to %{target}, which is gone or isn’t this Agree ShellAS"
 settings.cli.binary_occupied_by:
   zh-CN: "%{path} 已被其他程序占用（指向 %{target}）"
   en: "%{path} is taken by another program (it points to %{target})"
@@ -487,8 +487,8 @@ settings.cli.binary_not_on_path:
   zh-CN: "%{path} 所在的文件夹不在 PATH 中"
   en: The folder of %{path} isn’t on the PATH
 settings.cli.binary_unavailable:
-  zh-CN: 找不到 shellrs-cli.exe：它应在 ShellRS 程序旁边（开发时请先 cargo build）
-  en: Can’t find shellrs-cli.exe. It belongs next to the ShellRS program (in development, run cargo build first).
+  zh-CN: 找不到 shellrs-cli.exe：它应在 Agree ShellAS 程序旁边（开发时请先 cargo build）
+  en: Can’t find shellrs-cli.exe. It belongs next to the Agree ShellAS program (in development, run cargo build first).
 settings.cli.installed_at:
   zh-CN: 已安装于
   en: Installed at
@@ -574,14 +574,14 @@ settings.about.analytics:
   zh-CN: 发送匿名使用统计
   en: Send anonymous usage statistics
 settings.about.analytics_description:
-  zh-CN: 发送应用版本、操作系统/架构，用于评估安装量、版本分布，用于改进 ShellRS。不会发送任何主机、凭据、命令或会话内容。
-  en: Sends the app version, operating system and architecture, to count installs and versions and to improve ShellRS. No host, credential, command or session content is ever sent.
+  zh-CN: 默认关闭，只有在这里勾选之后才会发送。发送应用版本、操作系统/架构，用于评估安装量、版本分布，用于改进 Agree ShellAS。不会发送任何主机、凭据、命令或会话内容。
+  en: Off by default; nothing is sent until you turn it on here. It sends the app version, operating system and architecture, to count installs and versions and to improve Agree ShellAS. No host, credential, command or session content is ever sent.
 settings.about.website:
-  zh-CN: 官网
-  en: Website
+  zh-CN: GitHub
+  en: GitHub
 settings.about.website_description:
-  zh-CN: 功能介绍、下载和更新内容。
-  en: Features, downloads and what’s new.
+  zh-CN: 源代码、下载和更新内容。
+  en: Source, downloads and release notes.
 
 settings.highlight.pattern_placeholder:
   zh-CN: 例如：ERROR|WARN 或 failed\s+\d+
@@ -788,8 +788,8 @@ settings.sync.devices_description:
   zh-CN: 移除丢失的设备后，再更换同步密码。
   en: After removing a lost device, change the sync password.
 settings.sync.device_detail:
-  zh-CN: "%{platform} · ShellRS %{version} · 上次同步 %{time}"
-  en: "%{platform} · ShellRS %{version} · last synced %{time}"
+  zh-CN: "%{platform} · Agree ShellAS %{version} · 上次同步 %{time}"
+  en: "%{platform} · Agree ShellAS %{version} · last synced %{time}"
 settings.sync.remove:
   zh-CN: 移除…
   en: Remove…

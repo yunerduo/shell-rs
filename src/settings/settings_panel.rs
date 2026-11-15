@@ -1196,7 +1196,7 @@ fn about_groups(panel: &SettingsPanel, cx: &App) -> Vec<SettingGroup> {
             )
             .description(t!("settings.about.analytics_description"))]),
         SettingGroup::new()
-            .title("ShellRS")
+            .title(crate::app::PRODUCT_NAME)
             .items([SettingItem::new(
                 t!("settings.about.website"),
                 SettingField::render(|options, _, _| {
@@ -1204,7 +1204,7 @@ fn about_groups(panel: &SettingsPanel, cx: &App) -> Vec<SettingGroup> {
                         .outline()
                         .with_size(options.size())
                         .icon(Icon::new(CatalogIcon::ExternalLink))
-                        .label("shellrs.com")
+                        .label("GitHub")
                         .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenWebsite), cx))
                 }),
             )
