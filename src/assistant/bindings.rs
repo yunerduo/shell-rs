@@ -18,6 +18,10 @@ use crate::terminal::TerminalView;
 #[derive(Clone, Debug)]
 pub struct AssistantTerminal {
     pub id: String,
+    /// What identifies the terminal after a restart: the host's permanent
+    /// public id for a remote terminal. Empty when there is nothing more
+    /// stable than the title.
+    pub stable: String,
     /// The tab's title, for people; not the alias.
     pub title: String,
     pub alias: String,
@@ -36,6 +40,7 @@ pub struct AssistantTerminal {
 impl PartialEq for AssistantTerminal {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
+            && self.stable == other.stable
             && self.title == other.title
             && self.alias == other.alias
             && self.shell_only == other.shell_only
@@ -49,12 +54,19 @@ impl AssistantTerminal {
     pub fn new(id: impl Into<String>, title: impl Into<String>) -> Self {
         Self {
             id: id.into(),
+            stable: String::new(),
             title: title.into(),
             alias: String::new(),
             view: None,
             shell_only: false,
             local: false,
         }
+    }
+
+    /// Give it the identity it keeps across restarts.
+    pub fn with_stable(mut self, stable: impl Into<String>) -> Self {
+        self.stable = stable.into();
+        self
     }
 
     /// Offer the terminal with the view its commands run on.
@@ -105,6 +117,10 @@ pub struct SavedBinding {
     pub title: String,
     #[serde(default)]
     pub local: bool,
+    /// The host's public id, empty for a binding saved before this was
+    /// kept or for a terminal with no stable name.
+    #[serde(default)]
+    pub stable: String,
 }
 
 /// The file bindings are kept in, under the assistant's directory.
@@ -272,6 +288,7 @@ impl Bindings {
         for entry in &mut self.entries {
             if let Some(terminal) = open.iter().find(|terminal| terminal.id == entry.id) {
                 entry.title = terminal.title.clone();
+                entry.stable = terminal.stable.clone();
             }
         }
         self.unbound
@@ -298,28 +315,58 @@ impl Bindings {
         self.pending = saved;
     }
 
-    /// Look for the terminals the pending aliases name. Returns whether a
+    /// Look for the terminals the pending aliases name: first by the host's
+    /// permanent id, then, for older files, by title. Returns whether a
     /// binding changed; the rest stay pending.
     pub fn match_pending(&mut self, open: &[AssistantTerminal]) -> bool {
         let mut changed = false;
         let mut still = Vec::new();
         for wanted in std::mem::take(&mut self.pending) {
-            let candidates: Vec<&AssistantTerminal> = open
+            let pool: Vec<&AssistantTerminal> = open
                 .iter()
-                .filter(|terminal| {
-                    terminal.local == wanted.local
-                        && terminal.title.eq_ignore_ascii_case(&wanted.title)
-                        && !self.is_bound(&terminal.id)
-                })
+                .filter(|terminal| terminal.local == wanted.local && !self.is_bound(&terminal.id))
                 .collect();
-            if candidates.len() == 1 && self.bind_as(candidates[0], &wanted.alias) {
-                changed = true;
+            // The host's permanent id is the identity; the title is only
+            // used for bindings saved before it was kept.
+            let by_id: Vec<&AssistantTerminal> = pool
+                .iter()
+                .copied()
+                .filter(|terminal| !wanted.stable.is_empty() && terminal.stable == wanted.stable)
+                .collect();
+            let matched = if by_id.len() == 1 {
+                Some(by_id[0])
+            } else if by_id.is_empty() {
+                let by_name: Vec<&AssistantTerminal> = pool
+                    .iter()
+                    .copied()
+                    .filter(|terminal| terminal.title.eq_ignore_ascii_case(&wanted.title))
+                    .collect();
+                (by_name.len() == 1).then(|| by_name[0])
             } else {
-                still.push(wanted);
+                None
+            };
+            match matched {
+                Some(terminal) if self.bind_as(terminal, &wanted.alias) => changed = true,
+                _ => still.push(wanted),
             }
         }
         self.pending = still;
         changed
+    }
+
+    /// Bind a pending alias to the terminal the user picked. The alias comes
+    /// back only if it is still free; the pending entry is dropped either
+    /// way because the user answered it.
+    pub fn rebind_pending(&mut self, index: usize, terminal: &AssistantTerminal) -> bool {
+        let Some(wanted) = self.pending.get(index) else {
+            return false;
+        };
+        let alias = wanted.alias.clone();
+        let bound = self.bind_as(terminal, &alias);
+        if !bound {
+            self.pending.remove(index);
+        }
+        bound
     }
 
     /// Forget a pending alias the user does not want back.
@@ -341,6 +388,7 @@ impl Bindings {
                 alias: entry.alias.clone(),
                 title: entry.title.clone(),
                 local: entry.local,
+                stable: entry.stable.clone(),
             })
             .collect();
         saved.extend(self.pending.iter().cloned());
@@ -373,7 +421,9 @@ impl Bindings {
 /// Whether a saved alias names this terminal: the same name on the same
 /// side of the connection.
 fn same_terminal_name(wanted: &SavedBinding, terminal: &AssistantTerminal) -> bool {
-    wanted.local == terminal.local && wanted.title.eq_ignore_ascii_case(&terminal.title)
+    wanted.local == terminal.local
+        && (!wanted.stable.is_empty() && wanted.stable == terminal.stable
+            || wanted.title.eq_ignore_ascii_case(&terminal.title))
 }
 
 #[cfg(test)]
@@ -493,6 +543,7 @@ mod tests {
             alias: "web".into(),
             title: "Web".into(),
             local: false,
+            stable: String::new(),
         }]);
         assert!(bindings.match_pending(&[terminal("remote:7", "web")]));
         assert_eq!(bindings.entries().len(), 1);
@@ -506,6 +557,7 @@ mod tests {
             alias: "web".into(),
             title: "web".into(),
             local: false,
+            stable: String::new(),
         }];
         let mut bindings = Bindings::default();
         bindings.restore(saved.clone());
@@ -523,12 +575,71 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_alias_finds_its_host_again_after_a_rename() {
+        let mut bindings = Bindings::default();
+        bindings.restore(vec![SavedBinding {
+            alias: "web".into(),
+            title: "web".into(),
+            local: false,
+            stable: "host:abc".into(),
+        }]);
+        let renamed = AssistantTerminal::new("remote:9", "web-01").with_stable("host:abc");
+        assert!(bindings.match_pending(&[renamed]));
+        assert_eq!(bindings.entries().len(), 1);
+        assert_eq!(bindings.entries()[0].alias, "web");
+    }
+
+    #[test]
+    fn two_tabs_of_one_host_wait_instead_of_picking_one() {
+        let mut bindings = Bindings::default();
+        bindings.restore(vec![SavedBinding {
+            alias: "web".into(),
+            title: "web".into(),
+            local: false,
+            stable: "host:abc".into(),
+        }]);
+        let twins = [
+            AssistantTerminal::new("remote:1", "web").with_stable("host:abc"),
+            AssistantTerminal::new("remote:2", "web").with_stable("host:abc"),
+        ];
+        assert!(!bindings.match_pending(&twins));
+        assert!(bindings.is_empty());
+        assert_eq!(bindings.pending().len(), 1);
+    }
+
+    #[test]
+    fn a_pending_alias_takes_the_terminal_the_user_picked() {
+        let mut bindings = Bindings::default();
+        bindings.restore(vec![
+            SavedBinding {
+                alias: "web".into(),
+                title: "web".into(),
+                local: false,
+                stable: "host:abc".into(),
+            },
+            SavedBinding {
+                alias: "db".into(),
+                title: "db".into(),
+                local: false,
+                stable: "host:def".into(),
+            },
+        ]);
+        let picked = AssistantTerminal::new("remote:4", "renamed").with_stable("host:abc");
+        assert!(bindings.rebind_pending(0, &picked));
+        assert_eq!(bindings.entries()[0].alias, "web");
+        assert_eq!(bindings.entries()[0].title, "renamed");
+        assert_eq!(bindings.pending().len(), 1, "the other one still waits");
+        assert_eq!(bindings.pending()[0].alias, "db");
+    }
+
+    #[test]
     fn a_local_terminal_and_a_remote_one_of_the_same_name_do_not_mix() {
         let mut bindings = Bindings::default();
         bindings.restore(vec![SavedBinding {
             alias: "shell".into(),
             title: "shell".into(),
             local: true,
+            stable: String::new(),
         }]);
         bindings.match_pending(&[terminal("remote:1", "shell")]);
         assert!(bindings.is_empty(), "the remote one is a different host");
@@ -567,6 +678,7 @@ mod tests {
             alias: "web".into(),
             title: "web".into(),
             local: false,
+            stable: String::new(),
         }]);
         assert!(bindings.bind(&terminal("remote:5", "web")));
         assert!(bindings.pending().is_empty());

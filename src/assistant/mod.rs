@@ -7,6 +7,7 @@ pub mod bindings;
 pub mod chat;
 pub mod classifier;
 pub mod client;
+pub mod config_dialog;
 pub mod inject;
 pub mod output;
 pub mod panel;

@@ -7,11 +7,13 @@ use std::sync::mpsc::TryRecvError;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _,
-    button::{Button, ButtonVariants as _},
+    ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
+    button::{Button, ButtonVariants as _, DropdownButton},
     checkbox::Checkbox,
     h_flex,
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
+    menu::PopupMenuItem,
+    scroll::ScrollableElement as _,
     text::TextView,
     v_flex,
 };
@@ -21,7 +23,6 @@ use gpui_kit::*;
 
 use crate::app::CatalogIcon;
 use crate::i18n::t;
-use crate::secrets::KeychainSecretStore;
 use crate::settings::SettingsStore;
 use crate::terminal::{
     ExecDetailResult, RunFailure, RunHandle, RunProgress, RunTiming, TerminalEvent, TerminalRun,
@@ -29,7 +30,7 @@ use crate::terminal::{
 };
 
 use super::audit;
-use super::bindings::{self, AssistantTerminal, Bindings};
+use super::bindings::{self, AssistantTerminal, Bindings, SavedBinding};
 use super::chat::{
     self, AskOption, AskUserArgs, ChatMessage, RunCommandArgs, RunMode, ToolCall, WaitForOutputArgs,
 };
@@ -41,7 +42,6 @@ use super::policy::{self, AuthorizationLevel, Classified, Decision, Policy, Risk
 use super::protocol::ToolTerminal;
 use super::schedule::{self, ResumePlan, Schedule, ScheduleAction, ScheduleStore, ScheduleTarget};
 use super::sessions::{SessionEvent, Sessions};
-use super::settings::{HEADER_LIMIT, ProviderProtocol, RequestHeader, clean_header};
 use super::tool_result::{
     call_line, denied_result, tool_card_parts, tool_error, tool_result_body, unknown_terminal,
     unsupported_result,
@@ -238,34 +238,16 @@ struct ScheduledAiRun {
     deadline: Instant,
 }
 
-/// The parts of one command list's section in the settings.
-struct ListSection<'a> {
-    prefix: &'static str,
-    title: SharedString,
-    hint: SharedString,
-    input: &'a Entity<InputState>,
-    entries: &'a [String],
-    on_add: fn(&mut AssistantPanel, &mut Window, &mut Context<AssistantPanel>),
-    on_remove: fn(&mut AssistantPanel, usize, &mut Context<AssistantPanel>),
-}
-
 /// A tool panel in the sidebar. It renders itself; the sidebar only keeps
 /// the entity.
 pub struct AssistantPanel {
     settings: Entity<SettingsStore>,
-    protocol: ProviderProtocol,
-    base_url: Entity<InputState>,
-    model: Entity<InputState>,
-    api_key: Entity<InputState>,
     input: Entity<TextareaState>,
-    blacklist_input: Entity<InputState>,
-    whitelist_input: Entity<InputState>,
-    /// The two boxes one extra request header is typed into.
-    header_name: Entity<InputState>,
-    header_value: Entity<InputState>,
-    /// The classifier's model name, edited beside its switch.
-    classifier_model: Entity<InputState>,
     bindings: Bindings,
+    /// Whether the aliases still waiting for a terminal are listed. A
+    /// restart that placed none of them would otherwise open on a wall of
+    /// warnings; the count says as much in one line.
+    pending_open: bool,
     available: Vec<AssistantTerminal>,
     /// The conversations kept between launches; `messages` is the open one.
     sessions: Sessions,
@@ -323,8 +305,6 @@ pub struct AssistantPanel {
     stopped: bool,
     error: Option<SharedString>,
     notice: Option<SharedString>,
-    key_note: Option<SharedString>,
-    settings_open: bool,
     /// Where a finished task's notice goes.
     window: AnyWindowHandle,
     /// The tasks and the commands waiting for the user.
@@ -336,8 +316,6 @@ pub struct AssistantPanel {
     scheduled_ai: Option<ScheduledAiRun>,
     /// The 30-second loop is running.
     schedule_ticking: bool,
-    schedule_command: Entity<InputState>,
-    schedule_interval: Entity<InputState>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -348,75 +326,15 @@ impl AssistantPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let assistant = settings.read(cx).settings().assistant;
-        let protocol = assistant.protocol;
-        let provider = assistant.active().clone();
-        let base_url = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder(t!("assistant.settings.base_url.placeholder"))
-                .default_value(provider.base_url)
-        });
-        let model = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder(t!("assistant.settings.model.placeholder"))
-                .default_value(provider.model)
-        });
-        let api_key = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder(t!("assistant.settings.api_key.placeholder"))
-                .masked(true)
-        });
         let input = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .submit_on_enter(true)
                 .placeholder(t!("assistant.placeholder"))
         });
-        let blacklist_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder(t!("assistant.settings.blacklist.placeholder"))
-                .submit_on_enter(true)
-        });
-        let whitelist_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder(t!("assistant.settings.whitelist.placeholder"))
-                .submit_on_enter(true)
-        });
-        let header_name = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder(t!("assistant.settings.headers.name_placeholder"))
-                .submit_on_enter(true)
-        });
-        let header_value = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder(t!("assistant.settings.headers.value_placeholder"))
-                .submit_on_enter(true)
-        });
         let ask_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder(t!("assistant.ask.placeholder"))
                 .submit_on_enter(true)
-        });
-        let classifier_model = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder(t!("assistant.settings.classifier.model_placeholder"))
-                .default_value(
-                    settings
-                        .read(cx)
-                        .settings()
-                        .assistant
-                        .classifier_model
-                        .clone(),
-                )
-        });
-        let schedule_command = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder(t!("assistant.schedule.command_placeholder"))
-                .submit_on_enter(true)
-        });
-        let schedule_interval = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder(t!("assistant.schedule.interval_placeholder"))
-                .default_value("15")
         });
         let subscriptions =
             vec![
@@ -437,51 +355,6 @@ impl AssistantPanel {
                         }
                     },
                 ),
-                cx.subscribe_in(
-                    &blacklist_input,
-                    window,
-                    |this, _, event: &InputEvent, window, cx| {
-                        if matches!(event, InputEvent::PressEnter { shift: false, .. }) {
-                            this.add_blacklist(window, cx);
-                        }
-                    },
-                ),
-                cx.subscribe_in(
-                    &whitelist_input,
-                    window,
-                    |this, _, event: &InputEvent, window, cx| {
-                        if matches!(event, InputEvent::PressEnter { shift: false, .. }) {
-                            this.add_whitelist(window, cx);
-                        }
-                    },
-                ),
-                cx.subscribe_in(
-                    &header_name,
-                    window,
-                    |this, _, event: &InputEvent, window, cx| {
-                        if matches!(event, InputEvent::PressEnter { shift: false, .. }) {
-                            this.add_header(window, cx);
-                        }
-                    },
-                ),
-                cx.subscribe_in(
-                    &header_value,
-                    window,
-                    |this, _, event: &InputEvent, window, cx| {
-                        if matches!(event, InputEvent::PressEnter { shift: false, .. }) {
-                            this.add_header(window, cx);
-                        }
-                    },
-                ),
-                cx.subscribe_in(
-                    &schedule_command,
-                    window,
-                    |this, _, event: &InputEvent, window, cx| {
-                        if matches!(event, InputEvent::PressEnter { shift: false, .. }) {
-                            this.add_schedule(window, cx);
-                        }
-                    },
-                ),
             ];
         let sessions = Sessions::load(&crate::app::data_dir(), schedule::now_millis());
         let messages = match sessions.active_id() {
@@ -490,16 +363,7 @@ impl AssistantPanel {
         };
         let mut panel = Self {
             settings,
-            protocol,
-            base_url,
-            model,
-            api_key,
             input,
-            blacklist_input,
-            whitelist_input,
-            header_name,
-            header_value,
-            classifier_model,
             bindings: Bindings::default(),
             available: Vec::new(),
             sessions,
@@ -516,6 +380,7 @@ impl AssistantPanel {
             echoes: Vec::new(),
             watched: Vec::new(),
             bindings_restored: false,
+            pending_open: false,
             level: AuthorizationLevel::Restricted,
             covered: Vec::new(),
             full_access_card: None,
@@ -529,16 +394,12 @@ impl AssistantPanel {
             stopped: false,
             error: None,
             notice: None,
-            key_note: None,
-            settings_open: false,
             window: window.window_handle(),
             schedules: ScheduleStore::load(&Self::schedules_path()),
             pending_items: pending::load(&Self::pending_path()),
             scheduled: Vec::new(),
             scheduled_ai: None,
             schedule_ticking: false,
-            schedule_command,
-            schedule_interval,
             _subscriptions: subscriptions,
         };
         // A task that came due while the app was not running is counted and
@@ -563,6 +424,26 @@ impl AssistantPanel {
             assistant.user_blacklist.clone(),
             assistant.user_whitelist.clone(),
         )
+    }
+
+    /// The tasks the settings dialog shows.
+    pub(super) fn schedules(&self) -> &[Schedule] {
+        &self.schedules.schedules
+    }
+
+    /// The commands waiting for the user, which the settings dialog shows.
+    pub(super) fn review_items(&self) -> &[PendingItem] {
+        &self.pending_items
+    }
+
+    /// The terminals this conversation can use right now.
+    pub(super) fn bound_terminals(&self) -> &[AssistantTerminal] {
+        self.bindings.entries()
+    }
+
+    /// Open the settings over this panel.
+    pub fn open_config(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        super::config_dialog::open_config_dialog(self.settings.clone(), cx.entity(), window, cx);
     }
 
     /// Count what came due while the app was not running and move every
@@ -1163,17 +1044,19 @@ impl AssistantPanel {
         );
     }
 
-    /// The box, the interval and the one terminal a new task would use.
-    /// `Ok(None)` means the box is empty; an error is what the panel says
-    /// instead of making the task.
-    #[allow(clippy::type_complexity)]
-    fn schedule_draft(
-        &self,
-        cx: &App,
-    ) -> Result<Option<(AssistantTerminal, u32, String)>, SharedString> {
-        let text = self.schedule_command.read(cx).value().trim().to_string();
+    /// Add a task on the first bound terminal. The dialog carries the
+    /// values; the panel owns the list and the save. The command or prompt
+    /// is frozen here, so later edits elsewhere cannot change it.
+    pub(super) fn add_schedule_values(
+        &mut self,
+        text: &str,
+        interval: u32,
+        prompt: bool,
+        cx: &mut Context<Self>,
+    ) -> Result<(), SharedString> {
+        let text = text.trim().to_string();
         if text.is_empty() {
-            return Ok(None);
+            return Ok(());
         }
         let Some(terminal) = self.bindings.entries().first().cloned() else {
             return Err(t!("assistant.schedule.no_target"));
@@ -1185,42 +1068,10 @@ impl AssistantPanel {
                 t!("assistant.schedule.shell_only")
             });
         }
-        let interval = self
-            .schedule_interval
-            .read(cx)
-            .value()
-            .trim()
-            .parse::<u32>()
-            .unwrap_or(15)
-            .clamp(
-                schedule::MIN_INTERVAL_MINUTES,
-                schedule::MAX_INTERVAL_MINUTES,
-            );
-        Ok(Some((terminal, interval, text)))
-    }
-
-    /// Add a fixed-command task on the first bound terminal. The command is
-    /// frozen here; later edits to a snippet cannot change it.
-    fn add_schedule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.add_schedule_as(false, window, cx);
-    }
-
-    /// Add a fixed-prompt task on the first bound terminal.
-    fn add_prompt_schedule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.add_schedule_as(true, window, cx);
-    }
-
-    fn add_schedule_as(&mut self, prompt: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let draft = match self.schedule_draft(cx) {
-            Ok(Some(draft)) => draft,
-            Ok(None) => return,
-            Err(message) => {
-                self.notice = Some(message);
-                cx.notify();
-                return;
-            }
-        };
-        let (terminal, interval, text) = draft;
+        let interval = interval.clamp(
+            schedule::MIN_INTERVAL_MINUTES,
+            schedule::MAX_INTERVAL_MINUTES,
+        );
         let target = ScheduleTarget::new(
             &terminal.id,
             &terminal.title,
@@ -1236,13 +1087,11 @@ impl AssistantPanel {
         };
         self.schedules.add(task);
         let _ = self.schedules.save(&Self::schedules_path());
-        self.schedule_command
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        self.notice = Some(t!("assistant.schedule.added"));
         cx.notify();
+        Ok(())
     }
 
-    fn toggle_schedule(&mut self, id: &str, enabled: bool, cx: &mut Context<Self>) {
+    pub(super) fn toggle_schedule(&mut self, id: &str, enabled: bool, cx: &mut Context<Self>) {
         if let Some(task) = self.schedules.get_mut(id) {
             task.enabled = enabled;
             task.updated_at = schedule::now_millis();
@@ -1251,7 +1100,7 @@ impl AssistantPanel {
         cx.notify();
     }
 
-    fn remove_schedule(&mut self, id: &str, cx: &mut Context<Self>) {
+    pub(super) fn remove_schedule(&mut self, id: &str, cx: &mut Context<Self>) {
         self.schedules.remove(id);
         let _ = self.schedules.save(&Self::schedules_path());
         cx.notify();
@@ -1259,20 +1108,20 @@ impl AssistantPanel {
 
     /// Point a waiting task at the first bound terminal, when the user says
     /// so. Nothing is moved on its own.
-    fn rebind_schedule(&mut self, id: &str, cx: &mut Context<Self>) {
+    pub(super) fn rebind_schedule(
+        &mut self,
+        id: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), SharedString> {
         let Some(terminal) = self.bindings.entries().first().cloned() else {
-            self.notice = Some(t!("assistant.schedule.no_target"));
-            cx.notify();
-            return;
+            return Err(t!("assistant.schedule.no_target"));
         };
         if !terminal.can_exec() {
-            self.notice = Some(if terminal.local {
+            return Err(if terminal.local {
                 t!("assistant.schedule.local")
             } else {
                 t!("assistant.schedule.shell_only")
             });
-            cx.notify();
-            return;
         }
         let target = ScheduleTarget::new(
             &terminal.id,
@@ -1282,9 +1131,7 @@ impl AssistantPanel {
         );
         if let Some(task) = self.schedules.get_mut(id) {
             if task.bind_target(target).is_err() {
-                self.notice = Some(t!("assistant.schedule.second_target"));
-                cx.notify();
-                return;
+                return Err(t!("assistant.schedule.second_target"));
             }
             task.updated_at = schedule::now_millis();
             task.next_due_at =
@@ -1292,11 +1139,12 @@ impl AssistantPanel {
         }
         let _ = self.schedules.save(&Self::schedules_path());
         cx.notify();
+        Ok(())
     }
 
     /// Run a review item the user allowed. It is judged again at the
     /// restricted level; a refusal is not overridable here.
-    fn approve_pending_item(&mut self, index: usize, cx: &mut Context<Self>) {
+    pub(super) fn approve_pending_item(&mut self, index: usize, cx: &mut Context<Self>) {
         if index >= self.pending_items.len() {
             return;
         }
@@ -1340,7 +1188,7 @@ impl AssistantPanel {
         );
     }
 
-    fn deny_pending_item(&mut self, index: usize, cx: &mut Context<Self>) {
+    pub(super) fn deny_pending_item(&mut self, index: usize, cx: &mut Context<Self>) {
         if index >= self.pending_items.len() {
             return;
         }
@@ -1610,85 +1458,6 @@ impl AssistantPanel {
         self.save_bindings(cx);
     }
 
-    fn toggle_settings(&mut self, cx: &mut Context<Self>) {
-        self.settings_open = !self.settings_open;
-        cx.notify();
-    }
-
-    fn switch_protocol(
-        &mut self,
-        protocol: ProviderProtocol,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.protocol = protocol;
-        let assistant = self.settings.read(cx).settings().assistant;
-        let provider = assistant.provider(protocol).clone();
-        self.base_url.update(cx, |input, cx| {
-            input.set_value(provider.base_url, window, cx)
-        });
-        self.model
-            .update(cx, |input, cx| input.set_value(provider.model, window, cx));
-        self.api_key
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        self.key_note = None;
-        self.settings.update(cx, |store, cx| {
-            store.update(|settings| settings.assistant.protocol = protocol, cx)
-        });
-        cx.notify();
-    }
-
-    fn save_provider(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let protocol = self.protocol;
-        let base_url = self.base_url.read(cx).value().to_string();
-        let model = self.model.read(cx).value().to_string();
-        let key = self.api_key.read(cx).value().to_string();
-        self.settings.update(cx, |store, cx| {
-            store.update(
-                |settings| {
-                    let provider = settings.assistant.provider_mut(protocol);
-                    provider.base_url = base_url;
-                    provider.model = model;
-                },
-                cx,
-            )
-        });
-        self.api_key
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        if key.trim().is_empty() {
-            self.key_note = Some(t!("assistant.settings.key_kept"));
-            cx.notify();
-            return;
-        }
-        let keychain_id = self
-            .settings
-            .read(cx)
-            .settings()
-            .assistant
-            .provider(protocol)
-            .keychain_id
-            .clone();
-        let account = super::settings::account(&keychain_id);
-        let key = zeroize::Zeroizing::new(key);
-        self.key_note = Some(t!("assistant.settings.key_saved"));
-        cx.spawn(async move |this, cx| {
-            let written = cx
-                .background_executor()
-                .spawn(async move { KeychainSecretStore::write_account(&account, &key) })
-                .await;
-            this.update(cx, |this, cx| {
-                this.key_note = Some(match written {
-                    Ok(()) => t!("assistant.settings.key_saved"),
-                    Err(error) => t!("assistant.settings.key_failed", error = error.to_string()),
-                });
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-        cx.notify();
-    }
-
     /// Ask the model. The panel keeps the conversation; the worker keeps
     /// the key. A question starts a new exchange, so the round count starts
     /// again.
@@ -1717,7 +1486,7 @@ impl AssistantPanel {
         let provider = assistant.active().clone();
         if provider.base_url.trim().is_empty() || provider.model.trim().is_empty() {
             self.error = Some(t!("assistant.error.no_provider"));
-            self.settings_open = true;
+            self.open_config(window, cx);
             cx.notify();
             return;
         }
@@ -1763,7 +1532,6 @@ impl AssistantPanel {
         let provider = assistant.active().clone();
         if provider.base_url.trim().is_empty() || provider.model.trim().is_empty() {
             self.error = Some(t!("assistant.error.no_provider"));
-            self.settings_open = true;
             return;
         }
         self.rounds += 1;
@@ -3011,136 +2779,6 @@ impl AssistantPanel {
         cx.notify();
     }
 
-    fn add_blacklist(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let value = self.blacklist_input.read(cx).value().to_string();
-        let Some(entry) = policy::clean_blacklist_entry(&value) else {
-            self.error = Some(t!("assistant.settings.list.invalid"));
-            cx.notify();
-            return;
-        };
-        self.settings.update(cx, |store, cx| {
-            store.update(
-                |settings| {
-                    if !settings.assistant.user_blacklist.contains(&entry) {
-                        settings.assistant.user_blacklist.push(entry);
-                    }
-                },
-                cx,
-            )
-        });
-        self.blacklist_input
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        self.error = None;
-        cx.notify();
-    }
-
-    fn add_whitelist(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let value = self.whitelist_input.read(cx).value().to_string();
-        let Some(entry) = policy::clean_whitelist_entry(&value) else {
-            self.error = Some(t!("assistant.settings.list.invalid"));
-            cx.notify();
-            return;
-        };
-        self.settings.update(cx, |store, cx| {
-            store.update(
-                |settings| {
-                    if !settings.assistant.user_whitelist.contains(&entry) {
-                        settings.assistant.user_whitelist.push(entry);
-                    }
-                },
-                cx,
-            )
-        });
-        self.whitelist_input
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        self.error = None;
-        cx.notify();
-    }
-
-    fn remove_blacklist(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.settings.update(cx, |store, cx| {
-            store.update(
-                |settings| {
-                    if index < settings.assistant.user_blacklist.len() {
-                        settings.assistant.user_blacklist.remove(index);
-                    }
-                },
-                cx,
-            )
-        });
-        cx.notify();
-    }
-
-    fn remove_whitelist(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.settings.update(cx, |store, cx| {
-            store.update(
-                |settings| {
-                    if index < settings.assistant.user_whitelist.len() {
-                        settings.assistant.user_whitelist.remove(index);
-                    }
-                },
-                cx,
-            )
-        });
-        cx.notify();
-    }
-
-    fn add_header(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let name = self.header_name.read(cx).value().to_string();
-        let value = self.header_value.read(cx).value().to_string();
-        let Some(header) = clean_header(&name, &value) else {
-            self.error = Some(t!("assistant.settings.headers.invalid"));
-            cx.notify();
-            return;
-        };
-        let mut full = false;
-        self.settings.update(cx, |store, cx| {
-            store.update(
-                |settings| {
-                    let provider = settings.assistant.active_mut();
-                    if provider.headers.len() >= HEADER_LIMIT {
-                        full = true;
-                        return;
-                    }
-                    if !provider
-                        .headers
-                        .iter()
-                        .any(|kept| kept.name.eq_ignore_ascii_case(&header.name))
-                    {
-                        provider.headers.push(header);
-                    }
-                },
-                cx,
-            )
-        });
-        if full {
-            self.error = Some(t!("assistant.settings.headers.full", limit = HEADER_LIMIT));
-            cx.notify();
-            return;
-        }
-        self.header_name
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        self.header_value
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        self.error = None;
-        cx.notify();
-    }
-
-    fn remove_header(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.settings.update(cx, |store, cx| {
-            store.update(
-                |settings| {
-                    let provider = settings.assistant.active_mut();
-                    if index < provider.headers.len() {
-                        provider.headers.remove(index);
-                    }
-                },
-                cx,
-            )
-        });
-        cx.notify();
-    }
-
     /// Add one line to the open session's journal. A failure is not worth a
     /// card: the conversation on screen is still there.
     fn session_append(&mut self, event: SessionEvent) {
@@ -3246,7 +2884,7 @@ impl AssistantPanel {
             ),
             (
                 t!("assistant.report.meta.protocol").to_string(),
-                self.protocol.label().to_string(),
+                assistant.protocol.label().to_string(),
             ),
             (
                 t!("assistant.report.meta.model").to_string(),
@@ -3295,443 +2933,300 @@ impl AssistantPanel {
         cx.notify();
     }
 
-    fn set_classifier(&mut self, enabled: bool, cx: &mut Context<Self>) {
-        self.settings.update(cx, |store, cx| {
-            store.update(
-                |settings| settings.assistant.classifier_enabled = enabled,
-                cx,
-            )
-        });
-    }
+    /// The terminals this conversation may use, one entry per alias. Bound
+    /// aliases are chips; an alias whose terminal could not be identified
+    /// after a restart gets a line of its own with a one-step picker.
+    fn render_bindings(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let muted = theme.muted_foreground;
+        let border = theme.border;
+        let success = theme.success;
+        let danger = theme.danger;
+        let accent = theme.accent;
+        let radius = theme.radius;
 
-    fn save_classifier_model(&mut self, cx: &mut Context<Self>) {
-        let model = self.classifier_model.read(cx).value().to_string();
-        self.settings.update(cx, |store, cx| {
-            store.update(|settings| settings.assistant.classifier_model = model, cx)
-        });
-        self.notice = Some(t!("assistant.settings.saved"));
-        cx.notify();
-    }
+        let open: Vec<AssistantTerminal> = self
+            .available
+            .iter()
+            .filter(|terminal| !self.bindings.is_bound(&terminal.id))
+            .cloned()
+            .collect();
 
-    fn render_terminals(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let muted = cx.theme().muted_foreground;
-        let border = cx.theme().border;
+        let mut strip = v_flex()
+            .id("assistant-bindings")
+            .border_b_1()
+            .border_color(border);
         let mut row = h_flex()
-            .id("assistant-terminals")
             .flex_wrap()
             .items_center()
             .gap_1()
             .px_2()
             .py_1()
-            .border_b_1()
-            .border_color(border)
             .child(
                 div()
                     .text_xs()
                     .text_color(muted)
                     .child(t!("assistant.terminals.label")),
             );
-        if self.available.is_empty() {
-            return row.child(
+        if self.bindings.is_empty() && self.bindings.pending().is_empty() {
+            row = row.child(
                 div()
                     .text_xs()
                     .text_color(muted)
-                    .child(t!("assistant.empty_terminals")),
+                    .child(t!("assistant.terminals.none")),
             );
         }
-        for (index, terminal) in self.available.iter().enumerate() {
-            let bound = self.bindings.is_bound(&terminal.id);
-            let label = self
-                .bindings
-                .entries()
-                .iter()
-                .find(|entry| entry.id == terminal.id)
-                .map_or_else(|| terminal.title.clone(), |entry| entry.alias.clone());
-            let id = terminal.id.clone();
+        for (index, entry) in self.bindings.entries().iter().enumerate() {
+            let id = entry.id.clone();
             let covered = self.level == AuthorizationLevel::FullAccess
-                && self.covered.iter().any(|covered| covered == &terminal.id);
-            let mut button = Button::new(("assistant-terminal", index))
-                .xsmall()
-                .selected(bound)
-                .tooltip(terminal.title.clone())
-                .label(label)
-                .on_click(cx.listener(move |this, _, _, cx| this.toggle_terminal(&id, cx)));
-            if covered {
-                button = button.danger();
-            }
-            row = row.child(button);
-        }
-        // Aliases saved from an earlier session whose terminal could not be
-        // identified: shown, never used, and dismissed with a click.
-        for (index, wanted) in self.bindings.pending().iter().enumerate() {
+                && self.covered.iter().any(|covered| covered == &entry.id);
+            let (dot, state) = if covered {
+                (danger, t!("assistant.terminals.covered"))
+            } else if !entry.can_inject() {
+                (muted, t!("assistant.terminals.unavailable"))
+            } else {
+                (success, t!("assistant.terminals.bound"))
+            };
             row = row.child(
-                Button::new(("assistant-rebind", index))
+                h_flex()
+                    .items_center()
+                    .gap_1()
+                    .pl_1p5()
+                    .pr_1()
+                    .py_0p5()
+                    .rounded(radius)
+                    .bg(accent)
+                    .child(div().size_1p5().rounded_full().bg(dot))
+                    .child(
+                        div()
+                            .max_w(px(110.))
+                            .truncate()
+                            .text_xs()
+                            .child(entry.alias.clone()),
+                    )
+                    .child(
+                        Button::new(("assistant-unbind", index))
+                            .xsmall()
+                            .ghost()
+                            .icon(CatalogIcon::Unplug)
+                            .tooltip(format!("{} · {}", state, t!("assistant.terminals.unbind")))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.toggle_terminal(&id, cx);
+                            })),
+                    ),
+            );
+        }
+        if !open.is_empty() {
+            if self.bindings.has_room() {
+                row = row.child(self.render_bind_menu(cx, open.clone()));
+            } else {
+                row = row.child(
+                    Button::new("assistant-bind-full")
+                        .xsmall()
+                        .ghost()
+                        .icon(CatalogIcon::Plug)
+                        .label(t!("assistant.terminals.add"))
+                        .disabled(true)
+                        .tooltip(t!(
+                            "assistant.terminals.limit",
+                            limit = bindings::MAX_BINDINGS
+                        )),
+                );
+            }
+        }
+        strip = strip.child(row);
+
+        if !self.bindings.pending().is_empty() {
+            strip = strip.child(self.render_pending_list(&open, cx));
+        }
+        strip
+    }
+
+    /// The aliases a restart could not place, as one line: how many are
+    /// waiting, and the rows that answer them when the line is opened.
+    fn render_pending_list(
+        &self,
+        open: &[AssistantTerminal],
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let theme = cx.theme();
+        let warning = theme.warning;
+        let border = theme.border;
+        let expanded = self.pending_open;
+        let count = self.bindings.pending().len();
+
+        let column = v_flex()
+            .id("assistant-pending")
+            .border_t_1()
+            .border_color(border)
+            .bg(warning.opacity(0.08))
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_1()
+                    .px_2()
+                    .py_1()
+                    .child(
+                        Icon::new(CatalogIcon::CircleAlert)
+                            .small()
+                            .text_color(warning),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_xs()
+                            .child(t!("assistant.terminals.pending_count", count = count)),
+                    )
+                    .child(
+                        Button::new("assistant-pending-toggle")
+                            .xsmall()
+                            .ghost()
+                            .icon(if expanded {
+                                IconName::ChevronUp
+                            } else {
+                                IconName::ChevronDown
+                            })
+                            .tooltip(if expanded {
+                                t!("assistant.terminals.pending_hide")
+                            } else {
+                                t!("assistant.terminals.pending_show")
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.pending_open = !this.pending_open;
+                                cx.notify();
+                            })),
+                    ),
+            );
+        if !expanded {
+            return column;
+        }
+        let mut rows = v_flex().id("assistant-pending-rows").max_h(px(168.));
+        rows = rows.child(
+            div()
+                .px_2()
+                .pb_1()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(t!("assistant.terminals.pending_hint")),
+        );
+        for (index, wanted) in self.bindings.pending().iter().enumerate() {
+            rows = rows.child(self.render_pending_binding(index, wanted, open, cx));
+        }
+        column.child(rows.overflow_y_scrollbar())
+    }
+
+    /// The menu that binds one more open terminal.
+    fn render_bind_menu(&self, cx: &mut Context<Self>, open: Vec<AssistantTerminal>) -> AnyElement {
+        let panel = cx.entity();
+        DropdownButton::new("assistant-bind-menu")
+            .button(
+                Button::new("assistant-bind")
                     .xsmall()
                     .ghost()
-                    .label(t!(
-                        "assistant.terminals.pending",
-                        alias = wanted.alias.as_str()
-                    ))
-                    .tooltip(t!(
-                        "assistant.terminals.pending_hint",
-                        title = wanted.title.as_str()
-                    ))
+                    .icon(CatalogIcon::Plug)
+                    .label(t!("assistant.terminals.add")),
+            )
+            .dropdown_menu(move |menu, _, _| {
+                let mut menu = menu;
+                for terminal in &open {
+                    let id = terminal.id.clone();
+                    let panel = panel.clone();
+                    let label = if terminal.can_inject() {
+                        terminal.title.clone()
+                    } else {
+                        format!(
+                            "{} · {}",
+                            terminal.title,
+                            t!("assistant.terminals.unavailable")
+                        )
+                    };
+                    menu = menu.item(PopupMenuItem::new(label).on_click(move |_, _, cx| {
+                        panel.update(cx, |panel, cx| panel.toggle_terminal(&id, cx));
+                    }));
+                }
+                menu
+            })
+            .into_any_element()
+    }
+
+    /// One saved alias waiting for its terminal: the alias, the picker that
+    /// binds it in one step, and the way to drop it. The note that explains
+    /// the wait is the alias's tooltip, so the row stays one line.
+    fn render_pending_binding(
+        &self,
+        index: usize,
+        wanted: &SavedBinding,
+        open: &[AssistantTerminal],
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let rebind: AnyElement = if open.is_empty() {
+            Button::new(("assistant-rebind-empty", index))
+                .xsmall()
+                .label(t!("assistant.terminals.rebind"))
+                .disabled(true)
+                .tooltip(t!("assistant.terminals.add_empty"))
+                .into_any_element()
+        } else {
+            let panel = cx.entity();
+            let open = open.to_vec();
+            DropdownButton::new(("assistant-rebind-menu", index))
+                .button(
+                    Button::new(("assistant-rebind", index))
+                        .xsmall()
+                        .label(t!("assistant.terminals.rebind")),
+                )
+                .dropdown_menu(move |menu, _, _| {
+                    let mut menu = menu;
+                    for terminal in &open {
+                        let terminal = terminal.clone();
+                        let panel = panel.clone();
+                        menu = menu.item(PopupMenuItem::new(terminal.title.clone()).on_click(
+                            move |_, _, cx| {
+                                let terminal = terminal.clone();
+                                panel.update(cx, |panel, cx| {
+                                    if panel.bindings.rebind_pending(index, &terminal) {
+                                        panel.save_bindings(cx);
+                                    }
+                                    cx.notify();
+                                });
+                            },
+                        ));
+                    }
+                    menu
+                })
+                .into_any_element()
+        };
+
+        h_flex()
+            .id(("assistant-pending-binding", index))
+            .items_center()
+            .gap_1()
+            .px_2()
+            .py_0p5()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_xs()
+                    .child(wanted.alias.clone()),
+            )
+            .child(rebind)
+            .child(
+                Button::new(("assistant-pending-dismiss", index))
+                    .xsmall()
+                    .ghost()
+                    .icon(CatalogIcon::X)
+                    .tooltip(t!("assistant.terminals.dismiss"))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if this.bindings.dismiss_pending(index) {
                             this.save_bindings(cx);
                         }
                         cx.notify();
                     })),
-            );
-        }
-        row
-    }
-
-    fn render_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let muted = cx.theme().muted_foreground;
-        let border = cx.theme().border;
-        // Read the lists once: the panel is asked to redraw while they are
-        // edited, and the borrow must not outlive the look.
-        let assistant = self.settings.read(cx).settings().assistant.clone();
-        let mut protocols = h_flex().gap_1();
-        for (index, protocol) in ProviderProtocol::ALL.into_iter().enumerate() {
-            protocols = protocols.child(
-                Button::new(("assistant-protocol", index))
-                    .xsmall()
-                    .selected(self.protocol == protocol)
-                    .label(protocol.label())
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.switch_protocol(protocol, window, cx)
-                    })),
-            );
-        }
-        v_flex()
-            .id("assistant-settings")
-            .gap_2()
-            .px_2()
-            .py_2()
-            .border_b_1()
-            .border_color(border)
-            .child(
-                h_flex()
-                    .gap_1()
-                    .items_center()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(t!("assistant.settings.protocol")),
-                    )
-                    .child(protocols),
             )
-            .child(Input::new(&self.base_url).id("assistant-base-url").small())
-            .child(Input::new(&self.model).id("assistant-model").small())
-            .child(Input::new(&self.api_key).id("assistant-api-key").small())
-            .child(self.render_headers(&assistant.active().headers, cx))
-            .child(
-                h_flex()
-                    .justify_between()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(t!("assistant.settings.hint")),
-                    )
-                    .child(
-                        Button::new("assistant-save")
-                            .xsmall()
-                            .primary()
-                            .label(t!("assistant.action.save"))
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.save_provider(window, cx)),
-                            ),
-                    ),
-            )
-            .when_some(self.key_note.clone(), |form, note| {
-                form.child(div().text_xs().text_color(muted).child(note))
-            })
-            .child(self.render_list(
-                ListSection {
-                    prefix: "assistant-blacklist",
-                    title: t!("assistant.settings.blacklist.title"),
-                    hint: t!("assistant.settings.blacklist.hint"),
-                    input: &self.blacklist_input,
-                    entries: &assistant.user_blacklist,
-                    on_add: Self::add_blacklist,
-                    on_remove: Self::remove_blacklist,
-                },
-                cx,
-            ))
-            .child(self.render_list(
-                ListSection {
-                    prefix: "assistant-whitelist",
-                    title: t!("assistant.settings.whitelist.title"),
-                    hint: t!("assistant.settings.whitelist.hint"),
-                    input: &self.whitelist_input,
-                    entries: &assistant.user_whitelist,
-                    on_add: Self::add_whitelist,
-                    on_remove: Self::remove_whitelist,
-                },
-                cx,
-            ))
-            .child(
-                v_flex()
-                    .id("assistant-classifier-settings")
-                    .gap_1()
-                    .child(
-                        Checkbox::new("assistant-classifier")
-                            .small()
-                            .label(t!("assistant.settings.classifier.toggle"))
-                            .checked(assistant.classifier_enabled)
-                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
-                                this.set_classifier(*checked, cx);
-                            })),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(t!("assistant.settings.classifier.hint")),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .items_center()
-                            .child(
-                                div().flex_1().min_w_0().child(
-                                    Input::new(&self.classifier_model)
-                                        .id("assistant-classifier-model")
-                                        .small(),
-                                ),
-                            )
-                            .child(
-                                Button::new("assistant-classifier-save")
-                                    .xsmall()
-                                    .label(t!("assistant.action.save"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.save_classifier_model(cx);
-                                    })),
-                            ),
-                    ),
-            )
-            .child(self.render_schedules(cx))
-            .child(self.render_review_queue(cx))
-    }
-
-    /// The scheduled tasks and the box that makes one. A task always names
-    /// the first bound terminal; the others are not offered.
-    fn render_schedules(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let muted = cx.theme().muted_foreground;
-        let border = cx.theme().border;
-        let target = self.bindings.entries().first().cloned();
-        let target_line = match &target {
-            Some(terminal) => format!("{} {}", t!("assistant.schedule.target"), terminal.alias),
-            None => t!("assistant.schedule.no_target").to_string(),
-        };
-        let mut list = v_flex().gap_1();
-        if self.schedules.schedules.is_empty() {
-            list = list.child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(t!("assistant.schedule.empty")),
-            );
-        }
-        for (index, task) in self.schedules.schedules.iter().enumerate() {
-            let id_for_toggle = task.id.clone();
-            let id_for_remove = task.id.clone();
-            let id_for_rebind = task.id.clone();
-            let enabled = task.enabled;
-            let due = chrono::DateTime::from_timestamp_millis(task.next_due_at)
-                .map(|time| {
-                    time.with_timezone(&chrono::Local)
-                        .format("%m-%d %H:%M")
-                        .to_string()
-                })
-                .unwrap_or_default();
-            list = list.child(
-                v_flex()
-                    .gap_1()
-                    .py_1()
-                    .border_t_1()
-                    .border_color(border)
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .text_sm()
-                                    .child(task.action.text().to_string()),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(muted)
-                                    .child(task.target.alias.clone()),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(div().text_xs().text_color(muted).child(format!(
-                                "{} · {}",
-                                t!("assistant.schedule.next", time = due),
-                                if task.needs_rebind {
-                                    t!("assistant.schedule.paused").to_string()
-                                } else if task.enabled {
-                                    t!("assistant.schedule.enable").to_string()
-                                } else {
-                                    t!("assistant.schedule.disable").to_string()
-                                }
-                            )))
-                            .child(
-                                Button::new(("assistant-schedule-toggle", index))
-                                    .xsmall()
-                                    .label(if enabled {
-                                        t!("assistant.schedule.disable")
-                                    } else {
-                                        t!("assistant.schedule.enable")
-                                    })
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.toggle_schedule(&id_for_toggle, !enabled, cx);
-                                    })),
-                            )
-                            .when(task.needs_rebind, |row| {
-                                row.child(
-                                    Button::new(("assistant-schedule-rebind", index))
-                                        .xsmall()
-                                        .label(t!("assistant.schedule.rebind_action"))
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.rebind_schedule(&id_for_rebind, cx);
-                                        })),
-                                )
-                            })
-                            .child(
-                                Button::new(("assistant-schedule-remove", index))
-                                    .xsmall()
-                                    .label(t!("assistant.schedule.remove"))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.remove_schedule(&id_for_remove, cx);
-                                    })),
-                            ),
-                    ),
-            );
-        }
-        v_flex()
-            .id("assistant-schedules")
-            .gap_1()
-            .child(div().text_xs().child(t!("assistant.schedule.title")))
-            .child(div().text_xs().text_color(muted).child(target_line))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .items_center()
-                    .child(
-                        div().flex_1().min_w_0().child(
-                            Input::new(&self.schedule_command)
-                                .id("assistant-schedule-command")
-                                .small(),
-                        ),
-                    )
-                    .child(
-                        div().w_16().child(
-                            Input::new(&self.schedule_interval)
-                                .id("assistant-schedule-interval")
-                                .small(),
-                        ),
-                    )
-                    .child(
-                        Button::new("assistant-schedule-add")
-                            .xsmall()
-                            .label(t!("assistant.schedule.add"))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.add_schedule(window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("assistant-schedule-add-prompt")
-                            .xsmall()
-                            .label(t!("assistant.schedule.add_prompt"))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.add_prompt_schedule(window, cx);
-                            })),
-                    ),
-            )
-            .child(list)
-    }
-
-    /// What a trigger did not run. Allowing one runs it now; the command is
-    /// judged again first.
-    fn render_review_queue(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let muted = cx.theme().muted_foreground;
-        let border = cx.theme().border;
-        let mut list = v_flex().gap_1();
-        if self.pending_items.is_empty() {
-            list = list.child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(t!("assistant.pending.empty")),
-            );
-        }
-        for (index, item) in self.pending_items.iter().enumerate() {
-            let reason = match item.reason.as_str() {
-                pending::REASON_AI_PROPOSAL => t!("assistant.pending.reason.ai_proposal"),
-                pending::REASON_UNRESOLVED => t!("assistant.pending.reason.unresolved"),
-                _ => t!("assistant.pending.reason.write"),
-            };
-            list = list.child(
-                v_flex()
-                    .gap_1()
-                    .py_1()
-                    .border_t_1()
-                    .border_color(border)
-                    .child(div().text_xs().text_color(muted).child(format!(
-                        "{} · {}",
-                        t!("assistant.pending.from", name = item.name.as_str()),
-                        reason
-                    )))
-                    .child(
-                        div()
-                            .text_sm()
-                            .child(format!("{}: {}", item.alias, item.command)),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Button::new(("assistant-pending-allow", index))
-                                    .xsmall()
-                                    .primary()
-                                    .label(t!("assistant.pending.allow"))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.approve_pending_item(index, cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new(("assistant-pending-deny", index))
-                                    .xsmall()
-                                    .label(t!("assistant.pending.deny"))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.deny_pending_item(index, cx);
-                                    })),
-                            ),
-                    ),
-            );
-        }
-        v_flex()
-            .id("assistant-pending")
-            .gap_1()
-            .child(div().text_xs().child(t!("assistant.pending.title")))
-            .child(list)
     }
 
     /// The open conversation, and the ways to move between them.
@@ -3794,172 +3289,6 @@ impl AssistantPanel {
                     .tooltip(t!("assistant.session.delete"))
                     .on_click(cx.listener(|this, _, _, cx| this.delete_session(cx))),
             )
-    }
-
-    /// The extra request headers, typed as a name and a value. A name the
-    /// protocol sets itself cannot be added: it would be ignored on the wire.
-    fn render_headers(
-        &self,
-        headers: &[RequestHeader],
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let muted = cx.theme().muted_foreground;
-        let mono = cx.theme().mono_font_family.clone();
-        let mut rows = v_flex().gap_1();
-        if headers.is_empty() {
-            rows = rows.child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(t!("assistant.settings.list.empty")),
-            );
-        }
-        for (index, header) in headers.iter().enumerate() {
-            rows = rows.child(
-                h_flex()
-                    .justify_between()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .font_family(mono.clone())
-                            .text_xs()
-                            .child(format!("{}: {}", header.name, header.value)),
-                    )
-                    .child(
-                        Button::new(("assistant-header-remove", index))
-                            .xsmall()
-                            .ghost()
-                            .icon(CatalogIcon::Trash)
-                            .tooltip(t!("assistant.settings.list.remove"))
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.remove_header(index, cx)),
-                            ),
-                    ),
-            );
-        }
-        v_flex()
-            .id("assistant-headers")
-            .gap_1()
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(t!("assistant.settings.headers.title")),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(t!("assistant.settings.headers.hint")),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .items_center()
-                    .child(
-                        div().flex_1().min_w_0().child(
-                            Input::new(&self.header_name)
-                                .id("assistant-header-name")
-                                .small(),
-                        ),
-                    )
-                    .child(
-                        div().flex_1().min_w_0().child(
-                            Input::new(&self.header_value)
-                                .id("assistant-header-value")
-                                .small(),
-                        ),
-                    )
-                    .child(
-                        Button::new("assistant-header-add")
-                            .xsmall()
-                            .label(t!("assistant.settings.list.add"))
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.add_header(window, cx)),
-                            ),
-                    ),
-            )
-            .child(rows)
-    }
-
-    /// One of the two command lists, with its entry box and a remove button
-    /// on every entry.
-    fn render_list(&self, section: ListSection<'_>, cx: &mut Context<Self>) -> impl IntoElement {
-        let ListSection {
-            prefix,
-            title,
-            hint,
-            input,
-            entries,
-            on_add,
-            on_remove,
-        } = section;
-        let muted = cx.theme().muted_foreground;
-        let mono = cx.theme().mono_font_family.clone();
-        let mut rows = v_flex().gap_1();
-        if entries.is_empty() {
-            rows = rows.child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(t!("assistant.settings.list.empty")),
-            );
-        }
-        for (index, entry) in entries.iter().enumerate() {
-            rows = rows.child(
-                h_flex()
-                    .justify_between()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .font_family(mono.clone())
-                            .text_xs()
-                            .child(entry.clone()),
-                    )
-                    .child(
-                        Button::new((prefix, index))
-                            .xsmall()
-                            .ghost()
-                            .icon(CatalogIcon::Trash)
-                            .tooltip(t!("assistant.settings.list.remove"))
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| on_remove(this, index, cx)),
-                            ),
-                    ),
-            );
-        }
-        v_flex()
-            .id(prefix)
-            .gap_1()
-            .child(div().text_xs().text_color(muted).child(title))
-            .child(div().text_xs().text_color(muted).child(hint))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .items_center()
-                    .child(
-                        div().flex_1().min_w_0().child(
-                            Input::new(input)
-                                .id(SharedString::from(format!("{prefix}-input")))
-                                .small(),
-                        ),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("{prefix}-add")))
-                            .xsmall()
-                            .label(t!("assistant.settings.list.add"))
-                            .on_click(
-                                cx.listener(move |this, _, window, cx| on_add(this, window, cx)),
-                            ),
-                    ),
-            )
-            .child(rows)
     }
 
     /// The second confirmation full access needs, with its hold counting
@@ -4528,25 +3857,21 @@ impl Render for AssistantPanel {
                                 Button::new("assistant-settings-toggle")
                                     .xsmall()
                                     .ghost()
-                                    .selected(self.settings_open)
                                     .icon(CatalogIcon::Settings)
                                     .tooltip(t!("assistant.action.settings"))
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.toggle_settings(cx)),
-                                    ),
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.open_config(window, cx)
+                                    })),
                             ),
                     ),
             )
-            .child(self.render_terminals(cx))
+            .child(self.render_bindings(cx))
             .child(self.render_sessions(cx))
             .when_some(self.full_access_card, |panel, since| {
                 panel.child(self.render_full_access_dialog(since, cx))
             })
             .when(self.level == AuthorizationLevel::FullAccess, |panel| {
                 panel.child(self.render_full_access_bar(cx))
-            })
-            .when(self.settings_open, |panel| {
-                panel.child(self.render_settings(cx))
             })
             .when_some(self.error.clone(), |panel, error| {
                 panel.child(

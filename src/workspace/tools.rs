@@ -874,18 +874,23 @@ impl Workspace {
             let panel = panel.read(cx);
             terminals.push(
                 AssistantTerminal::new(format!("remote:{}", id.0), panel.host().name.clone())
+                    .with_stable(format!("host:{}", panel.host().public_id))
                     .with_view(panel.terminal(), panel.shell_only()),
             );
         }
         for (id, panel) in &self.local_terminals {
-            terminals.push(
-                AssistantTerminal::new(
-                    format!("local:{}", id.0),
-                    t!("assistant.terminal.local").to_string(),
-                )
-                .with_view(panel.read(cx).terminal(), false)
-                .local(),
-            );
+            let mut terminal = AssistantTerminal::new(
+                format!("local:{}", id.0),
+                t!("assistant.terminal.local").to_string(),
+            )
+            .with_view(panel.read(cx).terminal(), false)
+            .local();
+            // A saved terminal keeps an id across restarts; the alias can
+            // find it again even though the runtime tab id is new.
+            if let Some(saved) = self.saved_terminals.get(id) {
+                terminal = terminal.with_stable(format!("saved:{}", saved.0));
+            }
+            terminals.push(terminal);
         }
         terminals.sort_by(|left, right| left.id.cmp(&right.id));
         terminals

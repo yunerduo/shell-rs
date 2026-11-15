@@ -12,15 +12,69 @@ settings.sidebar_tools.assistant:
 assistant.title:
   zh-CN: AI 助手
   en: Assistant
+assistant.config.title:
+  zh-CN: 助手设置
+  en: Assistant settings
+assistant.config.tab.model:
+  zh-CN: 模型与协议
+  en: Model
+assistant.config.tab.headers:
+  zh-CN: 请求头
+  en: Headers
+assistant.config.tab.rules:
+  zh-CN: 命令规则
+  en: Rules
+assistant.config.tab.classifier:
+  zh-CN: 分类模型
+  en: Classifier
+assistant.config.tab.schedules:
+  zh-CN: 定时任务
+  en: Tasks
 assistant.terminals.label:
-  zh-CN: 终端：
-  en: "Terminals:"
+  zh-CN: 终端
+  en: Terminals
+assistant.terminals.none:
+  zh-CN: 未绑定
+  en: None bound
+assistant.terminals.add:
+  zh-CN: 绑定
+  en: Bind
+assistant.terminals.add_empty:
+  zh-CN: 没有其他可绑定的终端
+  en: No other terminal is open
+assistant.terminals.bound:
+  zh-CN: 已绑定，可以使用
+  en: Bound and ready
+assistant.terminals.covered:
+  zh-CN: 已绑定，正在被完全访问覆盖
+  en: Bound, covered by full access
+assistant.terminals.unavailable:
+  zh-CN: 不可用
+  en: Unavailable
+assistant.terminals.unbind:
+  zh-CN: 取消绑定
+  en: Unbind
+assistant.terminals.pending_count:
+  zh-CN: "%{count} 个终端待重新绑定"
+  en: "%{count} terminals need rebinding"
+assistant.terminals.pending_hint:
+  zh-CN: 重启后没能唯一识别这些终端。展开后为每个别名选择它现在对应的终端，别名就能继续使用。
+  en: These terminals could not be told apart after the restart. Open the list and pick the terminal each alias is now to keep using it.
+assistant.terminals.pending_show:
+  zh-CN: 展开待重新绑定的别名
+  en: Show the aliases that need rebinding
+assistant.terminals.pending_hide:
+  zh-CN: 收起待重新绑定的别名
+  en: Hide the aliases that need rebinding
+assistant.terminals.rebind:
+  zh-CN: 选择终端
+  en: Pick a terminal
+assistant.terminals.dismiss:
+  zh-CN: 忽略这个别名
+  en: Dismiss this alias
 assistant.terminal.local:
   zh-CN: 本地终端
   en: Local terminal
-assistant.empty_terminals:
-  zh-CN: 没有已连接的终端
-  en: No terminal is connected
 assistant.empty_state:
   zh-CN: 绑定终端后可以开始对话。
   en: Bind a terminal to start talking.
@@ -180,12 +234,6 @@ assistant.tool.reason.user_takeover:
 assistant.terminals.limit:
   zh-CN: 一次最多绑定 %{limit} 个终端
   en: At most %{limit} terminals can be bound at once
-assistant.terminals.pending:
-  zh-CN: "%{alias} · 待重绑"
-  en: "%{alias} · rebind"
-assistant.terminals.pending_hint:
-  zh-CN: 上次绑定的 %{title} 这次没能唯一匹配；点击忽略
-  en: "The %{title} bound last time could not be told apart; click to dismiss"
 assistant.terminals.save_failed:
   zh-CN: 绑定没有保存成功：%{reason}
   en: "The bindings could not be saved: %{reason}"
@@ -226,8 +274,8 @@ assistant.action.copied:
   zh-CN: 已复制
   en: Copied
 assistant.action.settings:
-  zh-CN: 模型设置
-  en: Model settings
+  zh-CN: 助手设置
+  en: Assistant settings
 assistant.action.send:
   zh-CN: 发送
   en: Send
@@ -246,6 +294,21 @@ assistant.settings.protocol.openai:
 assistant.settings.protocol.anthropic:
   zh-CN: Anthropic 兼容
   en: Anthropic compatible
+assistant.settings.base_url.label:
+  zh-CN: 接口地址
+  en: Base URL
+assistant.settings.base_url.hint:
+  zh-CN: 服务商提供的地址，通常以 /v1 结尾。
+  en: The address your provider gives you, usually ending in /v1.
+assistant.settings.model.label:
+  zh-CN: 模型
+  en: Model
+assistant.settings.api_key.label:
+  zh-CN: API Key
+  en: API Key
+assistant.settings.api_key.hint:
+  zh-CN: 只写入系统钥匙串，不进配置文件也不写日志；留空则沿用已保存的 Key。
+  en: Kept in the system keychain, never the settings file or the logs. Leave it blank to keep the saved key.
 assistant.settings.base_url.placeholder:
   zh-CN: 接口地址，例如 https://api.openai.com/v1
   en: "Base URL, for example https://api.openai.com/v1"
@@ -255,9 +318,6 @@ assistant.settings.model.placeholder:
 assistant.settings.api_key.placeholder:
   zh-CN: API Key（只写入系统钥匙串）
   en: API key (kept in the system keychain)
-assistant.settings.hint:
-  zh-CN: Key 不进配置文件，也不写日志；留空则沿用已保存的 Key。
-  en: The key never goes in the settings file or the logs; leave it blank to keep the saved one.
 assistant.settings.key_saved:
   zh-CN: Key 已存入系统钥匙串
   en: The key is in the system keychain
@@ -526,6 +586,9 @@ assistant.full_access.emergency_done:
 assistant.settings.classifier.toggle:
   zh-CN: 规则无法归类时询问分类模型
   en: Ask a classifier when the rules cannot place a command
+assistant.settings.classifier.model:
+  zh-CN: 分类模型
+  en: Classifier model
 assistant.settings.classifier.hint:
   zh-CN: 只在规则无结论时调用，4 秒超时，只能加重不能放宽；每次对话最多 20 次。留空使用当前模型。
   en: Only for commands the rules cannot place; 4s timeout; it can only add risk, never release. At most 20 calls per exchange. Empty uses the current model.
