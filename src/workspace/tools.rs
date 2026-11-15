@@ -883,11 +883,18 @@ impl Workspace {
                         .with_view(panel.terminal(), panel.shell_only()),
                     );
                 }
-                CenterTab::LocalTerminal(id) if self.local_terminals.contains_key(&id) => {
-                    terminals.push(AssistantTerminal::new(
-                        format!("local:{}", id.0),
-                        t!("assistant.terminal.local").to_string(),
-                    ));
+                CenterTab::LocalTerminal(id) => {
+                    let Some(panel) = self.local_terminals.get(&id) else {
+                        continue;
+                    };
+                    terminals.push(
+                        AssistantTerminal::new(
+                            format!("local:{}", id.0),
+                            t!("assistant.terminal.local").to_string(),
+                        )
+                        .with_view(panel.read(cx).terminal(), false)
+                        .local(),
+                    );
                 }
                 _ => {}
             }

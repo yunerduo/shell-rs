@@ -114,6 +114,75 @@ assistant.tool.reason.closed:
 assistant.tool.reason.not_running:
   zh-CN: 终端未在运行
   en: The terminal is not running
+assistant.tool.reason.not_connected:
+  zh-CN: 终端未连接
+  en: The terminal is not connected
+assistant.tool.reason.unsupported_shell:
+  zh-CN: "%{shell} 不受支持；请改用常规执行或手动执行"
+  en: "%{shell} is not supported; use a normal execution or run it by hand"
+assistant.tool.reason.too_long:
+  zh-CN: 命令超过 %{limit} 字节，未输入
+  en: The command is over %{limit} bytes and was not typed
+assistant.tool.reason.full_screen:
+  zh-CN: 终端被全屏程序占用
+  en: A full-screen program holds the terminal
+assistant.tool.reason.transfer:
+  zh-CN: 终端正在传输文件
+  en: A file transfer is running in the terminal
+assistant.tool.reason.another_run:
+  zh-CN: 终端上已有另一个执行
+  en: Another run already holds the terminal
+assistant.tool.reason.not_started:
+  zh-CN: 命令未能启动
+  en: The command did not start
+assistant.tool.reason.no_answer:
+  zh-CN: 这个 shell 不受支持或终端没有回应；请改用常规执行或手动执行
+  en: This shell is not supported or the terminal did not answer; use a normal execution or run it by hand
+assistant.tool.reason.disconnected:
+  zh-CN: 连接已断开，命令可能已部分执行
+  en: The connection closed; the command may have run in part
+assistant.tool.reason.no_channel:
+  zh-CN: 这个终端既不能旁路执行，也不能注入
+  en: No channel can run a command on this terminal
+assistant.tool.takeover:
+  zh-CN: 允许发送 ^C 并接管终端（命令会输入到终端的输入行）
+  en: Let it send ^C and take the terminal over (the command is typed into the shell)
+assistant.tool.takeover.required:
+  zh-CN: 这条命令只能在终端里执行，先勾选接管授权
+  en: This command can only run in the terminal; authorize the takeover first
+assistant.tool.takeover_closed:
+  zh-CN: 你接管了 %{alias}，已停止注入
+  en: "You took %{alias} back; the injection was stopped"
+assistant.tool.background:
+  zh-CN: 后台运行：命令启动后立即返回
+  en: "Background: returns once the command is running"
+assistant.tool.background_started:
+  zh-CN: 已在后台启动
+  en: Started in the background
+assistant.tool.background_list:
+  zh-CN: 后台运行中的命令
+  en: Commands running in the background
+assistant.tool.background_stopped:
+  zh-CN: 已停止 %{alias} 的后台命令
+  en: "Stopped the background command on %{alias}"
+assistant.tool.channel_terminal:
+  zh-CN: 终端注入
+  en: Terminal injection
+assistant.tool.busy:
+  zh-CN: 终端正忙
+  en: The terminal is busy
+assistant.tool.unknown:
+  zh-CN: 执行结果未知
+  en: The outcome is unknown
+assistant.tool.may_have_run:
+  zh-CN: 命令可能已部分执行，未自动重试
+  en: The command may have run in part; it was not retried
+assistant.tool.cancelled_user:
+  zh-CN: 你接管了终端
+  en: You took the terminal back
+assistant.tool.cancelled_stop:
+  zh-CN: 已手动停止
+  en: Stopped by hand
 assistant.action.copy:
   zh-CN: 复制 Markdown
   en: Copy Markdown

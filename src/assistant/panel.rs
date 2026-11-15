@@ -9,6 +9,7 @@ use std::time::Duration;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _,
     button::{Button, ButtonVariants as _},
+    checkbox::Checkbox,
     h_flex,
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
     text::TextView,
@@ -21,12 +22,16 @@ use crate::app::CatalogIcon;
 use crate::i18n::t;
 use crate::secrets::KeychainSecretStore;
 use crate::settings::SettingsStore;
-use crate::terminal::ExecDetailResult;
+use crate::terminal::{
+    ExecDetailResult, RunFailure, RunHandle, RunProgress, RunTiming, TerminalEvent, TerminalRun,
+    TerminalView,
+};
 
 use super::audit;
 use super::bindings::{AssistantTerminal, Bindings};
-use super::chat::{self, ChatMessage, RunCommandArgs, ToolCall};
+use super::chat::{self, ChatMessage, RunCommandArgs, RunMode, ToolCall};
 use super::client::{self, StreamEvent, StreamHandle, StreamRequest};
+use super::inject::{self, InjectOutcome, Route};
 use super::policy::{self, AuthorizationLevel, Decision, Policy, Risk, Verdict};
 use super::protocol::ToolTerminal;
 use super::settings::ProviderProtocol;
@@ -41,6 +46,9 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// streams is kept. The transport clamps both.
 const EXEC_TIMEOUT: Duration = Duration::from_secs(30);
 const EXEC_LIMIT: usize = 256 * 1024;
+/// How much of a typed command's output the conversation keeps. The
+/// terminal has all of it anyway.
+const INJECT_LIMIT: usize = 256 * 1024;
 
 /// How many model turns one exchange may take. Eight is enough for a
 /// question, a look, a follow-up look, and an answer, with room to spare;
@@ -56,6 +64,10 @@ struct PendingCall {
     command: String,
     decision: Decision,
     hash: String,
+    /// The call asked for a background run: only injection can start one.
+    background: bool,
+    /// The card's takeover checkbox, unchecked until the user clicks it.
+    takeover: bool,
 }
 
 /// What a call resolved to before it runs: where, what, and how it was
@@ -76,6 +88,35 @@ struct ExecRun {
     decision: Decision,
     approver: &'static str,
     receiver: std::sync::mpsc::Receiver<ExecDetailResult>,
+}
+
+/// One command typed into a terminal now.
+struct InjectRun {
+    call_id: String,
+    alias: String,
+    terminal_id: String,
+    decision: Decision,
+    approver: &'static str,
+    /// Kept here so the stop button and the user's own typing can send ^C.
+    handle: RunHandle,
+    receiver: std::sync::mpsc::Receiver<InjectMessage>,
+    cancelled_by: Option<&'static str>,
+}
+
+/// What the injection thread sends back once.
+enum InjectMessage {
+    /// The run ended, or never started.
+    Done(InjectOutcome),
+    /// The command is running; the terminal keeps it, and the panel keeps
+    /// the handle so the user can stop it.
+    Background(RunHandle, InjectOutcome),
+}
+
+/// A command left running in a terminal by the background mode.
+struct BackgroundRun {
+    alias: String,
+    terminal_id: String,
+    handle: RunHandle,
 }
 
 /// The parts of one command list's section in the settings.
@@ -110,6 +151,12 @@ pub struct AssistantPanel {
     pending: VecDeque<PendingCall>,
     /// The command running now.
     exec: Option<ExecRun>,
+    /// The command typed into a terminal now.
+    inject: Option<InjectRun>,
+    /// Commands the background mode left running.
+    backgrounds: Vec<BackgroundRun>,
+    /// Terminal views whose input the panel already watches.
+    watched: Vec<String>,
     /// Model turns used by this exchange.
     rounds: u32,
     /// The answer was stopped by the user; an empty answer is not an error
@@ -207,6 +254,9 @@ impl AssistantPanel {
             queue: VecDeque::new(),
             pending: VecDeque::new(),
             exec: None,
+            inject: None,
+            backgrounds: Vec::new(),
+            watched: Vec::new(),
             rounds: 0,
             stopped: false,
             error: None,
@@ -233,7 +283,68 @@ impl AssistantPanel {
             self.bindings.follow_front(front);
         }
         self.available = terminals;
+        // A user's own typing takes the terminal back from an injection; the
+        // panel hears it from the view, the same way the view hears the user.
+        let views: Vec<(String, Entity<TerminalView>)> = self
+            .available
+            .iter()
+            .filter_map(|terminal| {
+                let view = terminal.view.as_ref()?.upgrade()?;
+                Some((terminal.id.clone(), view))
+            })
+            .collect();
+        for (id, view) in views {
+            self.watch_input(&id, &view, cx);
+        }
         cx.notify();
+    }
+
+    fn watch_input(&mut self, id: &str, view: &Entity<TerminalView>, cx: &mut Context<Self>) {
+        if self.watched.iter().any(|watched| watched == id) {
+            return;
+        }
+        self.watched.push(id.to_string());
+        let terminal_id = id.to_string();
+        let subscription = cx.subscribe(view, move |this, _, event: &TerminalEvent, cx| {
+            if matches!(event, TerminalEvent::Input(_)) {
+                this.user_took_over(&terminal_id, cx);
+            }
+        });
+        self._subscriptions.push(subscription);
+    }
+
+    /// The user typed in the terminal the assistant was using: the takeover
+    /// is over. A foreground run gets its ^C; a background one is left
+    /// alone, because stopping it is the user's own choice on the card.
+    fn user_took_over(&mut self, terminal_id: &str, cx: &mut Context<Self>) {
+        let mut taken = false;
+        if let Some(run) = self
+            .inject
+            .as_mut()
+            .filter(|run| run.terminal_id == terminal_id)
+        {
+            run.cancelled_by = Some("user");
+            run.handle.cancel();
+            taken = true;
+        }
+        if !self.queue.is_empty() {
+            // Calls not begun would run after the user took the terminal
+            // back; they are dropped, not retried.
+            self.queue.clear();
+            taken = true;
+        }
+        if let Some(background) = self
+            .backgrounds
+            .iter()
+            .find(|background| background.terminal_id == terminal_id)
+        {
+            let alias = background.alias.clone();
+            self.notice = Some(t!("assistant.tool.takeover_closed", alias = alias));
+            taken = true;
+        }
+        if taken {
+            cx.notify();
+        }
     }
 
     fn toggle_terminal(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -328,7 +439,11 @@ impl AssistantPanel {
     /// the key. A question starts a new exchange, so the round count starts
     /// again.
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.stream.is_some() || self.exec.is_some() || !self.pending.is_empty() {
+        if self.stream.is_some()
+            || self.exec.is_some()
+            || self.inject.is_some()
+            || !self.pending.is_empty()
+        {
             return;
         }
         let text = self.input.read(cx).value().trim().to_string();
@@ -369,6 +484,7 @@ impl AssistantPanel {
     fn request_round(&mut self, cx: &mut Context<Self>) {
         if self.stream.is_some()
             || self.exec.is_some()
+            || self.inject.is_some()
             || !self.pending.is_empty()
             || !self.queue.is_empty()
         {
@@ -494,7 +610,11 @@ impl AssistantPanel {
             self.handle_call(call, cx);
             return;
         }
-        if self.exec.is_some() || !self.pending.is_empty() || self.stream.is_some() {
+        if self.exec.is_some()
+            || self.inject.is_some()
+            || !self.pending.is_empty()
+            || self.stream.is_some()
+        {
             return;
         }
         self.request_round(cx);
@@ -541,6 +661,7 @@ impl AssistantPanel {
         let policy = Policy::new(assistant.user_blacklist, assistant.user_whitelist);
         let decision = policy::decide(&args.command, AuthorizationLevel::Restricted, &policy);
         let hash = audit::command_hash(&args.command);
+        let background = args.mode == RunMode::Background;
         match decision.verdict {
             Verdict::Deny => {
                 self.record(&entry.alias, &decision, "denied", None, "policy");
@@ -555,21 +676,52 @@ impl AssistantPanel {
                     command: args.command,
                     decision,
                     hash,
+                    background,
+                    takeover: false,
                 });
                 cx.notify();
             }
             Verdict::Auto => {
-                self.execute(
-                    Granted {
-                        call_id: call.id,
-                        alias: entry.alias,
-                        terminal,
-                        command: args.command,
-                        decision,
-                        approver: "auto",
-                    },
-                    cx,
-                );
+                match inject::route(
+                    background,
+                    terminal.can_exec(),
+                    terminal.can_inject(),
+                    false,
+                ) {
+                    Route::Exec => self.execute(
+                        Granted {
+                            call_id: call.id,
+                            alias: entry.alias,
+                            terminal,
+                            command: args.command,
+                            decision,
+                            approver: "auto",
+                        },
+                        cx,
+                    ),
+                    // A background run, and a terminal with no channel
+                    // beside the shell, need the takeover card even when
+                    // the policy let the command run alone.
+                    Route::NeedTakeover => {
+                        self.pending.push_back(PendingCall {
+                            call,
+                            alias: entry.alias,
+                            terminal,
+                            command: args.command,
+                            decision,
+                            hash,
+                            background,
+                            takeover: false,
+                        });
+                        cx.notify();
+                    }
+                    Route::Unavailable(reason) => {
+                        self.record(&entry.alias, &decision, "unsupported", None, "auto");
+                        self.push_result(call.id, unsupported_result(reason));
+                        self.advance(cx);
+                    }
+                    Route::Inject => unreachable!("no takeover was given"),
+                }
             }
         }
     }
@@ -632,17 +784,45 @@ impl AssistantPanel {
             cx.notify();
             return;
         }
-        self.execute(
-            Granted {
-                call_id: pending.call.id,
-                alias: pending.alias,
-                terminal: pending.terminal,
-                command: pending.command,
-                decision: pending.decision,
-                approver: "user",
-            },
-            cx,
+        let background = pending.background;
+        let route = inject::route(
+            background,
+            pending.terminal.can_exec(),
+            pending.terminal.can_inject(),
+            pending.takeover,
         );
+        if matches!(route, Route::NeedTakeover | Route::Unavailable(_)) {
+            // The card's allow button is disabled until the box is ticked;
+            // keep the card rather than run anything silently.
+            self.pending.push_front(pending);
+            self.notice = Some(t!("assistant.tool.takeover.required"));
+            cx.notify();
+            return;
+        }
+        let granted = Granted {
+            call_id: pending.call.id,
+            alias: pending.alias,
+            terminal: pending.terminal,
+            command: pending.command,
+            decision: pending.decision,
+            approver: "user",
+        };
+        match route {
+            Route::Exec => self.execute(granted, cx),
+            Route::Inject => self.execute_inject(granted, background, cx),
+            Route::NeedTakeover | Route::Unavailable(_) => unreachable!("both were handled above"),
+        }
+    }
+
+    /// Tick the takeover authorization of the card in front. It is per call,
+    /// and it starts unchecked every time.
+    fn set_takeover(&mut self, takeover: bool, cx: &mut Context<Self>) {
+        if let Some(pending) = self.pending.front_mut()
+            && pending.terminal.can_inject()
+        {
+            pending.takeover = takeover;
+            cx.notify();
+        }
     }
 
     fn deny_pending(&mut self, cx: &mut Context<Self>) {
@@ -719,6 +899,189 @@ impl AssistantPanel {
         let (body, exit_code) = tool_result_body(result);
         self.record(&run.alias, &run.decision, "exec", exit_code, run.approver);
         self.push_result(run.call_id, body);
+        self.advance(cx);
+        cx.notify();
+        true
+    }
+
+    /// Type one command into its terminal. The user has already authorized
+    /// the takeover on the card; nothing here sends ^C until the view's own
+    /// run gate accepts, and the command only exists in the terminal.
+    fn execute_inject(&mut self, granted: Granted, background: bool, cx: &mut Context<Self>) {
+        let Granted {
+            call_id,
+            alias,
+            terminal,
+            command,
+            decision,
+            approver,
+        } = granted;
+        let Some(view) = terminal.view.as_ref().and_then(|weak| weak.upgrade()) else {
+            self.record(&alias, &decision, "unsupported", None, approver);
+            self.push_result(call_id, unsupported_result("takeover_closed"));
+            self.advance(cx);
+            cx.notify();
+            return;
+        };
+        let (run, events) = TerminalRun::new(command);
+        let handle = run.handle();
+        if let Err(failure) = view.read(cx).run_command(handle.clone(), cx) {
+            // The run never typed anything; dropping it cancels nothing.
+            self.record(&alias, &decision, "unsupported", None, approver);
+            self.push_result(call_id, inject::failure_body(&failure));
+            self.advance(cx);
+            cx.notify();
+            return;
+        }
+        let terminal_id = terminal.id;
+        let thread_handle = handle.clone();
+        let (tx, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let outcome = if background {
+                match run.drive_background(&events, RunTiming::STANDARD) {
+                    Ok(context) => {
+                        let outcome = InjectOutcome {
+                            context: Some(context),
+                            background: true,
+                            ..InjectOutcome::default()
+                        };
+                        let _ = tx.send(InjectMessage::Background(thread_handle, outcome));
+                        return;
+                    }
+                    Err(failure) => InjectOutcome {
+                        failure: Some(failure),
+                        background: true,
+                        ..InjectOutcome::default()
+                    },
+                }
+            } else {
+                let mut context = None;
+                let mut output = Vec::new();
+                let result = run.drive(&events, RunTiming::STANDARD, &mut |progress| {
+                    match progress {
+                        RunProgress::Context(found) => context = Some(found),
+                        RunProgress::Output(bytes) => {
+                            let room = INJECT_LIMIT.saturating_sub(output.len());
+                            if room > 0 {
+                                output.extend_from_slice(&bytes[..bytes.len().min(room)]);
+                            }
+                        }
+                        RunProgress::Idle => {}
+                    }
+                    Ok(())
+                });
+                match result {
+                    Ok(code) => InjectOutcome {
+                        context,
+                        output,
+                        exit_code: Some(code),
+                        ..InjectOutcome::default()
+                    },
+                    Err(failure) => InjectOutcome {
+                        context,
+                        output,
+                        failure: Some(failure),
+                        ..InjectOutcome::default()
+                    },
+                }
+            };
+            let _ = tx.send(InjectMessage::Done(outcome));
+        });
+        self.inject = Some(InjectRun {
+            call_id,
+            alias,
+            terminal_id,
+            decision,
+            approver,
+            handle,
+            receiver,
+            cancelled_by: None,
+        });
+        self.begin_inject_poll(cx);
+        cx.notify();
+    }
+
+    /// Stop the foreground injection with a ^C. Its result comes back like
+    /// any other, marked with who stopped it.
+    fn stop_inject(&mut self, cx: &mut Context<Self>) {
+        let Some(run) = self.inject.as_mut() else {
+            return;
+        };
+        run.cancelled_by = Some("stop");
+        run.handle.cancel();
+        cx.notify();
+    }
+
+    fn stop_background(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index >= self.backgrounds.len() {
+            return;
+        }
+        let background = self.backgrounds.remove(index);
+        background.handle.cancel();
+        self.notice = Some(t!(
+            "assistant.tool.background_stopped",
+            alias = background.alias
+        ));
+        cx.notify();
+    }
+
+    fn begin_inject_poll(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(POLL_INTERVAL).await;
+                let finished = this
+                    .update(cx, |this, cx| this.poll_inject(cx))
+                    .unwrap_or(true);
+                if finished {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Take the injection's outcome once it is there; `true` when there is
+    /// nothing more to wait for.
+    fn poll_inject(&mut self, cx: &mut Context<Self>) -> bool {
+        let message = match self.inject.as_ref() {
+            None => return true,
+            Some(run) => match run.receiver.try_recv() {
+                Ok(message) => message,
+                Err(TryRecvError::Empty) => return false,
+                Err(TryRecvError::Disconnected) => InjectMessage::Done(InjectOutcome {
+                    failure: Some(RunFailure::Disconnected),
+                    ..InjectOutcome::default()
+                }),
+            },
+        };
+        let Some(run) = self.inject.take() else {
+            return true;
+        };
+        let (mut outcome, finished_handle) = match message {
+            InjectMessage::Done(outcome) => (outcome, None),
+            InjectMessage::Background(handle, outcome) => (outcome, Some(handle)),
+        };
+        outcome.cancelled_by = run.cancelled_by;
+        let channel = if finished_handle.is_some() {
+            "inject-background"
+        } else {
+            "inject"
+        };
+        self.record(
+            &run.alias,
+            &run.decision,
+            channel,
+            outcome.exit_code,
+            run.approver,
+        );
+        self.push_result(run.call_id, outcome.body());
+        if let Some(handle) = finished_handle {
+            self.backgrounds.push(BackgroundRun {
+                alias: run.alias,
+                terminal_id: run.terminal_id,
+                handle,
+            });
+        }
         self.advance(cx);
         cx.notify();
         true
@@ -1106,10 +1469,12 @@ impl AssistantPanel {
 
     fn render_composer(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let border = cx.theme().border;
+        let muted = cx.theme().muted_foreground;
         let streaming = self.stream.is_some();
+        let injecting = self.inject.is_some();
         // A command runs, or a card waits: a new question would have no
         // turn to run in.
-        let busy = self.exec.is_some() || !self.pending.is_empty();
+        let busy = self.exec.is_some() || injecting || !self.pending.is_empty();
         let empty = self.input.read(cx).value().trim().is_empty();
         v_flex()
             .id("assistant-composer")
@@ -1117,6 +1482,35 @@ impl AssistantPanel {
             .p_2()
             .border_t_1()
             .border_color(border)
+            .when(!self.backgrounds.is_empty(), |composer| {
+                composer.child(
+                    v_flex()
+                        .id("assistant-backgrounds")
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(muted)
+                                .child(t!("assistant.tool.background_list")),
+                        )
+                        .children(self.backgrounds.iter().enumerate().map(
+                            |(index, background)| {
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(div().text_xs().child(background.alias.clone()))
+                                    .child(
+                                        Button::new(("assistant-background-stop", index))
+                                            .xsmall()
+                                            .label(t!("assistant.action.stop"))
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.stop_background(index, cx);
+                                            })),
+                                    )
+                            },
+                        )),
+                )
+            })
             .child(
                 Textarea::new(&self.input)
                     .h(px(72.))
@@ -1129,6 +1523,12 @@ impl AssistantPanel {
                     .icon(CatalogIcon::CircleStop)
                     .label(t!("assistant.action.stop"))
                     .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
+            } else if injecting {
+                Button::new("assistant-stop-inject")
+                    .small()
+                    .icon(CatalogIcon::CircleStop)
+                    .label(t!("assistant.action.stop"))
+                    .on_click(cx.listener(|this, _, _, cx| this.stop_inject(cx)))
             } else {
                 Button::new("assistant-send")
                     .small()
@@ -1157,6 +1557,14 @@ impl AssistantPanel {
             return card;
         };
         let risk_danger = pending.decision.risk >= Risk::R2;
+        let can_inject = pending.terminal.can_inject();
+        let route = inject::route(
+            pending.background,
+            pending.terminal.can_exec(),
+            can_inject,
+            pending.takeover,
+        );
+        let needs_takeover = matches!(route, Route::NeedTakeover | Route::Unavailable(_));
         card = card
             .child(
                 h_flex()
@@ -1199,6 +1607,33 @@ impl AssistantPanel {
                     .text_color(muted)
                     .child(pending.decision.rule.label()),
             )
+            .when(pending.background, |card| {
+                card.child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(t!("assistant.tool.background")),
+                )
+            })
+            .when(can_inject, |card| {
+                card.child(
+                    Checkbox::new("assistant-takeover")
+                        .small()
+                        .label(t!("assistant.tool.takeover"))
+                        .checked(pending.takeover)
+                        .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                            this.set_takeover(*checked, cx);
+                        })),
+                )
+            })
+            .when(needs_takeover, |card| {
+                card.child(
+                    div()
+                        .text_xs()
+                        .text_color(danger)
+                        .child(t!("assistant.tool.takeover.required")),
+                )
+            })
             .child(
                 h_flex()
                     .justify_end()
@@ -1214,6 +1649,7 @@ impl AssistantPanel {
                             .xsmall()
                             .primary()
                             .label(t!("assistant.tool.allow"))
+                            .disabled(needs_takeover)
                             .on_click(cx.listener(|this, _, _, cx| this.approve_pending(cx))),
                     ),
             );

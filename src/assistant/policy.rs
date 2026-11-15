@@ -205,9 +205,13 @@ pub fn decide(command: &str, level: AuthorizationLevel, policy: &Policy) -> Deci
 
     let normalized = squash(trimmed);
     let parts = segments(&normalized);
+    // A hard block is not evaded by wrapping the command in sudo: the
+    // blacklist and the interactive refusal read the segment without its
+    // privilege wrapper, while grading still sees the wrapper.
+    let unwrapped: Vec<String> = parts.iter().map(|part| sans_privilege(part)).collect();
 
     for entry in &policy.user_blacklist {
-        if blacklist_entry_matches(entry, &normalized, &parts) {
+        if blacklist_entry_matches(entry, &normalized, &unwrapped) {
             return refuse(
                 Risk::R3,
                 Rule::UserBlacklist(entry.clone()),
@@ -216,7 +220,7 @@ pub fn decide(command: &str, level: AuthorizationLevel, policy: &Policy) -> Deci
             );
         }
     }
-    if let Some(entry) = builtin_blacklist(&normalized, &parts) {
+    if let Some(entry) = builtin_blacklist(&normalized, &unwrapped) {
         return refuse(
             Risk::R3,
             Rule::BuiltinBlacklist(entry),
@@ -224,7 +228,7 @@ pub fn decide(command: &str, level: AuthorizationLevel, policy: &Policy) -> Deci
             false,
         );
     }
-    if let Some(rule) = hard_block(&normalized, &parts) {
+    if let Some(rule) = hard_block(&normalized, &unwrapped) {
         return refuse(Risk::R3, rule, masked_command, false);
     }
 
@@ -320,6 +324,34 @@ fn raise(risk: &mut Risk, rule: &mut Rule, other: Risk, other_rule: Option<Rule>
 /// command that runs is the one the model sent.
 pub fn squash(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// One segment with a leading privilege wrapper taken off: `sudo mkfs ...`
+/// reads as `mkfs ...` to the hard blocks. Only a segment that starts with
+/// the wrapper is rewritten, and options of the wrapper are dropped with
+/// their values, so a normal command is returned untouched.
+fn sans_privilege(segment: &str) -> String {
+    let mut words = segment.split_whitespace();
+    let Some(first) = words.next() else {
+        return segment.to_string();
+    };
+    if !matches!(first, "sudo" | "doas" | "pkexec") {
+        return segment.to_string();
+    }
+    let mut kept = Vec::new();
+    let mut option_value = false;
+    for word in words {
+        if option_value {
+            option_value = false;
+            continue;
+        }
+        if word.starts_with('-') {
+            option_value = matches!(word, "-u" | "-g" | "-p" | "-C" | "-h" | "-U" | "-r" | "-t");
+            continue;
+        }
+        kept.push(word);
+    }
+    kept.join(" ")
 }
 
 /// The commands joined by `;`, `&&`, `||` or `|`, outside quotes. Each part
@@ -1126,6 +1158,24 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_privilege_wrapper_does_not_hide_a_hard_block() {
+        for command in [
+            "sudo mkfs.ext4 /dev/sdb",
+            "sudo -u root mkfs.ext4 /dev/sdb",
+            "doas fdisk /dev/sdb",
+            "sudo vim /etc/hosts",
+        ] {
+            let decision = decide_restricted(command);
+            assert_eq!(decision.verdict, Verdict::Deny, "{command}");
+            assert_eq!(decision.risk, Risk::R3, "{command}");
+        }
+        // The wrapper still raises a harmless command to R2.
+        let decision = decide_restricted("sudo ls");
+        assert_eq!(decision.verdict, Verdict::Confirm);
+        assert_eq!(decision.risk, Risk::R2);
     }
 
     #[test]

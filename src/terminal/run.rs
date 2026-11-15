@@ -301,6 +301,8 @@ impl RunState {
 /// it gives the run up, with a ^C when its command was typed.
 pub struct TerminalRun {
     state: Arc<Mutex<RunState>>,
+    /// A background run handed to the terminal: its drop must not cancel.
+    released: bool,
 }
 
 /// The same run, as the terminal it runs in holds it.
@@ -311,6 +313,18 @@ pub struct RunHandle {
 
 fn lock(state: &Mutex<RunState>) -> MutexGuard<'_, RunState> {
     state.lock().unwrap_or_else(|error| error.into_inner())
+}
+
+/// Send the ^C that ends a run typed in a terminal, and give the run up:
+/// its scanner stops, so the end marker is not read.
+fn cancel_run(state: &Mutex<RunState>) {
+    let mut state = lock(state);
+    match state.phase {
+        Phase::Done | Phase::Abandoned => return,
+        Phase::Typed | Phase::Begun => state.type_bytes(b"\x03".to_vec()),
+        Phase::Queued | Phase::Installed | Phase::Probing => {}
+    }
+    state.phase = Phase::Abandoned;
 }
 
 impl TerminalRun {
@@ -333,6 +347,7 @@ impl TerminalRun {
         (
             Self {
                 state: Arc::new(Mutex::new(state)),
+                released: false,
             },
             receiver,
         )
@@ -379,13 +394,7 @@ impl TerminalRun {
     /// Give the run up whatever it does: ^C to a command typed and not
     /// finished.
     pub fn cancel(&self) {
-        let mut state = lock(&self.state);
-        match state.phase {
-            Phase::Done | Phase::Abandoned => return,
-            Phase::Typed | Phase::Begun => state.type_bytes(b"\x03".to_vec()),
-            Phase::Queued | Phase::Installed | Phase::Probing => {}
-        }
-        state.phase = Phase::Abandoned;
+        cancel_run(&self.state);
     }
 
     /// See the run through once a terminal took it up (after
@@ -438,11 +447,57 @@ impl TerminalRun {
             }
         }
     }
+
+    /// Start a run that does not end on its own: probe, wait for the
+    /// command's marker B, and hand the run over to the terminal, which
+    /// keeps scanning its output. Nothing is cancelled on success: only
+    /// [`RunHandle::cancel`] sends a ^C.
+    pub fn drive_background(
+        mut self,
+        events: &mpsc::Receiver<RunEvent>,
+        timing: RunTiming,
+    ) -> Result<RunContext, RunFailure> {
+        std::thread::sleep(timing.settle);
+        self.type_probe();
+        let mut deadline = Some((Instant::now() + timing.probe, BusyReason::NoAnswer));
+        loop {
+            match events.recv_timeout(timing.tick) {
+                Ok(RunEvent::Accepted) | Ok(RunEvent::Output(_)) => continue,
+                Ok(RunEvent::Typed) => {
+                    deadline = Some((Instant::now() + timing.start, BusyReason::NotStarted));
+                }
+                Ok(RunEvent::Begun(context)) => {
+                    self.released = true;
+                    return Ok(context);
+                }
+                Ok(RunEvent::Exited(_)) => {
+                    // The scanner only ends a run it saw begin; a run that
+                    // ends before B was never one.
+                    return Err(RunFailure::Busy(BusyReason::NotStarted));
+                }
+                Ok(RunEvent::Failed(failure)) => return Err(failure),
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if let Some((at, reason)) = deadline
+                        && Instant::now() >= at
+                    {
+                        if self.give_up(reason) {
+                            return Err(RunFailure::Busy(reason));
+                        }
+                        // It got further just now: its event is on the way.
+                        deadline = None;
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Err(RunFailure::Disconnected),
+            }
+        }
+    }
 }
 
 impl Drop for TerminalRun {
     fn drop(&mut self) {
-        self.cancel();
+        if !self.released {
+            self.cancel();
+        }
     }
 }
 
@@ -458,6 +513,12 @@ impl RunHandle {
         state.phase = Phase::Installed;
         state.tell(RunEvent::Accepted);
         true
+    }
+
+    /// Send the ^C that ends a run typed in a terminal. A background run
+    /// handed over in `drive_background` is only stopped this way.
+    pub fn cancel(&self) {
+        cancel_run(&self.state);
     }
 
     /// Say why no terminal can take the run up.

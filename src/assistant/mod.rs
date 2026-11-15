@@ -6,12 +6,16 @@ pub mod audit;
 pub mod bindings;
 pub mod chat;
 pub mod client;
+pub mod inject;
 pub mod output;
 pub mod panel;
 pub mod policy;
 pub mod protocol;
 pub mod settings;
 pub mod tool_result;
+
+#[cfg(test)]
+mod live_tests;
 
 pub use bindings::AssistantTerminal;
 pub use panel::AssistantPanel;

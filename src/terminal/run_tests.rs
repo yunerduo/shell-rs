@@ -372,6 +372,24 @@ fn a_caller_gone_cancels_the_command() {
 }
 
 #[test]
+fn a_background_run_is_handed_over_once_it_starts() {
+    let (run, events, input) = accepted("sleep 100");
+    let handle = run.handle();
+    let nonce = nonce(&run);
+    let shell = fake_shell(&run, input, Answer::Starts);
+    let context = run
+        .drive_background(&events, QUICK)
+        .expect("the command should start");
+    assert_eq!(context.shell, "bash");
+    // The terminal keeps the run: the handover cancels nothing, and the
+    // scanner still reads the end marker when it comes.
+    assert!(handle.is_active());
+    assert!(!handle.feed(marker("E", &nonce, "0").as_bytes()));
+    assert!(!handle.is_active());
+    assert!(!shell.join().unwrap().contains('\x03'));
+}
+
+#[test]
 fn the_encoded_command_has_nothing_a_line_editor_or_quotes_would_take() {
     let encoded = encode_command("echo 'it''s' \"$HOME\" a\\b !x\t中\n".as_bytes());
     assert!(encoded.bytes().all(|byte| (0x20..0x7f).contains(&byte)));

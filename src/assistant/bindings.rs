@@ -14,15 +14,17 @@ pub struct AssistantTerminal {
     /// The tab's title, for people; not the alias.
     pub title: String,
     pub alias: String,
-    /// The view a tool call runs on. A local terminal has none: a command
-    /// cannot be run beside a shell of this computer, so the panel answers
-    /// `unsupported` instead.
+    /// The view a tool call runs on. A terminal with no view has no channel
+    /// to run on at all.
     pub view: Option<WeakEntity<TerminalView>>,
     /// The connection carries only the shell: a command cannot go beside it.
     pub shell_only: bool,
+    /// A shell of this computer: a command cannot run beside it, so the
+    /// terminal is the only path.
+    pub local: bool,
 }
 
-/// The identity of a terminal is its id and the two names; the view is a
+/// The identity of a terminal is its id and the three flags; the view is a
 /// handle to the same terminal, not a part of what it is.
 impl PartialEq for AssistantTerminal {
     fn eq(&self, other: &Self) -> bool {
@@ -30,6 +32,7 @@ impl PartialEq for AssistantTerminal {
             && self.title == other.title
             && self.alias == other.alias
             && self.shell_only == other.shell_only
+            && self.local == other.local
     }
 }
 
@@ -43,6 +46,7 @@ impl AssistantTerminal {
             alias: String::new(),
             view: None,
             shell_only: false,
+            local: false,
         }
     }
 
@@ -51,6 +55,23 @@ impl AssistantTerminal {
         self.view = Some(view.downgrade());
         self.shell_only = shell_only;
         self
+    }
+
+    /// Mark it as a terminal of this computer, where only injection works.
+    pub fn local(mut self) -> Self {
+        self.local = true;
+        self
+    }
+
+    /// Whether a terminal is there to type into. The probe decides whether
+    /// its shell takes a line.
+    pub fn can_inject(&self) -> bool {
+        self.view.is_some()
+    }
+
+    /// Whether a command can run beside the shell, without a terminal.
+    pub fn can_exec(&self) -> bool {
+        self.view.is_some() && !self.shell_only && !self.local
     }
 
     /// Why a command cannot run here, if it cannot.

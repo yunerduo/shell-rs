@@ -103,7 +103,7 @@ fn run(
 /// The call itself, with the key already in hand. Kept apart from the
 /// keychain so a test can drive a real endpoint with a key from the
 /// environment, without the key ever reaching a file.
-fn run_with_key(
+pub(super) fn run_with_key(
     request: &StreamRequest,
     key: &str,
     tx: &mpsc::Sender<StreamEvent>,

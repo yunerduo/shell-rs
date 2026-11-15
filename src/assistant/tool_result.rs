@@ -81,16 +81,34 @@ pub(super) fn tool_card_parts(text: &str) -> (String, String) {
     };
     match value.get("status").and_then(|status| status.as_str()) {
         Some("ok") => {
-            let mut summary = match value.get("exit_code").and_then(|code| code.as_i64()) {
-                Some(code) => t!("assistant.tool.exit", code = code).to_string(),
-                None => t!("assistant.tool.result").to_string(),
+            let terminal =
+                value.get("channel").and_then(|channel| channel.as_str()) == Some("terminal");
+            let background = value.get("background").and_then(|flag| flag.as_bool()) == Some(true);
+            let mut summary = if background {
+                t!("assistant.tool.background_started").to_string()
+            } else {
+                match value.get("exit_code").and_then(|code| code.as_i64()) {
+                    Some(code) => t!("assistant.tool.exit", code = code).to_string(),
+                    None => t!("assistant.tool.result").to_string(),
+                }
             };
+            if terminal {
+                summary.push_str(" · ");
+                summary.push_str(&t!("assistant.tool.channel_terminal"));
+            }
+            if let Some(cancelled) = value.get("cancelled_by").and_then(|by| by.as_str()) {
+                summary.push_str(" · ");
+                summary.push_str(&match cancelled {
+                    "user" => t!("assistant.tool.cancelled_user"),
+                    _ => t!("assistant.tool.cancelled_stop"),
+                });
+            }
             if value.get("timed_out").and_then(|flag| flag.as_bool()) == Some(true) {
                 summary.push_str(" · ");
                 summary.push_str(&t!("assistant.tool.timed_out"));
             }
             let mut body = String::new();
-            for field in ["stdout", "stderr"] {
+            for field in ["output", "stdout", "stderr"] {
                 let Some(stream) = value.get(field).and_then(|stream| stream.as_str()) else {
                     continue;
                 };
@@ -110,8 +128,17 @@ pub(super) fn tool_card_parts(text: &str) -> (String, String) {
         Some("denied") => (t!("assistant.tool.denied").to_string(), reason_text(&value)),
         Some("unsupported") => (
             t!("assistant.tool.unsupported").to_string(),
-            reason_line(&reason_text(&value)),
+            reason_line(&value),
         ),
+        Some("busy") => (t!("assistant.tool.busy").to_string(), reason_line(&value)),
+        Some("unknown") => {
+            let mut body = reason_line(&value);
+            if value.get("may_have_run").and_then(|flag| flag.as_bool()) == Some(true) {
+                body.push(' ');
+                body.push_str(&t!("assistant.tool.may_have_run"));
+            }
+            (t!("assistant.tool.unknown").to_string(), body)
+        }
         _ => (t!("assistant.tool.failed").to_string(), reason_text(&value)),
     }
 }
@@ -127,8 +154,9 @@ fn reason_text(value: &serde_json::Value) -> String {
 
 /// A reason code as a line for the card. A code the panel did not write (a
 /// transport error) is shown as it came.
-fn reason_line(reason: &str) -> String {
-    match reason {
+fn reason_line(value: &serde_json::Value) -> String {
+    let reason = reason_text(value);
+    match reason.as_str() {
         "unknown_tool" => t!("assistant.tool.reason.unknown_tool"),
         "bad_arguments" => t!("assistant.tool.reason.bad_arguments"),
         "unknown_terminal" => t!("assistant.tool.reason.unknown_terminal"),
@@ -137,6 +165,28 @@ fn reason_line(reason: &str) -> String {
         "shell_only" => t!("assistant.tool.reason.shell_only"),
         "closed" => t!("assistant.tool.reason.closed"),
         "not_running" => t!("assistant.tool.reason.not_running"),
+        "not_connected" => t!("assistant.tool.reason.not_connected"),
+        "unsupported_shell" => t!(
+            "assistant.tool.reason.unsupported_shell",
+            shell = value
+                .get("shell")
+                .and_then(|shell| shell.as_str())
+                .unwrap_or_default()
+        ),
+        "too_long" => t!(
+            "assistant.tool.reason.too_long",
+            limit = value
+                .get("limit")
+                .and_then(|limit| limit.as_i64())
+                .unwrap_or_default()
+        ),
+        "full_screen" => t!("assistant.tool.reason.full_screen"),
+        "transfer" => t!("assistant.tool.reason.transfer"),
+        "another_run" => t!("assistant.tool.reason.another_run"),
+        "not_started" => t!("assistant.tool.reason.not_started"),
+        "no_answer" => t!("assistant.tool.reason.no_answer"),
+        "disconnected" => t!("assistant.tool.reason.disconnected"),
+        "no_channel" => t!("assistant.tool.reason.no_channel"),
         other => SharedString::from(other.to_string()),
     }
     .to_string()
@@ -241,6 +291,55 @@ mod tests {
 
         let (_, body) = tool_card_parts(r#"{"status":"unsupported","reason":"shell_only"}"#);
         assert_eq!(body, t!("assistant.tool.reason.shell_only").to_string());
+    }
+
+    #[test]
+    fn a_card_reads_an_injected_answer_with_its_terminal_channel() {
+        let (summary, body) = tool_card_parts(
+            r#"{"status":"ok","channel":"terminal","background":false,"exit_code":3,"output":"one\ntwo\n"}"#,
+        );
+        assert!(summary.contains(t!("assistant.tool.exit", code = 3).as_ref()));
+        assert!(summary.contains(t!("assistant.tool.channel_terminal").as_ref()));
+        assert_eq!(body, "one\ntwo");
+    }
+
+    #[test]
+    fn a_card_marks_a_background_start_and_a_cancelled_run() {
+        let (summary, _) = tool_card_parts(
+            r#"{"status":"ok","channel":"terminal","background":true,"output":""}"#,
+        );
+        assert!(summary.contains(t!("assistant.tool.background_started").as_ref()));
+        assert!(summary.contains(t!("assistant.tool.channel_terminal").as_ref()));
+
+        let (summary, _) = tool_card_parts(
+            r#"{"status":"ok","channel":"terminal","exit_code":130,"cancelled_by":"user"}"#,
+        );
+        assert!(summary.contains(t!("assistant.tool.cancelled_user").as_ref()));
+    }
+
+    #[test]
+    fn a_card_of_an_unknown_outcome_says_it_may_have_run() {
+        let (summary, body) =
+            tool_card_parts(r#"{"status":"unknown","reason":"disconnected","may_have_run":true}"#);
+        assert_eq!(summary, t!("assistant.tool.unknown").to_string());
+        assert!(body.contains(t!("assistant.tool.reason.disconnected").as_ref()));
+        assert!(body.contains(t!("assistant.tool.may_have_run").as_ref()));
+    }
+
+    #[test]
+    fn a_card_of_an_unsupported_shell_names_it() {
+        let (summary, body) = tool_card_parts(
+            r#"{"status":"unsupported","reason":"unsupported_shell","shell":"/bin/zsh"}"#,
+        );
+        assert_eq!(summary, t!("assistant.tool.unsupported").to_string());
+        assert!(body.contains("/bin/zsh"));
+    }
+
+    #[test]
+    fn a_card_of_a_busy_terminal_says_what_holds_it() {
+        let (summary, body) = tool_card_parts(r#"{"status":"busy","reason":"full_screen"}"#);
+        assert_eq!(summary, t!("assistant.tool.busy").to_string());
+        assert_eq!(body, t!("assistant.tool.reason.full_screen").to_string());
     }
 
     #[test]

@@ -23,12 +23,23 @@ pub struct ToolCall {
     pub arguments: String,
 }
 
+/// Whether the call waits for the command to end or leaves it running.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RunMode {
+    #[default]
+    Wait,
+    Background,
+}
+
 /// The arguments of `run_command`, as the tool's schema declares them.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct RunCommandArgs {
     /// The alias the model was given, not a terminal id.
     pub terminal: String,
     pub command: String,
+    #[serde(default)]
+    pub mode: RunMode,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -162,6 +173,21 @@ mod tests {
             serde_json::from_str(r#"{"terminal":"web-2","command":"ps aux"}"#).expect("parse");
         assert_eq!(args.terminal, "web-2");
         assert_eq!(args.command, "ps aux");
+        assert_eq!(args.mode, RunMode::Wait);
         assert!(serde_json::from_str::<RunCommandArgs>(r#"{"command":"ls"}"#).is_err());
+    }
+
+    #[test]
+    fn a_run_mode_is_wait_or_background() {
+        let args: RunCommandArgs =
+            serde_json::from_str(r#"{"terminal":"web","command":"npm start","mode":"background"}"#)
+                .expect("parse");
+        assert_eq!(args.mode, RunMode::Background);
+        assert!(
+            serde_json::from_str::<RunCommandArgs>(
+                r#"{"terminal":"web","command":"ls","mode":"later"}"#
+            )
+            .is_err()
+        );
     }
 }
