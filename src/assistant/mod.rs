@@ -5,6 +5,7 @@
 pub mod audit;
 pub mod bindings;
 pub mod chat;
+pub mod classifier;
 pub mod client;
 pub mod inject;
 pub mod output;

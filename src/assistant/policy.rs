@@ -4,8 +4,8 @@
 //!
 //! The order is fixed and earlier refusals cannot be undone later: user and
 //! built-in blacklist, then the hard blocks, then sensitive paths, then the
-//! risk grade, then the whitelist. A classifier would come last and could
-//! only add risk; it is not wired in P1.
+//! risk grade, then the whitelist. A classifier comes last, only for a
+//! command the rules could not place, and can only add risk.
 
 use crate::i18n::t;
 
@@ -15,6 +15,16 @@ use crate::i18n::t;
 pub enum AuthorizationLevel {
     Restricted,
     FullAccess,
+}
+
+impl AuthorizationLevel {
+    /// The level as the audit writes it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Restricted => "restricted",
+            Self::FullAccess => "full",
+        }
+    }
 }
 
 /// How dangerous a command is. The order is the ladder used to combine
@@ -82,6 +92,10 @@ pub enum Rule {
     Unknown,
     ReadOnly,
     Whitelist,
+    /// What the optional classifier said; it never lowers anything.
+    ClassifierSafe,
+    ClassifierConfirm,
+    ClassifierForbid,
 }
 
 impl Rule {
@@ -112,6 +126,9 @@ impl Rule {
             Rule::Unknown => "unknown",
             Rule::ReadOnly => "read_only",
             Rule::Whitelist => "whitelist",
+            Rule::ClassifierSafe => "classifier_safe",
+            Rule::ClassifierConfirm => "classifier_confirm",
+            Rule::ClassifierForbid => "classifier_forbid",
         }
     }
 
@@ -148,6 +165,9 @@ impl Rule {
             Rule::Unknown => t!("assistant.rule.unknown"),
             Rule::ReadOnly => t!("assistant.rule.read_only"),
             Rule::Whitelist => t!("assistant.rule.whitelist"),
+            Rule::ClassifierSafe => t!("assistant.rule.classifier_safe"),
+            Rule::ClassifierConfirm => t!("assistant.rule.classifier_confirm"),
+            Rule::ClassifierForbid => t!("assistant.rule.classifier_forbid"),
         }
     }
 }
@@ -163,6 +183,62 @@ pub struct Decision {
     pub masked_command: String,
     /// A sensitive path or credential was found.
     pub sensitive: bool,
+    /// The rules could not place this command: only the optional classifier
+    /// may look, and without it the command is treated as R2.
+    pub unresolved: bool,
+}
+
+/// What the optional classifier said. It may only make a judgment harsher.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Classified {
+    Safe,
+    Confirm,
+    Forbid,
+}
+
+impl Classified {
+    /// The verdict as the classifier writes it, and as the audit keeps it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Safe => "safe",
+            Self::Confirm => "confirm",
+            Self::Forbid => "forbid",
+        }
+    }
+
+    /// Read one verdict word. Anything else is a failed call, never a
+    /// default: a provider that answers something unknown is not trusted.
+    pub fn parse(word: &str) -> Option<Self> {
+        match word.trim().to_ascii_lowercase().as_str() {
+            "safe" => Some(Self::Safe),
+            "confirm" => Some(Self::Confirm),
+            "forbid" => Some(Self::Forbid),
+            _ => None,
+        }
+    }
+}
+
+/// Add one classifier verdict to a decision. `safe` and `confirm` leave the
+/// verdict as the rules left it — the classifier never releases anything —
+/// while `forbid` refuses the command. A refusal that is already harder
+/// stays as it was.
+pub fn apply_classifier(decision: Decision, verdict: Classified) -> Decision {
+    let rule = match verdict {
+        Classified::Safe => Rule::ClassifierSafe,
+        Classified::Confirm => Rule::ClassifierConfirm,
+        Classified::Forbid => Rule::ClassifierForbid,
+    };
+    let verdict_now = if verdict == Classified::Forbid {
+        Verdict::Deny
+    } else {
+        decision.verdict
+    };
+    Decision {
+        verdict: verdict_now,
+        rule,
+        unresolved: false,
+        ..decision
+    }
 }
 
 /// The user's own lists, as saved in the settings.
@@ -196,6 +272,7 @@ pub fn decide(command: &str, level: AuthorizationLevel, policy: &Policy) -> Deci
             rule: Rule::Empty,
             masked_command,
             sensitive: false,
+            unresolved: false,
         };
     }
     // A script that spans lines would be typed into the shell line by line.
@@ -281,6 +358,7 @@ pub fn decide(command: &str, level: AuthorizationLevel, policy: &Policy) -> Deci
             rule: Rule::Whitelist,
             masked_command,
             sensitive,
+            unresolved: false,
         };
     }
 
@@ -289,12 +367,17 @@ pub fn decide(command: &str, level: AuthorizationLevel, policy: &Policy) -> Deci
         (AuthorizationLevel::FullAccess, _) => Verdict::Auto,
         (AuthorizationLevel::Restricted, _) => Verdict::Confirm,
     };
+    // Only the two rules that say "these words could not be trusted" leave a
+    // command open to the classifier; every graded command has already been
+    // placed.
+    let unresolved = matches!(rule, Rule::Unreliable | Rule::Unknown);
     Decision {
         verdict,
         risk,
         rule,
         masked_command,
         sensitive,
+        unresolved,
     }
 }
 
@@ -305,6 +388,7 @@ fn refuse(risk: Risk, rule: Rule, masked_command: String, sensitive: bool) -> De
         rule,
         masked_command,
         sensitive,
+        unresolved: false,
     }
 }
 
@@ -1107,6 +1191,63 @@ mod tests {
         assert_eq!(decision.risk, Risk::R2);
         assert_eq!(decision.rule, Rule::Unknown);
         assert_eq!(decision.verdict, Verdict::Confirm);
+        assert!(decision.unresolved, "only the classifier may look at it");
+    }
+
+    #[test]
+    fn full_access_runs_r2_but_never_a_hard_block() {
+        let policy = Policy::new(Vec::new(), Vec::new());
+        let install = decide("apt install nginx", AuthorizationLevel::FullAccess, &policy);
+        assert_eq!(install.verdict, Verdict::Auto, "{install:?}");
+        let blocked = decide("rm -rf /", AuthorizationLevel::FullAccess, &policy);
+        assert_eq!(blocked.verdict, Verdict::Deny, "{blocked:?}");
+        let blacklisted = Policy::new(vec!["systemctl stop *".into()], Vec::new());
+        let stopped = decide(
+            "systemctl stop nginx",
+            AuthorizationLevel::FullAccess,
+            &blacklisted,
+        );
+        assert_eq!(stopped.verdict, Verdict::Deny, "{stopped:?}");
+        let sensitive = decide("cat ~/.ssh/id_rsa", AuthorizationLevel::FullAccess, &policy);
+        assert!(sensitive.sensitive, "{sensitive:?}");
+        assert_eq!(sensitive.verdict, Verdict::Auto, "{sensitive:?}");
+    }
+
+    #[test]
+    fn only_an_unplaceable_command_is_left_to_the_classifier() {
+        assert!(!decide_restricted("df -h").unresolved);
+        assert!(!decide_restricted("rm -rf /").unresolved);
+        assert!(!decide_restricted("vim /etc/hosts").unresolved);
+        assert!(decide_restricted("echo \"unbalanced").unresolved);
+    }
+
+    #[test]
+    fn the_classifier_can_only_make_a_command_harsher() {
+        let decision = decide_restricted("frobnicate --all");
+        assert_eq!(decision.verdict, Verdict::Confirm);
+
+        let safe = apply_classifier(decision.clone(), Classified::Safe);
+        assert_eq!(safe.verdict, Verdict::Confirm, "safe releases nothing");
+        assert_eq!(safe.rule, Rule::ClassifierSafe);
+        assert!(!safe.unresolved);
+
+        let confirm = apply_classifier(decision.clone(), Classified::Confirm);
+        assert_eq!(confirm.verdict, Verdict::Confirm);
+        assert_eq!(confirm.rule, Rule::ClassifierConfirm);
+
+        let forbid = apply_classifier(decision, Classified::Forbid);
+        assert_eq!(forbid.verdict, Verdict::Deny);
+        assert_eq!(forbid.rule, Rule::ClassifierForbid);
+        assert_eq!(forbid.risk, Risk::R2);
+    }
+
+    #[test]
+    fn a_classifier_word_is_read_or_rejected() {
+        assert_eq!(Classified::parse(" SAFE "), Some(Classified::Safe));
+        assert_eq!(Classified::parse("confirm"), Some(Classified::Confirm));
+        assert_eq!(Classified::parse("forbid"), Some(Classified::Forbid));
+        assert_eq!(Classified::parse("allow"), None);
+        assert_eq!(Classified::parse(""), None);
     }
 
     #[test]

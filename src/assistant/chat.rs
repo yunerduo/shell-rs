@@ -42,6 +42,57 @@ pub struct RunCommandArgs {
     pub mode: RunMode,
 }
 
+/// One choice the model offers the user.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct AskOption {
+    pub id: String,
+    pub label: String,
+}
+
+/// The arguments of `ask_user`, as the tool's schema declares them. Asking
+/// runs nothing; it only gives the conversation one thing to wait for.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct AskUserArgs {
+    pub question: String,
+    #[serde(default)]
+    pub options: Vec<AskOption>,
+    #[serde(default = "default_allow_free_text")]
+    pub allow_free_text: bool,
+}
+
+fn default_allow_free_text() -> bool {
+    true
+}
+
+impl AskUserArgs {
+    /// Whether the choices are something a person can answer: a question,
+    /// then either two to six short options with distinct ids, or free
+    /// text.
+    pub fn usable(&self) -> bool {
+        let question = self.question.trim();
+        if question.is_empty() || question.chars().count() > 600 {
+            return false;
+        }
+        match self.options.len() {
+            0 => self.allow_free_text,
+            2..=6 => {
+                let ids: std::collections::BTreeSet<&str> = self
+                    .options
+                    .iter()
+                    .map(|option| option.id.as_str())
+                    .collect();
+                ids.len() == self.options.len()
+                    && self.options.iter().all(|option| {
+                        !option.id.trim().is_empty()
+                            && !option.label.trim().is_empty()
+                            && option.label.chars().count() <= 200
+                    })
+            }
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChatMessage {
     pub role: Role,
@@ -189,5 +240,36 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    fn ask(json: &str) -> AskUserArgs {
+        serde_json::from_str(json).expect("parse")
+    }
+
+    #[test]
+    fn an_ask_offers_two_to_six_choices_or_free_text() {
+        assert!(
+            ask(r#"{"question":"Which port?","options":[{"id":"a","label":"8080"},{"id":"b","label":"3000"}]}"#)
+                .usable()
+        );
+        assert!(
+            ask(r#"{"question":"Which port?"}"#).usable(),
+            "free text by default"
+        );
+        assert!(
+            !ask(r#"{"question":"Which port?","allow_free_text":false}"#).usable(),
+            "nothing to pick"
+        );
+        assert!(
+            !ask(r#"{"question":"Which port?","options":[{"id":"a","label":"8080"}]}"#).usable()
+        );
+        assert!(
+            !ask(
+                r#"{"question":"Which?","options":[{"id":"a","label":"1"},{"id":"a","label":"2"}]}"#
+            )
+            .usable(),
+            "the same id twice"
+        );
+        assert!(!ask(r#"{"question":"  "}"#).usable());
     }
 }

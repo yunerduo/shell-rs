@@ -141,6 +141,11 @@ pub struct AssistantSettings {
     /// Read-only commands allowed without a card. Only plain, single
     /// commands: no metacharacter, no wildcard.
     pub user_whitelist: Vec<String>,
+    /// Ask the model about a command the rules could not place. Off by
+    /// default; it can only make a judgment harsher.
+    pub classifier_enabled: bool,
+    /// The model the classifier asks; empty means the active provider's.
+    pub classifier_model: String,
 }
 
 /// The most entries each list keeps. Enough for a person, not a policy
@@ -156,6 +161,8 @@ impl Default for AssistantSettings {
             timeout_seconds: 120,
             user_blacklist: Vec::new(),
             user_whitelist: Vec::new(),
+            classifier_enabled: false,
+            classifier_model: String::new(),
         }
     }
 }
@@ -203,6 +210,7 @@ impl AssistantSettings {
             &self.user_whitelist,
             crate::assistant::policy::clean_whitelist_entry,
         );
+        self.classifier_model = self.classifier_model.trim().chars().take(128).collect();
     }
 }
 
@@ -266,6 +274,8 @@ mod tests {
                 "systemctl stop *".into(),
             ],
             user_whitelist: vec![" df -h ".into(), "rm -rf /".into(), "df -h".into()],
+            classifier_enabled: true,
+            classifier_model: "  small-model  ".into(),
         };
         settings.normalize();
         assert_eq!(settings.openai.base_url, "https://example.test/v1");
@@ -279,6 +289,7 @@ mod tests {
         assert_eq!(settings.timeout_seconds, 10);
         assert_eq!(settings.user_blacklist, vec!["systemctl stop *"]);
         assert_eq!(settings.user_whitelist, vec!["df -h"]);
+        assert_eq!(settings.classifier_model, "small-model");
     }
 
     #[test]

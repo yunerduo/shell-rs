@@ -81,6 +81,17 @@ pub(super) fn tool_card_parts(text: &str) -> (String, String) {
     };
     match value.get("status").and_then(|status| status.as_str()) {
         Some("ok") => {
+            // An answer is not a command's output: it has no exit code and
+            // no streams.
+            if let Some(answer) = value.get("answer").and_then(|answer| answer.as_str()) {
+                let summary = t!("assistant.tool.answer").to_string();
+                let body = if answer.trim().is_empty() {
+                    t!("assistant.tool.no_output").to_string()
+                } else {
+                    answer.to_string()
+                };
+                return (summary, cut(body));
+            }
             let terminal =
                 value.get("channel").and_then(|channel| channel.as_str()) == Some("terminal");
             let background = value.get("background").and_then(|flag| flag.as_bool()) == Some(true);
@@ -187,6 +198,7 @@ fn reason_line(value: &serde_json::Value) -> String {
         "no_answer" => t!("assistant.tool.reason.no_answer"),
         "disconnected" => t!("assistant.tool.reason.disconnected"),
         "no_channel" => t!("assistant.tool.reason.no_channel"),
+        "user_stop" => t!("assistant.tool.reason.user_stop"),
         other => SharedString::from(other.to_string()),
     }
     .to_string()
@@ -361,6 +373,13 @@ mod tests {
         let (_, body) = tool_card_parts(&payload);
         assert_eq!(body.chars().count(), DISPLAY_CHARS + 1);
         assert!(body.ends_with('…'));
+    }
+
+    #[test]
+    fn an_answer_is_read_back_as_the_users_answer() {
+        let (summary, body) = tool_card_parts(r#"{"status":"ok","answer":"8080","option_id":"a"}"#);
+        assert_eq!(summary, t!("assistant.tool.answer").to_string());
+        assert_eq!(body, "8080");
     }
 
     #[test]

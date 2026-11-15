@@ -369,4 +369,111 @@ assistant.rule.read_only:
 assistant.rule.whitelist:
   zh-CN: 命中白名单，只读且单条
   en: "Whitelisted: one read-only command"
+assistant.rule.classifier_safe:
+  zh-CN: 分类模型未发现额外风险
+  en: The classifier found no extra risk
+assistant.rule.classifier_confirm:
+  zh-CN: 分类模型建议确认
+  en: The classifier asks for a look
+assistant.rule.classifier_forbid:
+  zh-CN: 分类模型建议禁止
+  en: The classifier says do not run
+
+assistant.ask.title:
+  zh-CN: 需要你回答
+  en: Needs your answer
+assistant.ask.waiting:
+  zh-CN: 已有命令暂停，等你的选择
+  en: Waiting for your choice before going on
+assistant.ask.placeholder:
+  zh-CN: 也可以直接输入回答
+  en: Or type an answer
+
+assistant.tool.classifying:
+  zh-CN: 规则无法归类，正在询问分类模型…
+  en: The rules could not place it; asking the classifier…
+assistant.tool.classifier_failed:
+  zh-CN: 分类模型没有给出可用结论，按需确认处理
+  en: The classifier gave no usable answer; it stays a confirmation
+assistant.tool.classifier_limit:
+  zh-CN: 本次对话已询问分类模型 %{limit} 次，后续按需确认
+  en: "Asked the classifier %{limit} times in this exchange; later ones stay confirmations"
+assistant.tool.classifier_forbid:
+  zh-CN: 分类模型建议禁止执行。仍要执行会记录一次覆盖。
+  en: The classifier says do not run. Running anyway is recorded as one override.
+assistant.tool.allow_once:
+  zh-CN: 仍要执行
+  en: Run anyway
+assistant.tool.answer:
+  zh-CN: 你的回答
+  en: Your answer
+assistant.tool.reason.user_stop:
+  zh-CN: 已被急停
+  en: Stopped by the emergency stop
+
+assistant.full_access.button:
+  zh-CN: 完全访问
+  en: Full access
+assistant.full_access.exit:
+  zh-CN: 退出完全访问
+  en: Leave full access
+assistant.full_access.bar:
+  zh-CN: 完全访问已开启：范围内的命令不再逐条确认
+  en: "Full access is on: covered commands no longer ask one by one"
+assistant.full_access.confirm_title:
+  zh-CN: 开启完全访问
+  en: Turn on full access
+assistant.full_access.confirm_body:
+  zh-CN: 开启后，下列终端上的 R0–R2 命令会直接执行，不再逐条弹出确认卡。黑名单与内置硬拦仍然有效。请先确认范围，再等倒计时结束。
+  en: R0–R2 commands on the terminals below then run without a card. Blacklists and hard blocks still apply. Check the scope, then wait out the countdown.
+assistant.full_access.covers:
+  zh-CN: "覆盖终端：%{terminals}"
+  en: "Covers: %{terminals}"
+assistant.full_access.wait:
+  zh-CN: 还需等待 %{seconds} 秒
+  en: "%{seconds}s to go"
+assistant.full_access.ready:
+  zh-CN: 现在可以确认
+  en: You can confirm now
+assistant.full_access.accept:
+  zh-CN: 确认开启
+  en: Turn it on
+assistant.full_access.on:
+  zh-CN: 完全访问已开启
+  en: Full access is on
+assistant.full_access.off:
+  zh-CN: 已退出完全访问
+  en: Full access is off
+assistant.full_access.emergency:
+  zh-CN: 急停
+  en: Stop everything
+assistant.full_access.emergency_done:
+  zh-CN: 已急停：生成、命令与后台运行都已停止，完全访问已关闭
+  en: "Stopped: generation, commands and background runs ended; full access is off"
+
+assistant.settings.classifier.toggle:
+  zh-CN: 规则无法归类时询问分类模型
+  en: Ask a classifier when the rules cannot place a command
+assistant.settings.classifier.hint:
+  zh-CN: 只在规则无结论时调用，4 秒超时，只能加重不能放宽；每次对话最多 20 次。留空使用当前模型。
+  en: Only for commands the rules cannot place; 4s timeout; it can only add risk, never release. At most 20 calls per exchange. Empty uses the current model.
+assistant.settings.classifier.model_placeholder:
+  zh-CN: 分类模型名，留空用当前模型
+  en: Classifier model; empty uses the current one
+assistant.settings.saved:
+  zh-CN: 已保存
+  en: Saved
+
+assistant.action.cancel:
+  zh-CN: 取消
+  en: Cancel
+assistant.action.report:
+  zh-CN: 保存报告
+  en: Save report
+assistant.report.saved:
+  zh-CN: 报告已保存为 %{name}
+  en: Report saved as %{name}
+assistant.report.failed:
+  zh-CN: 报告没有保存成功
+  en: The report could not be saved
 
