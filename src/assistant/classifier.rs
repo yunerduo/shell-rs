@@ -103,6 +103,7 @@ pub fn request(settings: &AssistantSettings, command: &str, shell: &str) -> Stre
         max_tokens: MAX_TOKENS,
         timeout: TIMEOUT,
         terminals: Vec::new(),
+        scheduled: false,
     }
 }
 

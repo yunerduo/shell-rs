@@ -513,3 +513,116 @@ assistant.report.failed:
   zh-CN: 报告没有保存成功
   en: The report could not be saved
 
+assistant.schedule.title:
+  zh-CN: 定时任务
+  en: Scheduled tasks
+assistant.schedule.empty:
+  zh-CN: 还没有定时任务
+  en: No scheduled task yet
+assistant.schedule.target:
+  zh-CN: 目标终端
+  en: Target
+assistant.schedule.no_target:
+  zh-CN: 先绑定一张远端终端，定时任务只认第一张
+  en: Bind a remote terminal first; a task uses the first one only
+assistant.schedule.local:
+  zh-CN: 本地终端不能用于定时任务：只能注入，不能旁路执行
+  en: "A local terminal cannot run a task: it only takes typed input"
+assistant.schedule.shell_only:
+  zh-CN: 这条连接只有 shell，不能旁路执行，定时任务无法运行
+  en: This connection carries only the shell, so a task cannot run on it
+assistant.schedule.command_placeholder:
+  zh-CN: 固定命令，例如 df -h
+  en: A fixed command, for example df -h
+assistant.schedule.interval_placeholder:
+  zh-CN: 间隔分钟
+  en: Minutes
+assistant.schedule.add:
+  zh-CN: 添加
+  en: Add
+assistant.schedule.add_prompt:
+  zh-CN: 添加提示词
+  en: Add prompt
+assistant.schedule.added:
+  zh-CN: 已添加定时任务
+  en: Task added
+assistant.schedule.next:
+  zh-CN: 下次 %{time}
+  en: Next %{time}
+assistant.schedule.paused:
+  zh-CN: 待重绑
+  en: Waiting to rebind
+assistant.schedule.rebind_action:
+  zh-CN: 重绑到当前终端
+  en: Bind to the current terminal
+assistant.schedule.rebind:
+  zh-CN: 任务「%{name}」的目标终端已不在，已暂停，等待重绑
+  en: "The terminal for %{name} is gone; the task is paused until you rebind it"
+assistant.schedule.rebind_short:
+  zh-CN: 目标终端不在，先打开它再批准
+  en: The target terminal is not open; open it before allowing
+assistant.schedule.second_target:
+  zh-CN: 一个任务只能绑定一张终端
+  en: A task may use one terminal only
+assistant.schedule.unsupported:
+  zh-CN: 任务「%{name}」无法在这张终端上运行
+  en: "%{name} cannot run on this terminal"
+assistant.schedule.waiting:
+  zh-CN: 任务「%{name}」有命令等待你批准
+  en: "%{name} has a command waiting for your approval"
+assistant.schedule.refused:
+  zh-CN: 任务「%{name}」的命令被拒绝
+  en: "The command of %{name} was refused"
+assistant.schedule.finished:
+  zh-CN: 任务「%{name}」已完成
+  en: "%{name} finished"
+assistant.schedule.failed:
+  zh-CN: 任务「%{name}」失败，请查看审计与输出
+  en: "%{name} failed; see the audit and its output"
+assistant.schedule.missed:
+  zh-CN: 应用未运行时错过 %{count} 次触发，未补跑
+  en: "%{count} triggers were missed while the app was closed; none were made up"
+assistant.schedule.ai_timeout:
+  zh-CN: 定时任务等待模型回答超时
+  en: The scheduled task timed out waiting for the model
+assistant.schedule.ai_failed:
+  zh-CN: 任务「%{name}」没有生成报告：%{reason}
+  en: "%{name} produced no report: %{reason}"
+assistant.schedule.ai_empty:
+  zh-CN: 模型没有返回内容
+  en: The model returned nothing
+assistant.schedule.enable:
+  zh-CN: 启用
+  en: "On"
+assistant.schedule.disable:
+  zh-CN: 停用
+  en: "Off"
+assistant.schedule.remove:
+  zh-CN: 删除
+  en: Remove
+
+assistant.pending.title:
+  zh-CN: 待审队列
+  en: Waiting for review
+assistant.pending.empty:
+  zh-CN: 没有等待审批的命令
+  en: Nothing waits for review
+assistant.pending.allow:
+  zh-CN: 允许执行
+  en: Allow and run
+assistant.pending.deny:
+  zh-CN: 拒绝
+  en: Refuse
+assistant.pending.from:
+  zh-CN: 来自「%{name}」
+  en: From %{name}
+assistant.pending.reason.write:
+  zh-CN: 无人值守下的写操作
+  en: A write while no one was there
+assistant.pending.reason.ai_proposal:
+  zh-CN: 模型在定时任务中提议的命令
+  en: A command the model proposed in a task
+assistant.pending.reason.unresolved:
+  zh-CN: 规则无法归类
+  en: The rules could not place it
+

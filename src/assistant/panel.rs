@@ -15,6 +15,7 @@ use gpui_kit::component::{
     text::TextView,
     v_flex,
 };
+use gpui_kit::component::{WindowExt as _, notification::Notification};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -35,8 +36,10 @@ use super::chat::{
 use super::classifier::{self, Judged};
 use super::client::{self, StreamEvent, StreamHandle, StreamRequest};
 use super::inject::{self, InjectOutcome, Route};
+use super::pending::{self, PendingItem};
 use super::policy::{self, AuthorizationLevel, Classified, Decision, Policy, Risk, Verdict};
 use super::protocol::ToolTerminal;
+use super::schedule::{self, ResumePlan, Schedule, ScheduleAction, ScheduleStore, ScheduleTarget};
 use super::settings::ProviderProtocol;
 use super::tool_result::{
     call_line, denied_result, tool_card_parts, tool_error, tool_result_body, unknown_terminal,
@@ -75,6 +78,17 @@ const GLOBAL_RUNS: usize = 3;
 /// How often a wait looks at its screen. Fast enough for a service that
 /// starts in a second, slow enough not to reread the grid every tick.
 const WAIT_CHECK: Duration = Duration::from_millis(200);
+
+/// How often the scheduler looks for a task that has come due.
+const SCHEDULE_TICK: Duration = Duration::from_secs(30);
+
+/// The longest a scheduled command or answer may take, whatever the file
+/// says.
+const SCHEDULE_TIMEOUT_MAX: u64 = 600;
+
+/// How many model turns one scheduled answer may take. A report needs a
+/// look and an answer; more than that is a loop.
+const SCHEDULE_AI_ROUNDS: u32 = 4;
 
 /// A call waiting for the user's answer. Its command is the one the card
 /// showed; the hash is checked again before it runs.
@@ -199,6 +213,30 @@ struct WaitRun {
     last_check: Instant,
 }
 
+/// One command a trigger — or an approved review item — started beside its
+/// shell. Its audit waits for the exit code.
+struct ScheduledRun {
+    name: String,
+    alias: String,
+    decision: Decision,
+    /// `scheduled` for a trigger, `user` for an approved review item.
+    approver: &'static str,
+    receiver: std::sync::mpsc::Receiver<ExecDetailResult>,
+}
+
+/// One scheduled prompt being answered. Its tools read the screen and the
+/// host facts; a command it suggests only goes to the review list.
+struct ScheduledAiRun {
+    name: String,
+    alias: String,
+    target: ScheduleTarget,
+    messages: Vec<ChatMessage>,
+    stream: StreamHandle,
+    text: String,
+    rounds: u32,
+    deadline: Instant,
+}
+
 /// The parts of one command list's section in the settings.
 struct ListSection<'a> {
     prefix: &'static str,
@@ -281,6 +319,19 @@ pub struct AssistantPanel {
     notice: Option<SharedString>,
     key_note: Option<SharedString>,
     settings_open: bool,
+    /// Where a finished task's notice goes.
+    window: AnyWindowHandle,
+    /// The tasks and the commands waiting for the user.
+    schedules: ScheduleStore,
+    pending_items: Vec<PendingItem>,
+    /// The commands a trigger started beside the shell.
+    scheduled: Vec<ScheduledRun>,
+    /// The answer a prompt task is waiting on.
+    scheduled_ai: Option<ScheduledAiRun>,
+    /// The 30-second loop is running.
+    schedule_ticking: bool,
+    schedule_command: Entity<InputState>,
+    schedule_interval: Entity<InputState>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -341,6 +392,16 @@ impl AssistantPanel {
                         .clone(),
                 )
         });
+        let schedule_command = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.schedule.command_placeholder"))
+                .submit_on_enter(true)
+        });
+        let schedule_interval = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.schedule.interval_placeholder"))
+                .default_value("15")
+        });
         let subscriptions =
             vec![
                 cx.observe(&settings, |_, _, cx| cx.notify()),
@@ -378,8 +439,17 @@ impl AssistantPanel {
                         }
                     },
                 ),
+                cx.subscribe_in(
+                    &schedule_command,
+                    window,
+                    |this, _, event: &InputEvent, window, cx| {
+                        if matches!(event, InputEvent::PressEnter { shift: false, .. }) {
+                            this.add_schedule(window, cx);
+                        }
+                    },
+                ),
             ];
-        Self {
+        let mut panel = Self {
             settings,
             protocol,
             base_url,
@@ -419,8 +489,830 @@ impl AssistantPanel {
             notice: None,
             key_note: None,
             settings_open: false,
+            window: window.window_handle(),
+            schedules: ScheduleStore::load(&Self::schedules_path()),
+            pending_items: pending::load(&Self::pending_path()),
+            scheduled: Vec::new(),
+            scheduled_ai: None,
+            schedule_ticking: false,
+            schedule_command,
+            schedule_interval,
             _subscriptions: subscriptions,
+        };
+        // A task that came due while the app was not running is counted and
+        // moved forward, never run late.
+        panel.resume_schedules(cx);
+        panel.ensure_schedule_tick(cx);
+        panel
+    }
+
+    fn schedules_path() -> std::path::PathBuf {
+        schedule::path_in(&crate::app::data_dir())
+    }
+
+    fn pending_path() -> std::path::PathBuf {
+        pending::path_in(&crate::app::data_dir())
+    }
+
+    /// The user's lists, as the policy reads them.
+    fn policy(&self, cx: &App) -> Policy {
+        let assistant = &self.settings.read(cx).settings().assistant;
+        Policy::new(
+            assistant.user_blacklist.clone(),
+            assistant.user_whitelist.clone(),
+        )
+    }
+
+    /// Count what came due while the app was not running and move every
+    /// task forward. No task runs late, at any level and for any action.
+    fn resume_schedules(&mut self, cx: &mut Context<Self>) {
+        let policy = self.policy(cx);
+        let now = chrono::Local::now();
+        let mut events = Vec::new();
+        let mut missed_total = 0;
+        for task in &mut self.schedules.schedules {
+            if !task.enabled {
+                continue;
+            }
+            let plan: ResumePlan = schedule::resume_at(now, task.next_due_at, task.recurrence);
+            if plan.missed == 0 && !plan.rewound {
+                continue;
+            }
+            task.next_due_at = plan.next_due;
+            if plan.missed > 0 {
+                let decision =
+                    policy::decide(task.action.text(), AuthorizationLevel::Restricted, &policy);
+                events.push((task.target.alias.clone(), decision));
+                missed_total += plan.missed;
+            }
         }
+        if events.is_empty() {
+            return;
+        }
+        let _ = self.schedules.save(&Self::schedules_path());
+        for (alias, decision) in events {
+            self.record_raw(&alias, &decision, "missed", None, "scheduled");
+        }
+        if missed_total > 0 {
+            self.notice = Some(t!("assistant.schedule.missed", count = missed_total));
+        }
+    }
+
+    /// Start the once-a-30-seconds look for due tasks. The loop lives as
+    /// long as the panel, which is as long as the workspace.
+    fn ensure_schedule_tick(&mut self, cx: &mut Context<Self>) {
+        if self.schedule_ticking {
+            return;
+        }
+        self.schedule_ticking = true;
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(SCHEDULE_TICK).await;
+                let keep = this
+                    .update(cx, |this, cx| {
+                        this.schedule_tick(cx);
+                        cx.notify();
+                        true
+                    })
+                    .unwrap_or(false);
+                if !keep {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn schedule_tick(&mut self, cx: &mut Context<Self>) {
+        let now = schedule::now_millis();
+        let due: Vec<String> = self
+            .schedules
+            .schedules
+            .iter()
+            .filter(|task| task.is_due(now))
+            .map(|task| task.id.clone())
+            .collect();
+        for id in due {
+            self.trigger_schedule(&id, now, cx);
+        }
+        self.poll_scheduled(cx);
+        self.poll_scheduled_ai(cx);
+        if !self.scheduled.is_empty() || self.scheduled_ai.is_some() {
+            self.ensure_tick(cx);
+        }
+    }
+
+    /// Run one due task. Its due time moves before it starts, so a long run
+    /// is not started twice.
+    fn trigger_schedule(&mut self, id: &str, now_ms: i64, cx: &mut Context<Self>) {
+        let Some(task) = self.schedules.get(id).cloned() else {
+            return;
+        };
+        let plan = schedule::resume_at(chrono::Local::now(), task.next_due_at, task.recurrence);
+        if let Some(stored) = self.schedules.get_mut(id) {
+            stored.next_due_at = plan.next_due;
+            stored.last_run_at = Some(now_ms);
+            stored.updated_at = now_ms;
+        }
+        let _ = self.schedules.save(&Self::schedules_path());
+        let Some(terminal) = self.resolve_target(&task.target) else {
+            // The terminal this task names is not open any more. It is not
+            // moved to another card; it waits to be bound again.
+            if let Some(stored) = self.schedules.get_mut(id) {
+                stored.needs_rebind = true;
+                stored.updated_at = now_ms;
+            }
+            let _ = self.schedules.save(&Self::schedules_path());
+            self.notify_system(
+                cx,
+                t!("assistant.schedule.rebind", name = task.name.as_str()),
+                true,
+            );
+            return;
+        };
+        if !terminal.can_exec() {
+            let decision = policy::decide(
+                task.action.text(),
+                AuthorizationLevel::Restricted,
+                &self.policy(cx),
+            );
+            self.record_raw(
+                &task.target.alias,
+                &decision,
+                "unsupported",
+                None,
+                "scheduled",
+            );
+            self.notify_system(
+                cx,
+                t!("assistant.schedule.unsupported", name = task.name.as_str()),
+                true,
+            );
+            return;
+        }
+        match &task.action {
+            ScheduleAction::FixedCommand { command } => {
+                self.trigger_command(&task, &terminal, command, cx);
+            }
+            ScheduleAction::FixedPrompt { prompt } => {
+                self.trigger_prompt(&task, &terminal, prompt, cx);
+            }
+        }
+    }
+
+    /// A fixed command, judged as if no one were there: only the whitelist's
+    /// R0 runs, a write waits for review, a refusal fails.
+    fn trigger_command(
+        &mut self,
+        task: &Schedule,
+        terminal: &AssistantTerminal,
+        command: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let policy = self.policy(cx);
+        match schedule::unattended_action(command, &policy) {
+            schedule::Unattended::Run => {
+                let decision = policy::decide(command, AuthorizationLevel::Restricted, &policy);
+                let timeout = u64::from(task.timeout_seconds).min(SCHEDULE_TIMEOUT_MAX);
+                self.start_scheduled(
+                    &task.id,
+                    &task.name,
+                    terminal,
+                    command,
+                    &decision,
+                    "scheduled",
+                    timeout,
+                    cx,
+                );
+            }
+            schedule::Unattended::Review(decision) => {
+                let reason = if decision.unresolved {
+                    pending::REASON_UNRESOLVED
+                } else {
+                    pending::REASON_WRITE
+                };
+                self.queue_pending(task, terminal, command, &decision, reason);
+                self.notify_system(
+                    cx,
+                    t!("assistant.schedule.waiting", name = task.name.as_str()),
+                    false,
+                );
+            }
+            schedule::Unattended::Refuse(decision) => {
+                self.record_raw(&task.target.alias, &decision, "denied", None, "policy");
+                self.notify_system(
+                    cx,
+                    t!("assistant.schedule.refused", name = task.name.as_str()),
+                    true,
+                );
+            }
+        }
+    }
+
+    /// Start one scheduled answer. It reads the terminal and reports; a
+    /// command it suggests waits in the review list.
+    fn trigger_prompt(
+        &mut self,
+        task: &Schedule,
+        terminal: &AssistantTerminal,
+        prompt: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let assistant = self.settings.read(cx).settings().assistant.clone();
+        let provider = assistant.active().clone();
+        if provider.base_url.trim().is_empty() || provider.model.trim().is_empty() {
+            let decision =
+                policy::decide(prompt, AuthorizationLevel::Restricted, &Policy::default());
+            self.record_raw(
+                &task.target.alias,
+                &decision,
+                "unsupported",
+                None,
+                "scheduled",
+            );
+            self.notify_system(cx, t!("assistant.error.no_provider"), true);
+            return;
+        }
+        let timeout =
+            Duration::from_secs(assistant.timeout_seconds.clamp(10, SCHEDULE_TIMEOUT_MAX));
+        let request = StreamRequest {
+            protocol: assistant.protocol,
+            base_url: provider.base_url,
+            model: provider.model,
+            keychain_id: provider.keychain_id,
+            messages: vec![ChatMessage::user(prompt.to_string())],
+            max_tokens: provider.max_tokens,
+            timeout,
+            terminals: vec![ToolTerminal {
+                alias: terminal.alias.clone(),
+                title: terminal.title.clone(),
+            }],
+            scheduled: true,
+        };
+        self.scheduled_ai = Some(ScheduledAiRun {
+            name: task.name.clone(),
+            alias: task.target.alias.clone(),
+            target: task.target.clone(),
+            messages: vec![ChatMessage::user(prompt.to_string())],
+            stream: client::start(request),
+            text: String::new(),
+            rounds: 1,
+            deadline: Instant::now() + timeout,
+        });
+        self.ensure_tick(cx);
+        cx.notify();
+    }
+
+    /// Start one command beside its shell and keep its channel until the
+    /// exit code arrives.
+    #[allow(clippy::too_many_arguments)]
+    fn start_scheduled(
+        &mut self,
+        schedule_id: &str,
+        name: &str,
+        terminal: &AssistantTerminal,
+        command: &str,
+        decision: &Decision,
+        approver: &'static str,
+        timeout_seconds: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(view) = terminal.view.as_ref().and_then(|weak| weak.upgrade()) else {
+            self.record_raw(&terminal.alias, decision, "unsupported", None, approver);
+            self.notify_system(cx, t!("assistant.schedule.unsupported", name = name), true);
+            return;
+        };
+        let timeout = Duration::from_secs(timeout_seconds.clamp(1, SCHEDULE_TIMEOUT_MAX));
+        let Some(receiver) =
+            view.read(cx)
+                .exec_detail(command.to_string(), timeout, EXEC_LIMIT, cx)
+        else {
+            self.record_raw(&terminal.alias, decision, "unsupported", None, approver);
+            return;
+        };
+        let _ = schedule_id;
+        self.scheduled.push(ScheduledRun {
+            name: name.to_string(),
+            alias: terminal.alias.clone(),
+            decision: decision.clone(),
+            approver,
+            receiver,
+        });
+        self.ensure_tick(cx);
+        cx.notify();
+    }
+
+    /// Put a command on the review list; it has not run.
+    fn queue_pending(
+        &mut self,
+        task: &Schedule,
+        terminal: &AssistantTerminal,
+        command: &str,
+        decision: &Decision,
+        reason: &str,
+    ) {
+        let now = schedule::now_millis();
+        let item = PendingItem::new(
+            format!("pending-{now}-{}", self.pending_items.len()),
+            &task.id,
+            &task.name,
+            &task.target.alias,
+            command,
+            reason,
+            now,
+            decision.risk.name(),
+            decision.rule.name(),
+        )
+        .on_terminal(&terminal.id, &terminal.title, terminal.local);
+        self.pending_items.push(item);
+        let _ = pending::save(&Self::pending_path(), &self.pending_items);
+        self.record_raw(&task.target.alias, decision, "pending", None, "scheduled");
+    }
+
+    /// Take the outcome of every scheduled run that has one.
+    fn poll_scheduled(&mut self, cx: &mut Context<Self>) {
+        let mut index = 0;
+        while index < self.scheduled.len() {
+            let result = match self.scheduled[index].receiver.try_recv() {
+                Ok(result) => result,
+                Err(TryRecvError::Empty) => {
+                    index += 1;
+                    continue;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    Err(t!("assistant.tool.transport_closed").to_string())
+                }
+            };
+            let run = self.scheduled.remove(index);
+            let (_, exit_code) = tool_result_body(result);
+            self.record_raw(&run.alias, &run.decision, "exec", exit_code, run.approver);
+            let ok = exit_code == Some(0);
+            let message = if ok {
+                t!("assistant.schedule.finished", name = run.name.as_str())
+            } else {
+                t!("assistant.schedule.failed", name = run.name.as_str())
+            };
+            self.notify_system(cx, message, !ok);
+        }
+    }
+
+    /// Take what the scheduled answer has so far. A tool call is answered
+    /// from the terminal or the review list, never run.
+    fn poll_scheduled_ai(&mut self, cx: &mut Context<Self>) {
+        let Some(mut run) = self.scheduled_ai.take() else {
+            return;
+        };
+        let policy = self.policy(cx);
+        let mut calls = None;
+        let mut done = false;
+        let mut failed = None;
+        loop {
+            match run.stream.rx.try_recv() {
+                Ok(StreamEvent::Delta(text)) => run.text.push_str(&text),
+                Ok(StreamEvent::ToolCalls(list)) => {
+                    calls = Some(list);
+                    break;
+                }
+                Ok(StreamEvent::Done) => {
+                    done = true;
+                    break;
+                }
+                Ok(StreamEvent::Failed(error)) => {
+                    failed = Some(error.message().to_string());
+                    break;
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    done = true;
+                    break;
+                }
+            }
+        }
+        if Instant::now() > run.deadline {
+            run.stream.cancel();
+            failed = Some(t!("assistant.schedule.ai_timeout").to_string());
+        }
+        if let Some(error) = failed {
+            self.finish_ai_failed(run, error, cx);
+            return;
+        }
+        let Some(list) = calls else {
+            if done {
+                self.finish_ai(run, cx);
+            } else {
+                self.scheduled_ai = Some(run);
+            }
+            return;
+        };
+        if list.is_empty() || run.rounds >= SCHEDULE_AI_ROUNDS {
+            self.finish_ai(run, cx);
+            return;
+        }
+        run.messages.push(ChatMessage::assistant_calls(
+            std::mem::take(&mut run.text),
+            list.clone(),
+        ));
+        let screen = self.screen_of(&run.target, cx);
+        for call in &list {
+            let result = match call.name.as_str() {
+                "read_terminal" => screen
+                    .clone()
+                    .unwrap_or_else(|| tool_error("terminal_gone")),
+                "host_facts" => serde_json::json!({
+                    "alias": run.alias,
+                    "title": run.target.title,
+                    "local": run.target.local,
+                })
+                .to_string(),
+                "propose_command" => {
+                    if let Ok(args) = serde_json::from_str::<RunCommandArgs>(&call.arguments) {
+                        self.queue_ai_proposal(&run, &args.command, &policy);
+                    }
+                    r#"{"status":"pending_review"}"#.to_string()
+                }
+                _ => tool_error("unknown_tool"),
+            };
+            run.messages
+                .push(ChatMessage::tool_result(&call.id, result));
+        }
+        run.rounds += 1;
+        self.start_ai_round(run, cx);
+    }
+
+    /// Start the next turn of a scheduled answer with what the tools said.
+    fn start_ai_round(&mut self, mut run: ScheduledAiRun, cx: &mut Context<Self>) {
+        let assistant = self.settings.read(cx).settings().assistant.clone();
+        let provider = assistant.active().clone();
+        let timeout =
+            Duration::from_secs(assistant.timeout_seconds.clamp(10, SCHEDULE_TIMEOUT_MAX));
+        let request = StreamRequest {
+            protocol: assistant.protocol,
+            base_url: provider.base_url,
+            model: provider.model,
+            keychain_id: provider.keychain_id,
+            messages: run.messages.clone(),
+            max_tokens: provider.max_tokens,
+            timeout,
+            terminals: vec![ToolTerminal {
+                alias: run.alias.clone(),
+                title: run.target.title.clone(),
+            }],
+            scheduled: true,
+        };
+        run.stream = client::start(request);
+        run.deadline = Instant::now() + timeout;
+        self.scheduled_ai = Some(run);
+        self.ensure_tick(cx);
+    }
+
+    /// A command the model suggested in a task. It has not run and will not
+    /// run until the user allows it.
+    fn queue_ai_proposal(&mut self, run: &ScheduledAiRun, command: &str, policy: &Policy) {
+        let command = command.trim();
+        if command.is_empty() {
+            return;
+        }
+        let decision = policy::decide(command, AuthorizationLevel::Restricted, policy);
+        if decision.verdict == Verdict::Deny {
+            self.record_raw(&run.alias, &decision, "denied", None, "scheduled");
+            return;
+        }
+        let now = schedule::now_millis();
+        let item = PendingItem::new(
+            format!("pending-{now}-{}", self.pending_items.len()),
+            "",
+            run.name.clone(),
+            run.alias.clone(),
+            command,
+            pending::REASON_AI_PROPOSAL,
+            now,
+            decision.risk.name(),
+            decision.rule.name(),
+        )
+        .on_terminal(&run.target.terminal_id, &run.target.title, run.target.local);
+        self.pending_items.push(item);
+        let _ = pending::save(&Self::pending_path(), &self.pending_items);
+        self.record_raw(&run.alias, &decision, "pending", None, "scheduled");
+    }
+
+    /// The visible screen of the task's terminal, as the read tool returns
+    /// it. A screen that is gone says so; it is never replaced by another
+    /// terminal.
+    fn screen_of(&self, target: &ScheduleTarget, cx: &App) -> Option<String> {
+        let terminal = self.resolve_target(target)?;
+        let view = terminal.view.as_ref().and_then(|weak| weak.upgrade())?;
+        let screen = view.read(cx).screen_text(cx);
+        Some(screen.chars().take(12_000).collect())
+    }
+
+    /// Write the answer as a report; the file name is what the notice says.
+    fn finish_ai(&mut self, run: ScheduledAiRun, cx: &mut Context<Self>) {
+        let text = run.text.trim().to_string();
+        if text.is_empty() {
+            self.finish_ai_failed(run, t!("assistant.schedule.ai_empty").to_string(), cx);
+            return;
+        }
+        let dir = crate::app::data_dir().join("assistant").join("reports");
+        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S-%3f");
+        let file = dir.join(format!("{stamp}-{}.md", report_slug(&run.name)));
+        let body = format!("# {}\n\n{text}\n", run.name);
+        let saved = std::fs::create_dir_all(&dir)
+            .and_then(|()| std::fs::write(&file, body))
+            .is_ok();
+        let _ = audit::append(&audit::AuditEntry {
+            alias: &run.alias,
+            command: &run.name,
+            risk: "R0",
+            rule: "schedule_report",
+            channel: "report",
+            exit_code: None,
+            level: AuthorizationLevel::Restricted.name(),
+            approver: "scheduled",
+            override_reason: None,
+        });
+        if saved {
+            let name = file
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default();
+            self.notify_system(cx, t!("assistant.report.saved", name = name), false);
+        } else {
+            self.notify_system(cx, t!("assistant.report.failed"), true);
+        }
+    }
+
+    fn finish_ai_failed(&mut self, run: ScheduledAiRun, reason: String, cx: &mut Context<Self>) {
+        let _ = audit::append(&audit::AuditEntry {
+            alias: &run.alias,
+            command: &run.name,
+            risk: "R0",
+            rule: "schedule_report",
+            channel: "failed",
+            exit_code: None,
+            level: AuthorizationLevel::Restricted.name(),
+            approver: "scheduled",
+            override_reason: None,
+        });
+        self.notify_system(
+            cx,
+            t!(
+                "assistant.schedule.ai_failed",
+                name = run.name.as_str(),
+                reason = reason
+            ),
+            true,
+        );
+    }
+
+    /// The one terminal a task names: its id this session, or the single
+    /// open terminal with that name. Two of the name is not a match.
+    fn resolve_target(&self, target: &ScheduleTarget) -> Option<AssistantTerminal> {
+        if let Some(terminal) = self
+            .available
+            .iter()
+            .find(|terminal| terminal.id == target.terminal_id)
+        {
+            return Some(terminal.clone());
+        }
+        let mut candidates = self.available.iter().filter(|terminal| {
+            terminal.local == target.local && terminal.title.eq_ignore_ascii_case(&target.title)
+        });
+        let first = candidates.next()?;
+        if candidates.next().is_some() {
+            return None;
+        }
+        Some(first.clone())
+    }
+
+    /// A task notice goes to the system when the window is not in front and
+    /// to the window otherwise; the panel is not necessarily on screen.
+    fn notify_system(&self, cx: &mut Context<Self>, message: SharedString, error: bool) {
+        let window = self.window;
+        let _ = cx.update_window(window, move |_, window, cx| {
+            let notification = if error {
+                Notification::error(message)
+            } else {
+                Notification::success(message)
+            };
+            window.push_notification(notification, cx);
+        });
+    }
+
+    /// One audit line with no tool call behind it: a missed trigger, a
+    /// refusal, a review item.
+    fn record_raw(
+        &mut self,
+        alias: &str,
+        decision: &Decision,
+        channel: &str,
+        exit_code: Option<i32>,
+        approver: &str,
+    ) {
+        self.record(
+            alias,
+            decision,
+            channel,
+            exit_code,
+            approver,
+            AuthorizationLevel::Restricted.name(),
+            None,
+        );
+    }
+
+    /// The box, the interval and the one terminal a new task would use.
+    /// `Ok(None)` means the box is empty; an error is what the panel says
+    /// instead of making the task.
+    #[allow(clippy::type_complexity)]
+    fn schedule_draft(
+        &self,
+        cx: &App,
+    ) -> Result<Option<(AssistantTerminal, u32, String)>, SharedString> {
+        let text = self.schedule_command.read(cx).value().trim().to_string();
+        if text.is_empty() {
+            return Ok(None);
+        }
+        let Some(terminal) = self.bindings.entries().first().cloned() else {
+            return Err(t!("assistant.schedule.no_target"));
+        };
+        if !terminal.can_exec() {
+            return Err(if terminal.local {
+                t!("assistant.schedule.local")
+            } else {
+                t!("assistant.schedule.shell_only")
+            });
+        }
+        let interval = self
+            .schedule_interval
+            .read(cx)
+            .value()
+            .trim()
+            .parse::<u32>()
+            .unwrap_or(15)
+            .clamp(
+                schedule::MIN_INTERVAL_MINUTES,
+                schedule::MAX_INTERVAL_MINUTES,
+            );
+        Ok(Some((terminal, interval, text)))
+    }
+
+    /// Add a fixed-command task on the first bound terminal. The command is
+    /// frozen here; later edits to a snippet cannot change it.
+    fn add_schedule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.add_schedule_as(false, window, cx);
+    }
+
+    /// Add a fixed-prompt task on the first bound terminal.
+    fn add_prompt_schedule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.add_schedule_as(true, window, cx);
+    }
+
+    fn add_schedule_as(&mut self, prompt: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let draft = match self.schedule_draft(cx) {
+            Ok(Some(draft)) => draft,
+            Ok(None) => return,
+            Err(message) => {
+                self.notice = Some(message);
+                cx.notify();
+                return;
+            }
+        };
+        let (terminal, interval, text) = draft;
+        let target = ScheduleTarget::new(
+            &terminal.id,
+            &terminal.title,
+            &terminal.alias,
+            terminal.local,
+        );
+        let name: String = text.chars().take(32).collect();
+        let recurrence = schedule::Recurrence::EveryMinutes { n: interval };
+        let task = if prompt {
+            Schedule::fixed_prompt(chrono::Local::now(), name, target, text, recurrence)
+        } else {
+            Schedule::fixed_command(chrono::Local::now(), name, target, text, recurrence)
+        };
+        self.schedules.add(task);
+        let _ = self.schedules.save(&Self::schedules_path());
+        self.schedule_command
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.notice = Some(t!("assistant.schedule.added"));
+        cx.notify();
+    }
+
+    fn toggle_schedule(&mut self, id: &str, enabled: bool, cx: &mut Context<Self>) {
+        if let Some(task) = self.schedules.get_mut(id) {
+            task.enabled = enabled;
+            task.updated_at = schedule::now_millis();
+        }
+        let _ = self.schedules.save(&Self::schedules_path());
+        cx.notify();
+    }
+
+    fn remove_schedule(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.schedules.remove(id);
+        let _ = self.schedules.save(&Self::schedules_path());
+        cx.notify();
+    }
+
+    /// Point a waiting task at the first bound terminal, when the user says
+    /// so. Nothing is moved on its own.
+    fn rebind_schedule(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(terminal) = self.bindings.entries().first().cloned() else {
+            self.notice = Some(t!("assistant.schedule.no_target"));
+            cx.notify();
+            return;
+        };
+        if !terminal.can_exec() {
+            self.notice = Some(if terminal.local {
+                t!("assistant.schedule.local")
+            } else {
+                t!("assistant.schedule.shell_only")
+            });
+            cx.notify();
+            return;
+        }
+        let target = ScheduleTarget::new(
+            &terminal.id,
+            &terminal.title,
+            &terminal.alias,
+            terminal.local,
+        );
+        if let Some(task) = self.schedules.get_mut(id) {
+            if task.bind_target(target).is_err() {
+                self.notice = Some(t!("assistant.schedule.second_target"));
+                cx.notify();
+                return;
+            }
+            task.updated_at = schedule::now_millis();
+            task.next_due_at =
+                schedule::next_due_after(chrono::Local::now(), task.recurrence).timestamp_millis();
+        }
+        let _ = self.schedules.save(&Self::schedules_path());
+        cx.notify();
+    }
+
+    /// Run a review item the user allowed. It is judged again at the
+    /// restricted level; a refusal is not overridable here.
+    fn approve_pending_item(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index >= self.pending_items.len() {
+            return;
+        }
+        let item = self.pending_items.remove(index);
+        let _ = pending::save(&Self::pending_path(), &self.pending_items);
+        let target = ScheduleTarget::new(&item.terminal_id, &item.title, &item.alias, item.local);
+        let Some(terminal) = self.resolve_target(&target) else {
+            self.pending_items.push(item);
+            let _ = pending::save(&Self::pending_path(), &self.pending_items);
+            self.notify_system(cx, t!("assistant.schedule.rebind_short"), true);
+            return;
+        };
+        let decision = policy::decide(
+            &item.command,
+            AuthorizationLevel::Restricted,
+            &self.policy(cx),
+        );
+        if decision.verdict == Verdict::Deny || !terminal.can_exec() {
+            let channel = if decision.verdict == Verdict::Deny {
+                "denied"
+            } else {
+                "unsupported"
+            };
+            self.record_raw(&item.alias, &decision, channel, None, "user");
+            self.notify_system(
+                cx,
+                t!("assistant.schedule.refused", name = item.name.as_str()),
+                true,
+            );
+            return;
+        }
+        self.start_scheduled(
+            &item.schedule_id,
+            &item.name,
+            &terminal,
+            &item.command,
+            &decision,
+            "user",
+            EXEC_TIMEOUT.as_secs(),
+            cx,
+        );
+    }
+
+    fn deny_pending_item(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index >= self.pending_items.len() {
+            return;
+        }
+        let item = self.pending_items.remove(index);
+        let _ = pending::save(&Self::pending_path(), &self.pending_items);
+        let decision = policy::decide(
+            &item.command,
+            AuthorizationLevel::Restricted,
+            &self.policy(cx),
+        );
+        self.record_raw(&item.alias, &decision, "denied", None, "user");
+        self.notify_system(
+            cx,
+            t!("assistant.schedule.refused", name = item.name.as_str()),
+            true,
+        );
     }
 
     /// Which terminals are open, and which one is in front. The front one
@@ -848,6 +1740,7 @@ impl AssistantPanel {
                     title: entry.title.clone(),
                 })
                 .collect(),
+            scheduled: false,
         };
         self.stream = Some(client::start(request));
         self.begin_poll(cx);
@@ -1062,9 +1955,15 @@ impl AssistantPanel {
     fn tick(&mut self, cx: &mut Context<Self>) -> bool {
         self.poll_execs(cx);
         self.poll_injects(cx);
+        self.poll_scheduled(cx);
+        self.poll_scheduled_ai(cx);
         self.poll_waits(cx);
         self.pump(cx);
-        let busy = !self.execs.is_empty() || !self.injects.is_empty() || !self.waits.is_empty();
+        let busy = !self.execs.is_empty()
+            || !self.injects.is_empty()
+            || !self.scheduled.is_empty()
+            || self.scheduled_ai.is_some()
+            || !self.waits.is_empty();
         if busy {
             cx.notify();
         } else {
@@ -2372,6 +3271,220 @@ impl AssistantPanel {
                             ),
                     ),
             )
+            .child(self.render_schedules(cx))
+            .child(self.render_review_queue(cx))
+    }
+
+    /// The scheduled tasks and the box that makes one. A task always names
+    /// the first bound terminal; the others are not offered.
+    fn render_schedules(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
+        let border = cx.theme().border;
+        let target = self.bindings.entries().first().cloned();
+        let target_line = match &target {
+            Some(terminal) => format!("{} {}", t!("assistant.schedule.target"), terminal.alias),
+            None => t!("assistant.schedule.no_target").to_string(),
+        };
+        let mut list = v_flex().gap_1();
+        if self.schedules.schedules.is_empty() {
+            list = list.child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(t!("assistant.schedule.empty")),
+            );
+        }
+        for (index, task) in self.schedules.schedules.iter().enumerate() {
+            let id_for_toggle = task.id.clone();
+            let id_for_remove = task.id.clone();
+            let id_for_rebind = task.id.clone();
+            let enabled = task.enabled;
+            let due = chrono::DateTime::from_timestamp_millis(task.next_due_at)
+                .map(|time| {
+                    time.with_timezone(&chrono::Local)
+                        .format("%m-%d %H:%M")
+                        .to_string()
+                })
+                .unwrap_or_default();
+            list = list.child(
+                v_flex()
+                    .gap_1()
+                    .py_1()
+                    .border_t_1()
+                    .border_color(border)
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_sm()
+                                    .child(task.action.text().to_string()),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child(task.target.alias.clone()),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(div().text_xs().text_color(muted).child(format!(
+                                "{} · {}",
+                                t!("assistant.schedule.next", time = due),
+                                if task.needs_rebind {
+                                    t!("assistant.schedule.paused").to_string()
+                                } else if task.enabled {
+                                    t!("assistant.schedule.enable").to_string()
+                                } else {
+                                    t!("assistant.schedule.disable").to_string()
+                                }
+                            )))
+                            .child(
+                                Button::new(("assistant-schedule-toggle", index))
+                                    .xsmall()
+                                    .label(if enabled {
+                                        t!("assistant.schedule.disable")
+                                    } else {
+                                        t!("assistant.schedule.enable")
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.toggle_schedule(&id_for_toggle, !enabled, cx);
+                                    })),
+                            )
+                            .when(task.needs_rebind, |row| {
+                                row.child(
+                                    Button::new(("assistant-schedule-rebind", index))
+                                        .xsmall()
+                                        .label(t!("assistant.schedule.rebind_action"))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.rebind_schedule(&id_for_rebind, cx);
+                                        })),
+                                )
+                            })
+                            .child(
+                                Button::new(("assistant-schedule-remove", index))
+                                    .xsmall()
+                                    .label(t!("assistant.schedule.remove"))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.remove_schedule(&id_for_remove, cx);
+                                    })),
+                            ),
+                    ),
+            );
+        }
+        v_flex()
+            .id("assistant-schedules")
+            .gap_1()
+            .child(div().text_xs().child(t!("assistant.schedule.title")))
+            .child(div().text_xs().text_color(muted).child(target_line))
+            .child(
+                h_flex()
+                    .gap_1()
+                    .items_center()
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            Input::new(&self.schedule_command)
+                                .id("assistant-schedule-command")
+                                .small(),
+                        ),
+                    )
+                    .child(
+                        div().w_16().child(
+                            Input::new(&self.schedule_interval)
+                                .id("assistant-schedule-interval")
+                                .small(),
+                        ),
+                    )
+                    .child(
+                        Button::new("assistant-schedule-add")
+                            .xsmall()
+                            .label(t!("assistant.schedule.add"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.add_schedule(window, cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("assistant-schedule-add-prompt")
+                            .xsmall()
+                            .label(t!("assistant.schedule.add_prompt"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.add_prompt_schedule(window, cx);
+                            })),
+                    ),
+            )
+            .child(list)
+    }
+
+    /// What a trigger did not run. Allowing one runs it now; the command is
+    /// judged again first.
+    fn render_review_queue(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
+        let border = cx.theme().border;
+        let mut list = v_flex().gap_1();
+        if self.pending_items.is_empty() {
+            list = list.child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(t!("assistant.pending.empty")),
+            );
+        }
+        for (index, item) in self.pending_items.iter().enumerate() {
+            let reason = match item.reason.as_str() {
+                pending::REASON_AI_PROPOSAL => t!("assistant.pending.reason.ai_proposal"),
+                pending::REASON_UNRESOLVED => t!("assistant.pending.reason.unresolved"),
+                _ => t!("assistant.pending.reason.write"),
+            };
+            list = list.child(
+                v_flex()
+                    .gap_1()
+                    .py_1()
+                    .border_t_1()
+                    .border_color(border)
+                    .child(div().text_xs().text_color(muted).child(format!(
+                        "{} · {}",
+                        t!("assistant.pending.from", name = item.name.as_str()),
+                        reason
+                    )))
+                    .child(
+                        div()
+                            .text_sm()
+                            .child(format!("{}: {}", item.alias, item.command)),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Button::new(("assistant-pending-allow", index))
+                                    .xsmall()
+                                    .primary()
+                                    .label(t!("assistant.pending.allow"))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.approve_pending_item(index, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new(("assistant-pending-deny", index))
+                                    .xsmall()
+                                    .label(t!("assistant.pending.deny"))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.deny_pending_item(index, cx);
+                                    })),
+                            ),
+                    ),
+            );
+        }
+        v_flex()
+            .id("assistant-pending")
+            .gap_1()
+            .child(div().text_xs().child(t!("assistant.pending.title")))
+            .child(list)
     }
 
     /// One of the two command lists, with its entry box and a remove button
@@ -3055,5 +4168,27 @@ impl Render for AssistantPanel {
                 panel.child(self.render_pending(cx))
             })
             .child(self.render_composer(cx))
+    }
+}
+
+/// A file-name-safe piece of a task's name. Names that have no ASCII word
+/// fall back to `report`; the timestamp keeps the file unique anyway.
+fn report_slug(name: &str) -> String {
+    let mut slug = String::new();
+    for character in name.chars() {
+        if slug.len() >= 24 {
+            break;
+        }
+        if character.is_ascii_alphanumeric() {
+            slug.push(character.to_ascii_lowercase());
+        } else if !slug.is_empty() && !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    let slug = slug.trim_matches('-').to_string();
+    if slug.is_empty() {
+        "report".to_string()
+    } else {
+        slug
     }
 }

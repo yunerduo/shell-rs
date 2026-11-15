@@ -58,6 +58,7 @@ fn ask_with(terminals: Vec<ToolTerminal>, prompt: &str) -> Vec<ToolCall> {
         max_tokens: 512,
         timeout: Duration::from_secs(120),
         terminals,
+        scheduled: false,
     };
     let (tx, rx) = mpsc::channel();
     let cancel = AtomicBool::new(false);

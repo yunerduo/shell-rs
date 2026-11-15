@@ -29,6 +29,9 @@ pub struct StreamRequest {
     pub timeout: Duration,
     /// The terminals the tool prompt may name.
     pub terminals: Vec<ToolTerminal>,
+    /// This answer belongs to a scheduled task: the tools are the read-only
+    /// ones and a proposal that cannot run.
+    pub scheduled: bool,
 }
 
 /// What the worker reports. `Delta` is a fragment of the answer as it
@@ -109,15 +112,27 @@ pub(super) fn run_with_key(
     tx: &mpsc::Sender<StreamEvent>,
     cancel: &AtomicBool,
 ) -> Result<(), ChatError> {
-    let spec = protocol::request_spec(
-        request.protocol,
-        &request.base_url,
-        &request.model,
-        key,
-        &request.messages,
-        request.max_tokens,
-        &request.terminals,
-    );
+    let spec = if request.scheduled {
+        protocol::scheduled_request_spec(
+            request.protocol,
+            &request.base_url,
+            &request.model,
+            key,
+            &request.messages,
+            request.max_tokens,
+            &request.terminals,
+        )
+    } else {
+        protocol::request_spec(
+            request.protocol,
+            &request.base_url,
+            &request.model,
+            key,
+            &request.messages,
+            request.max_tokens,
+            &request.terminals,
+        )
+    };
 
     let client = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(10))
@@ -339,6 +354,7 @@ mod tests {
             max_tokens: 64,
             timeout: Duration::from_secs(60),
             terminals: Vec::new(),
+            scheduled: false,
         };
         let (tx, rx) = mpsc::channel();
         let cancel = AtomicBool::new(false);
