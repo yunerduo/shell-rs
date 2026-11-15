@@ -18,6 +18,9 @@ assistant.config.title:
 assistant.config.tab.model:
   zh-CN: 模型与协议
   en: Model
+assistant.config.tab.proxy:
+  zh-CN: 代理
+  en: Proxy
 assistant.config.tab.headers:
   zh-CN: 请求头
   en: Headers
@@ -327,6 +330,135 @@ assistant.settings.key_kept:
 assistant.settings.key_failed:
   zh-CN: 保存 Key 失败：%{error}
   en: "The key could not be saved: %{error}"
+assistant.settings.proxy.title:
+  zh-CN: 网络代理
+  en: Network proxy
+assistant.settings.proxy.hint:
+  zh-CN: 只影响助手的模型请求，不影响终端与文件传输。密码只写入系统钥匙串。
+  en: Only the assistant's model requests go through it; terminals and file transfers do not. The password is kept in the system keychain only.
+assistant.settings.proxy.scope.default:
+  zh-CN: 默认
+  en: Default
+assistant.settings.proxy.kind:
+  zh-CN: 代理类型
+  en: Proxy type
+assistant.settings.proxy.kind.http:
+  zh-CN: HTTP
+  en: HTTP
+assistant.settings.proxy.kind.https:
+  zh-CN: HTTPS
+  en: HTTPS
+assistant.settings.proxy.kind.socks5:
+  zh-CN: SOCKS5
+  en: SOCKS5
+assistant.settings.proxy.default_title:
+  zh-CN: 默认代理
+  en: Default proxy
+assistant.settings.proxy.enable:
+  zh-CN: 启用默认代理
+  en: Use this proxy by default
+assistant.settings.proxy.mode:
+  zh-CN: 此服务商的代理
+  en: This provider's proxy
+assistant.settings.proxy.choice.default:
+  zh-CN: 跟随默认
+  en: Follow default
+assistant.settings.proxy.choice.off:
+  zh-CN: 不使用
+  en: No proxy
+assistant.settings.proxy.choice.custom:
+  zh-CN: 单独设置
+  en: Custom
+assistant.settings.proxy.default_off:
+  zh-CN: 默认代理未启用；勾选后所有「跟随默认」的服务商都会走它。
+  en: The default proxy is off; turn it on and every provider that follows the default goes through it.
+assistant.settings.proxy.follows_default:
+  zh-CN: 当前使用默认代理 %{url}
+  en: Using the default proxy %{url}
+assistant.settings.proxy.no_default:
+  zh-CN: 默认代理未启用，此服务商将直接连接。
+  en: The default proxy is off, so this provider connects directly.
+assistant.settings.proxy.provider_off:
+  zh-CN: 此服务商不使用代理，即使默认代理已启用。
+  en: This provider connects directly even when the default proxy is on.
+assistant.settings.proxy.address:
+  zh-CN: 代理地址
+  en: Proxy address
+assistant.settings.proxy.address.hint:
+  zh-CN: 可以只填主机名或 IP，也可以直接粘贴完整地址；端口也可以写在这里。
+  en: A host or IP is enough; a full proxy URL works too, and a port in it wins.
+assistant.settings.proxy.host.placeholder:
+  zh-CN: 例如 127.0.0.1 或 proxy.example.com
+  en: "For example 127.0.0.1 or proxy.example.com"
+assistant.settings.proxy.port.placeholder:
+  zh-CN: 端口
+  en: Port
+assistant.settings.proxy.username.label:
+  zh-CN: 用户名
+  en: Username
+assistant.settings.proxy.username.hint:
+  zh-CN: 代理需要认证时填写；留空表示不需要账号。
+  en: Fill this in when the proxy asks for an account; leave it blank otherwise.
+assistant.settings.proxy.username.placeholder:
+  zh-CN: 可选
+  en: Optional
+assistant.settings.proxy.password.label:
+  zh-CN: 密码
+  en: Password
+assistant.settings.proxy.password.hint:
+  zh-CN: 只写入系统钥匙串；留空则沿用已保存的密码。
+  en: Kept in the system keychain; leave it blank to keep the saved password.
+assistant.settings.proxy.password.placeholder:
+  zh-CN: 密码（只写入系统钥匙串）
+  en: Password (kept in the system keychain)
+assistant.settings.proxy.password.saved:
+  zh-CN: 密码已保存
+  en: Password saved
+assistant.settings.proxy.password.unsaved:
+  zh-CN: 尚未保存密码
+  en: No password saved
+assistant.settings.proxy.password_saved:
+  zh-CN: 密码已存入系统钥匙串
+  en: The password is in the system keychain
+assistant.settings.proxy.password_kept:
+  zh-CN: 未填写新密码，沿用已保存的密码
+  en: No new password was typed; the saved one is kept
+assistant.settings.proxy.password_failed:
+  zh-CN: 保存代理密码失败：%{error}
+  en: "The proxy password could not be saved: %{error}"
+assistant.settings.proxy.host.required:
+  zh-CN: 请填写代理地址
+  en: Fill in the proxy address
+assistant.settings.proxy.port.invalid:
+  zh-CN: 端口必须是 1 到 65535 之间的数字
+  en: The port must be a number between 1 and 65535
+assistant.settings.proxy.test.action:
+  zh-CN: 测试连通性
+  en: Test connection
+assistant.settings.proxy.test.running:
+  zh-CN: 正在通过代理连接…
+  en: Connecting through the proxy…
+assistant.settings.proxy.test.passed:
+  zh-CN: 代理已连通，服务返回 HTTP %{status}
+  en: The proxy works; the service answered HTTP %{status}
+assistant.settings.proxy.test.address:
+  zh-CN: 代理地址无法识别
+  en: The proxy address could not be understood
+assistant.settings.proxy.test.dns:
+  zh-CN: 域名解析失败，请检查代理地址、服务地址与本机 DNS
+  en: The name could not be resolved; check the proxy address, the service address and this machine's DNS
+assistant.settings.proxy.test.refused:
+  zh-CN: 连接被拒绝，代理地址或端口可能不对，或代理未启动
+  en: The connection was refused; the proxy address or port may be wrong, or the proxy is not running
+assistant.settings.proxy.test.auth:
+  zh-CN: 代理认证失败，请检查用户名和密码
+  en: The proxy rejected the account; check the username and password
+assistant.settings.proxy.test.timeout:
+  zh-CN: 连接超时，请检查网络、代理地址与端口
+  en: The connection timed out; check the network, the proxy address and port
+assistant.settings.proxy.test.failed:
+  zh-CN: 连接失败：%{reason}
+  en: "The connection failed: %{reason}"
 assistant.settings.blacklist.title:
   zh-CN: 命令黑名单
   en: Command blacklist

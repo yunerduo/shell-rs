@@ -68,6 +68,185 @@ pub fn account(keychain_id: &str) -> String {
     format!("assistant:{keychain_id}")
 }
 
+/// The keychain account that holds one proxy's password. The scope is
+/// `default` for the global proxy, or the protocol's key for its own.
+pub fn proxy_account(scope: &str) -> String {
+    format!("assistant:proxy:{scope}")
+}
+
+/// The proxy protocol the assistant talks to it with.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProxyKind {
+    #[default]
+    #[serde(rename = "http")]
+    Http,
+    #[serde(rename = "https")]
+    Https,
+    #[serde(rename = "socks5")]
+    Socks5,
+}
+
+impl ProxyKind {
+    pub const ALL: [ProxyKind; 3] = [ProxyKind::Http, ProxyKind::Https, ProxyKind::Socks5];
+
+    /// The scheme in the settings file and in the proxy's URL.
+    pub fn key(self) -> &'static str {
+        match self {
+            ProxyKind::Http => "http",
+            ProxyKind::Https => "https",
+            ProxyKind::Socks5 => "socks5",
+        }
+    }
+
+    fn scheme(self) -> &'static str {
+        self.key()
+    }
+
+    fn default_port(self) -> u16 {
+        match self {
+            ProxyKind::Http => 8080,
+            ProxyKind::Https => 443,
+            ProxyKind::Socks5 => 1080,
+        }
+    }
+
+    pub fn label(self) -> gpui_kit::SharedString {
+        match self {
+            ProxyKind::Http => t!("assistant.settings.proxy.kind.http"),
+            ProxyKind::Https => t!("assistant.settings.proxy.kind.https"),
+            ProxyKind::Socks5 => t!("assistant.settings.proxy.kind.socks5"),
+        }
+    }
+}
+
+/// One proxy's address. The password is not here: only whether one has been
+/// saved in the keychain.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProxyConfig {
+    pub kind: ProxyKind,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    /// Whether a password sits in the keychain. Never the password itself.
+    pub password_saved: bool,
+}
+
+impl Default for ProxyConfig {
+    fn default() -> Self {
+        Self {
+            kind: ProxyKind::Http,
+            host: String::new(),
+            port: ProxyKind::Http.default_port(),
+            username: String::new(),
+            password_saved: false,
+        }
+    }
+}
+
+impl ProxyConfig {
+    /// The address as reqwest takes it, or `None` when no host is set.
+    pub fn url(&self) -> Option<String> {
+        let host = self.host.trim();
+        if host.is_empty() {
+            return None;
+        }
+        // IPv6 literals need brackets in a URL; the settings keep them
+        // either way, so a hand-edited file still works.
+        let host = if host.contains(':') && !host.starts_with('[') {
+            format!("[{host}]")
+        } else {
+            host.to_string()
+        };
+        Some(format!("{}://{host}:{}", self.kind.scheme(), self.port))
+    }
+
+    /// Accept what people paste: a full URL, a `host:port` pair or a bare
+    /// host. The port from the text wins; a blank one falls back to the
+    /// protocol's usual port.
+    pub(crate) fn normalize(&mut self) {
+        let mut text = self.host.trim();
+        if let Some((_, rest)) = text.split_once("://") {
+            text = rest;
+        }
+        let text = text
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        // Someone may paste `user:password@host`; the fields carry those.
+        let text = match text.rsplit_once('@') {
+            Some((_, host)) => host.to_string(),
+            None => text,
+        };
+        if let Some(rest) = text.strip_prefix('[') {
+            if let Some((host, tail)) = rest.split_once(']') {
+                if let Some(port) = tail
+                    .trim()
+                    .strip_prefix(':')
+                    .and_then(|port| port.parse::<u16>().ok())
+                    .filter(|port| *port > 0)
+                {
+                    self.port = port;
+                }
+                self.host = format!("[{}]", host.trim());
+            } else {
+                self.host = text;
+            }
+        } else if let Some((host, port)) = text.rsplit_once(':') {
+            // `proxy.test:8080` is a host and a port; a bare IPv6 address
+            // (`::1`) is all host and stays as it is.
+            if !host.is_empty() && !host.contains(':') {
+                if let Some(port) = port.parse::<u16>().ok().filter(|port| *port > 0) {
+                    self.port = port;
+                }
+                self.host = host.to_string();
+            } else {
+                self.host = text;
+            }
+        } else {
+            self.host = text;
+        }
+        if self.port == 0 {
+            self.port = self.kind.default_port();
+        }
+        self.username = self.username.trim().chars().take(128).collect();
+    }
+}
+
+/// Whether a provider follows the global proxy, has none, or has its own.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProxyChoice {
+    #[default]
+    #[serde(rename = "default")]
+    Default,
+    #[serde(rename = "off")]
+    Off,
+    #[serde(rename = "custom")]
+    Custom,
+}
+
+impl ProxyChoice {
+    pub const ALL: [ProxyChoice; 3] = [ProxyChoice::Default, ProxyChoice::Off, ProxyChoice::Custom];
+
+    pub fn label(self) -> gpui_kit::SharedString {
+        match self {
+            ProxyChoice::Default => t!("assistant.settings.proxy.choice.default"),
+            ProxyChoice::Off => t!("assistant.settings.proxy.choice.off"),
+            ProxyChoice::Custom => t!("assistant.settings.proxy.choice.custom"),
+        }
+    }
+}
+
+/// The proxy a request actually goes through, and the keychain account its
+/// password is read from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProxyRoute {
+    pub config: ProxyConfig,
+    pub account: String,
+}
+
 /// One extra HTTP header. Most services need none; a gateway may want a
 /// tenant or an organization header. A header the protocol sets itself
 /// (the key's, the content type, ...) is never replaced by one of these.
@@ -90,6 +269,10 @@ pub struct AssistantProvider {
     pub max_tokens: u32,
     /// Headers added after the protocol's own.
     pub headers: Vec<RequestHeader>,
+    /// Whether this provider follows the global proxy or has its own.
+    pub proxy_mode: ProxyChoice,
+    /// Used when `proxy_mode` is `custom`.
+    pub proxy: ProxyConfig,
 }
 
 impl Default for AssistantProvider {
@@ -100,6 +283,8 @@ impl Default for AssistantProvider {
             keychain_id: "assistant-openai".to_string(),
             max_tokens: 2048,
             headers: Vec::new(),
+            proxy_mode: ProxyChoice::Default,
+            proxy: ProxyConfig::default(),
         }
     }
 }
@@ -112,6 +297,8 @@ impl AssistantProvider {
             keychain_id: protocol.default_keychain_id().to_string(),
             max_tokens: 2048,
             headers: Vec::new(),
+            proxy_mode: ProxyChoice::Default,
+            proxy: ProxyConfig::default(),
         }
     }
 
@@ -136,6 +323,7 @@ impl AssistantProvider {
         }
         self.max_tokens = self.max_tokens.clamp(1, 8192);
         self.headers = clean_headers(&self.headers);
+        self.proxy.normalize();
     }
 }
 
@@ -243,6 +431,10 @@ pub struct AssistantSettings {
     pub classifier_enabled: bool,
     /// The model the classifier asks; empty means the active provider's.
     pub classifier_model: String,
+    /// Whether the global proxy below is used by providers that follow it.
+    pub proxy_enabled: bool,
+    /// The proxy a provider uses when it follows the default.
+    pub proxy: ProxyConfig,
 }
 
 /// The most entries each list keeps. Enough for a person, not a policy
@@ -260,6 +452,8 @@ impl Default for AssistantSettings {
             user_whitelist: Vec::new(),
             classifier_enabled: false,
             classifier_model: String::new(),
+            proxy_enabled: false,
+            proxy: ProxyConfig::default(),
         }
     }
 }
@@ -292,6 +486,28 @@ impl AssistantSettings {
         account(&self.active().keychain_id)
     }
 
+    /// The proxy one provider's requests go through, if any. A provider with
+    /// its own proxy uses it; otherwise the global proxy decides, provided it
+    /// was switched on and has an address.
+    pub fn proxy_route(&self, protocol: ProviderProtocol) -> Option<ProxyRoute> {
+        let provider = self.provider(protocol);
+        let (config, scope) = match provider.proxy_mode {
+            ProxyChoice::Off => return None,
+            ProxyChoice::Custom => (&provider.proxy, protocol.key()),
+            ProxyChoice::Default => {
+                if !self.proxy_enabled {
+                    return None;
+                }
+                (&self.proxy, "default")
+            }
+        };
+        config.url()?;
+        Some(ProxyRoute {
+            config: config.clone(),
+            account: proxy_account(scope),
+        })
+    }
+
     /// Every number in range, every blank field back to its default, so a
     /// hand-edited file cannot hand a request an empty address. The lists
     /// lose entries the policy would not accept, and duplicates.
@@ -308,6 +524,7 @@ impl AssistantSettings {
             crate::assistant::policy::clean_whitelist_entry,
         );
         self.classifier_model = self.classifier_model.trim().chars().take(128).collect();
+        self.proxy.normalize();
     }
 }
 
@@ -358,6 +575,7 @@ mod tests {
                 keychain_id: " my key ".into(),
                 max_tokens: 0,
                 headers: Vec::new(),
+                ..AssistantProvider::default()
             },
             anthropic: AssistantProvider {
                 base_url: "".into(),
@@ -365,6 +583,7 @@ mod tests {
                 keychain_id: "".into(),
                 max_tokens: 99_999,
                 headers: Vec::new(),
+                ..AssistantProvider::default()
             },
             timeout_seconds: 1,
             user_blacklist: vec![
@@ -375,6 +594,7 @@ mod tests {
             user_whitelist: vec![" df -h ".into(), "rm -rf /".into(), "df -h".into()],
             classifier_enabled: true,
             classifier_model: "  small-model  ".into(),
+            ..AssistantSettings::default()
         };
         settings.normalize();
         assert_eq!(settings.openai.base_url, "https://example.test/v1");
@@ -449,6 +669,93 @@ mod tests {
             ],
             "reserved, malformed, empty, long and repeated entries are dropped, up to eight"
         );
+    }
+
+    #[test]
+    fn a_pasted_proxy_address_keeps_only_its_host_and_port() {
+        let mut config = ProxyConfig {
+            kind: ProxyKind::Socks5,
+            host: "socks5://user:secret@10.0.0.2:1081/path".into(),
+            port: 1080,
+            username: "  bob  ".into(),
+            password_saved: true,
+        };
+        config.normalize();
+        assert_eq!(config.host, "10.0.0.2");
+        assert_eq!(config.port, 1081, "the port in the text wins");
+        assert_eq!(config.username, "bob");
+        assert_eq!(config.url().as_deref(), Some("socks5://10.0.0.2:1081"));
+
+        let mut bare = ProxyConfig {
+            host: "proxy.test".into(),
+            port: 0,
+            ..ProxyConfig::default()
+        };
+        bare.normalize();
+        assert_eq!(bare.host, "proxy.test");
+        assert_eq!(bare.port, 8080, "a blank port falls back to the protocol's");
+        assert_eq!(bare.url().as_deref(), Some("http://proxy.test:8080"));
+
+        let mut v6 = ProxyConfig {
+            host: "[::1]:7890".into(),
+            port: 0,
+            ..ProxyConfig::default()
+        };
+        v6.normalize();
+        assert_eq!(v6.host, "[::1]");
+        assert_eq!(v6.port, 7890);
+
+        let mut named = ProxyConfig {
+            host: "proxy.test:8888".into(),
+            port: 0,
+            ..ProxyConfig::default()
+        };
+        named.normalize();
+        assert_eq!(named.host, "proxy.test");
+        assert_eq!(named.port, 8888);
+
+        let mut bare_v6 = ProxyConfig {
+            host: "::1".into(),
+            port: 1080,
+            ..ProxyConfig::default()
+        };
+        bare_v6.normalize();
+        assert_eq!(bare_v6.host, "::1");
+        assert_eq!(bare_v6.url().as_deref(), Some("http://[::1]:1080"));
+
+        assert_eq!(ProxyConfig::default().url(), None);
+    }
+
+    #[test]
+    fn a_provider_follows_the_global_proxy_or_keeps_its_own() {
+        let mut settings = AssistantSettings {
+            proxy_enabled: true,
+            ..AssistantSettings::default()
+        };
+        settings.proxy.host = "10.0.0.2".into();
+        settings.proxy.port = 3128;
+        let route = settings.proxy_route(ProviderProtocol::OpenAi).unwrap();
+        assert_eq!(route.config.url().as_deref(), Some("http://10.0.0.2:3128"));
+        assert_eq!(route.account, "assistant:proxy:default");
+
+        settings.proxy_enabled = false;
+        assert!(settings.proxy_route(ProviderProtocol::OpenAi).is_none());
+
+        settings.proxy_enabled = true;
+        settings.provider_mut(ProviderProtocol::OpenAi).proxy_mode = ProxyChoice::Off;
+        assert!(settings.proxy_route(ProviderProtocol::OpenAi).is_none());
+
+        let provider = settings.provider_mut(ProviderProtocol::Anthropic);
+        provider.proxy_mode = ProxyChoice::Custom;
+        provider.proxy.kind = ProxyKind::Socks5;
+        provider.proxy.host = "127.0.0.1".into();
+        provider.proxy.port = 1080;
+        let route = settings.proxy_route(ProviderProtocol::Anthropic).unwrap();
+        assert_eq!(
+            route.config.url().as_deref(),
+            Some("socks5://127.0.0.1:1080")
+        );
+        assert_eq!(route.account, "assistant:proxy:anthropic");
     }
 
     #[test]

@@ -672,6 +672,7 @@ impl AssistantPanel {
             }],
             scheduled: true,
             headers: provider.headers.clone(),
+            proxy: assistant.proxy_route(assistant.protocol).map(Into::into),
         };
         self.scheduled_ai = Some(ScheduledAiRun {
             name: task.name.clone(),
@@ -883,6 +884,7 @@ impl AssistantPanel {
             }],
             scheduled: true,
             headers: provider.headers.clone(),
+            proxy: assistant.proxy_route(assistant.protocol).map(Into::into),
         };
         run.stream = client::start(request);
         run.deadline = Instant::now() + timeout;
@@ -1555,6 +1557,7 @@ impl AssistantPanel {
                 .collect(),
             scheduled: false,
             headers: provider.headers.clone(),
+            proxy: assistant.proxy_route(assistant.protocol).map(Into::into),
         };
         self.stream = Some(client::start(request));
         self.begin_poll(cx);

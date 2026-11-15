@@ -24,11 +24,15 @@ use crate::secrets::KeychainSecretStore;
 use crate::settings::SettingsStore;
 use crate::shared::{Segment, SegmentedControl};
 
+use super::client;
 use super::panel::AssistantPanel;
 use super::pending::{self, PendingItem};
 use super::policy;
 use super::schedule::Schedule;
-use super::settings::{HEADER_LIMIT, ProviderProtocol, RequestHeader, clean_header};
+use super::settings::{
+    HEADER_LIMIT, ProviderProtocol, ProxyChoice, ProxyConfig, ProxyKind, RequestHeader,
+    clean_header, proxy_account,
+};
 
 /// The dialog is wide enough for a form's label and control on one line, and
 /// never wider than the window it opens in.
@@ -40,6 +44,7 @@ const DIALOG_MARGIN: f32 = 32.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ConfigTab {
     Model,
+    Proxy,
     Headers,
     Rules,
     Classifier,
@@ -47,8 +52,9 @@ enum ConfigTab {
 }
 
 impl ConfigTab {
-    const ALL: [ConfigTab; 5] = [
+    const ALL: [ConfigTab; 6] = [
         ConfigTab::Model,
+        ConfigTab::Proxy,
         ConfigTab::Headers,
         ConfigTab::Rules,
         ConfigTab::Classifier,
@@ -58,22 +64,65 @@ impl ConfigTab {
     fn index(self) -> usize {
         match self {
             ConfigTab::Model => 0,
-            ConfigTab::Headers => 1,
-            ConfigTab::Rules => 2,
-            ConfigTab::Classifier => 3,
-            ConfigTab::Schedules => 4,
+            ConfigTab::Proxy => 1,
+            ConfigTab::Headers => 2,
+            ConfigTab::Rules => 3,
+            ConfigTab::Classifier => 4,
+            ConfigTab::Schedules => 5,
         }
     }
 
     fn label(self) -> SharedString {
         match self {
             ConfigTab::Model => t!("assistant.config.tab.model"),
+            ConfigTab::Proxy => t!("assistant.config.tab.proxy"),
             ConfigTab::Headers => t!("assistant.config.tab.headers"),
             ConfigTab::Rules => t!("assistant.config.tab.rules"),
             ConfigTab::Classifier => t!("assistant.config.tab.classifier"),
             ConfigTab::Schedules => t!("assistant.config.tab.schedules"),
         }
     }
+}
+
+/// The proxy the tab is editing: the global default, or one provider's own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProxyScope {
+    Default,
+    Provider(ProviderProtocol),
+}
+
+impl ProxyScope {
+    fn index(self) -> usize {
+        match self {
+            ProxyScope::Default => 0,
+            ProxyScope::Provider(ProviderProtocol::OpenAi) => 1,
+            ProxyScope::Provider(ProviderProtocol::Anthropic) => 2,
+        }
+    }
+
+    fn from_index(index: usize) -> Self {
+        match index {
+            1 => ProxyScope::Provider(ProviderProtocol::OpenAi),
+            2 => ProxyScope::Provider(ProviderProtocol::Anthropic),
+            _ => ProxyScope::Default,
+        }
+    }
+
+    /// The scope's name in the keychain account.
+    fn key(self) -> &'static str {
+        match self {
+            ProxyScope::Default => "default",
+            ProxyScope::Provider(protocol) => protocol.key(),
+        }
+    }
+}
+
+/// The last connectivity check of the proxy tab.
+enum ProxyCheck {
+    Running,
+    /// The proxy answered; the status is what the service returned.
+    Passed(u16),
+    Failed(SharedString),
 }
 
 /// The body of the assistant's settings dialog.
@@ -95,6 +144,17 @@ pub struct AssistantConfigDialog {
     classifier_model: Entity<InputState>,
     schedule_command: Entity<InputState>,
     schedule_interval: Entity<InputState>,
+    /// The proxy tab: which scope it edits, whether the default is on, and
+    /// the unsaved values in the fields.
+    proxy_scope: ProxyScope,
+    proxy_enabled: bool,
+    proxy_kind: ProxyKind,
+    proxy_mode: ProxyChoice,
+    proxy_host: Entity<InputState>,
+    proxy_port: Entity<InputState>,
+    proxy_username: Entity<InputState>,
+    proxy_password: Entity<InputState>,
+    proxy_result: Option<ProxyCheck>,
     error: Option<SharedString>,
     notice: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
@@ -160,6 +220,27 @@ impl AssistantConfigDialog {
                 .placeholder(t!("assistant.schedule.interval_placeholder"))
                 .default_value("15")
         });
+        let proxy = assistant.proxy.clone();
+        let proxy_host = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.proxy.host.placeholder"))
+                .default_value(proxy.host.clone())
+        });
+        let proxy_port = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.proxy.port.placeholder"))
+                .default_value(proxy.port.to_string())
+        });
+        let proxy_username = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.proxy.username.placeholder"))
+                .default_value(proxy.username.clone())
+        });
+        let proxy_password = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.proxy.password.placeholder"))
+                .masked(true)
+        });
         let mut subscriptions = vec![
             cx.observe(&settings, |_, _, cx| cx.notify()),
             cx.observe(&panel, |_, _, cx| cx.notify()),
@@ -224,6 +305,15 @@ impl AssistantConfigDialog {
             classifier_model,
             schedule_command,
             schedule_interval,
+            proxy_scope: ProxyScope::Default,
+            proxy_enabled: assistant.proxy_enabled,
+            proxy_kind: assistant.proxy.kind,
+            proxy_mode: ProxyChoice::Default,
+            proxy_host,
+            proxy_port,
+            proxy_username,
+            proxy_password,
+            proxy_result: None,
             error: None,
             notice: None,
             _subscriptions: subscriptions,
@@ -315,6 +405,256 @@ impl AssistantConfigDialog {
                     t!("assistant.settings.key_failed", error = error.to_string()),
                     cx,
                 ),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Whether the scope's proxy has a password in the keychain.
+    fn proxy_password_saved(&self, cx: &mut Context<Self>) -> bool {
+        let assistant = &self.settings.read(cx).settings().assistant;
+        match self.proxy_scope {
+            ProxyScope::Default => assistant.proxy.password_saved,
+            ProxyScope::Provider(protocol) => assistant.provider(protocol).proxy.password_saved,
+        }
+    }
+
+    fn set_password_saved(&mut self, scope: ProxyScope, saved: bool, cx: &mut Context<Self>) {
+        self.settings.update(cx, |store, cx| {
+            store.update(
+                |settings| match scope {
+                    ProxyScope::Default => settings.assistant.proxy.password_saved = saved,
+                    ProxyScope::Provider(protocol) => {
+                        settings
+                            .assistant
+                            .provider_mut(protocol)
+                            .proxy
+                            .password_saved = saved;
+                    }
+                },
+                cx,
+            )
+        });
+    }
+
+    /// Put the selected scope's saved proxy into the fields.
+    fn load_proxy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let assistant = self.settings.read(cx).settings().assistant.clone();
+        let (config, mode) = match self.proxy_scope {
+            ProxyScope::Default => (assistant.proxy, ProxyChoice::Default),
+            ProxyScope::Provider(protocol) => {
+                let provider = assistant.provider(protocol);
+                (provider.proxy.clone(), provider.proxy_mode)
+            }
+        };
+        self.proxy_enabled = assistant.proxy_enabled;
+        self.proxy_mode = mode;
+        self.proxy_kind = config.kind;
+        self.proxy_host
+            .update(cx, |input, cx| input.set_value(config.host, window, cx));
+        self.proxy_port.update(cx, |input, cx| {
+            input.set_value(config.port.to_string(), window, cx)
+        });
+        self.proxy_username
+            .update(cx, |input, cx| input.set_value(config.username, window, cx));
+        self.proxy_password
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.proxy_result = None;
+        self.error = None;
+        self.notice = None;
+        cx.notify();
+    }
+
+    /// The fields as a proxy config, cleaned the way the settings file is.
+    /// A scope that is not in force may be saved without an address.
+    fn proxy_config_from_fields(
+        &self,
+        cx: &mut Context<Self>,
+        require_host: bool,
+    ) -> Result<ProxyConfig, SharedString> {
+        let host = self.proxy_host.read(cx).value().to_string();
+        let port = self.proxy_port.read(cx).value().trim().to_string();
+        let username = self.proxy_username.read(cx).value().to_string();
+        if !port.is_empty() && !matches!(port.parse::<u16>(), Ok(port) if port > 0) {
+            return Err(t!("assistant.settings.proxy.port.invalid"));
+        }
+        let mut config = ProxyConfig {
+            kind: self.proxy_kind,
+            host,
+            port: port.parse().unwrap_or(0),
+            username,
+            password_saved: self.proxy_password_saved(cx),
+        };
+        config.normalize();
+        if require_host && config.host.is_empty() {
+            return Err(t!("assistant.settings.proxy.host.required"));
+        }
+        Ok(config)
+    }
+
+    fn save_proxy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let scope = self.proxy_scope;
+        let in_force = match scope {
+            ProxyScope::Default => self.proxy_enabled,
+            ProxyScope::Provider(_) => self.proxy_mode == ProxyChoice::Custom,
+        };
+        let config = match self.proxy_config_from_fields(cx, in_force) {
+            Ok(config) => config,
+            Err(message) => {
+                self.fail(message, cx);
+                return;
+            }
+        };
+        let typed = self.proxy_password.read(cx).value().to_string();
+        let username_empty = config.username.is_empty();
+        // A typed password only counts once the keychain takes it; with no
+        // account there is nothing left to authenticate with.
+        let had_password = config.password_saved && !username_empty;
+        let account = proxy_account(scope.key());
+        let cleaned = (
+            config.host.clone(),
+            config.port.to_string(),
+            config.username.clone(),
+        );
+        let mut stored = config;
+        stored.password_saved = had_password && typed.trim().is_empty();
+        let enabled = self.proxy_enabled;
+        let mode = self.proxy_mode;
+        self.settings.update(cx, |store, cx| {
+            store.update(
+                |settings| match scope {
+                    ProxyScope::Default => {
+                        settings.assistant.proxy_enabled = enabled;
+                        settings.assistant.proxy = stored;
+                    }
+                    ProxyScope::Provider(protocol) => {
+                        let provider = settings.assistant.provider_mut(protocol);
+                        provider.proxy_mode = mode;
+                        provider.proxy = stored;
+                    }
+                },
+                cx,
+            )
+        });
+        self.proxy_host
+            .update(cx, |input, cx| input.set_value(&cleaned.0, window, cx));
+        self.proxy_port
+            .update(cx, |input, cx| input.set_value(&cleaned.1, window, cx));
+        self.proxy_username
+            .update(cx, |input, cx| input.set_value(&cleaned.2, window, cx));
+        self.proxy_password
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.proxy_result = None;
+        if username_empty {
+            self.set_password_saved(scope, false, cx);
+            if had_password {
+                cx.spawn(async move |this, cx| {
+                    let removed = cx
+                        .background_executor()
+                        .spawn(async move { KeychainSecretStore::delete_account(&account) })
+                        .await;
+                    if let Err(error) = removed {
+                        this.update(cx, |this, cx| {
+                            this.fail(
+                                t!(
+                                    "assistant.settings.proxy.password_failed",
+                                    error = error.to_string()
+                                ),
+                                cx,
+                            )
+                        })
+                        .ok();
+                    }
+                })
+                .detach();
+            }
+            self.succeed(t!("assistant.settings.saved"), cx);
+            return;
+        }
+        if typed.trim().is_empty() {
+            self.succeed(t!("assistant.settings.proxy.password_kept"), cx);
+            return;
+        }
+        let typed = Zeroizing::new(typed);
+        self.succeed(t!("assistant.settings.saved"), cx);
+        cx.spawn(async move |this, cx| {
+            let written = cx
+                .background_executor()
+                .spawn(async move { KeychainSecretStore::write_account(&account, &typed) })
+                .await;
+            this.update(cx, |this, cx| match written {
+                Ok(()) => {
+                    this.set_password_saved(scope, true, cx);
+                    this.succeed(t!("assistant.settings.proxy.password_saved"), cx);
+                }
+                Err(error) => this.fail(
+                    t!(
+                        "assistant.settings.proxy.password_failed",
+                        error = error.to_string()
+                    ),
+                    cx,
+                ),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Send one real request through the proxy, off the UI thread. The
+    /// target is the service the assistant would call for this scope.
+    fn test_proxy(&mut self, cx: &mut Context<Self>) {
+        let scope = self.proxy_scope;
+        let config = match self.proxy_config_from_fields(cx, true) {
+            Ok(config) => config,
+            Err(message) => {
+                self.fail(message, cx);
+                return;
+            }
+        };
+        let typed = self.proxy_password.read(cx).value().to_string();
+        let account = proxy_account(scope.key());
+        let target = {
+            let assistant = &self.settings.read(cx).settings().assistant;
+            let base_url = match scope {
+                ProxyScope::Default => assistant.active().base_url.clone(),
+                ProxyScope::Provider(protocol) => assistant.provider(protocol).base_url.clone(),
+            };
+            if base_url.trim().is_empty() {
+                "https://example.com".to_string()
+            } else {
+                base_url
+            }
+        };
+        self.proxy_result = Some(ProxyCheck::Running);
+        self.error = None;
+        self.notice = None;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let typed = Zeroizing::new(typed);
+            let outcome = cx
+                .background_executor()
+                .spawn(async move {
+                    let password = if config.username.is_empty() {
+                        Ok(None)
+                    } else if typed.trim().is_empty() {
+                        KeychainSecretStore::read_account(&account)
+                            .map(|saved| saved.map(|value| value.to_string()))
+                    } else {
+                        Ok(Some(typed.to_string()))
+                    };
+                    match password {
+                        Ok(password) => client::test_proxy(&config, password.as_deref(), &target),
+                        Err(error) => Err(client::ProxyTestError::Other(error.to_string())),
+                    }
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.proxy_result = Some(match outcome {
+                    Ok(status) => ProxyCheck::Passed(status),
+                    Err(error) => ProxyCheck::Failed(error.message()),
+                });
+                cx.notify();
             })
             .ok();
         })
@@ -573,6 +913,186 @@ impl AssistantConfigDialog {
                     .child(Input::new(&self.api_key).id("assistant-config-api-key")),
             )
             .footer(footer)
+            .into_any_element()
+    }
+
+    fn render_proxy(&self, cx: &mut Context<Self>) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let success = cx.theme().success;
+        let danger = cx.theme().danger;
+        let assistant = self.settings.read(cx).settings().assistant.clone();
+        let scopes = SegmentedControl::new("assistant-config-proxy-scope")
+            .segments([
+                Segment::new(t!("assistant.settings.proxy.scope.default")),
+                Segment::new(ProviderProtocol::OpenAi.label()),
+                Segment::new(ProviderProtocol::Anthropic.label()),
+            ])
+            .selected_index(Some(self.proxy_scope.index()))
+            .on_change(cx.listener(|this, index: &usize, window, cx| {
+                this.proxy_scope = ProxyScope::from_index(*index);
+                this.load_proxy(window, cx);
+            }));
+        let modes = SegmentedControl::new("assistant-config-proxy-mode")
+            .segments(ProxyChoice::ALL.map(|choice| Segment::new(choice.label())))
+            .selected_index(
+                ProxyChoice::ALL
+                    .iter()
+                    .position(|choice| *choice == self.proxy_mode),
+            )
+            .on_change(cx.listener(|this, index: &usize, _, cx| {
+                if let Some(choice) = ProxyChoice::ALL.get(*index).copied() {
+                    this.proxy_mode = choice;
+                    cx.notify();
+                }
+            }));
+        let kinds = SegmentedControl::new("assistant-config-proxy-kind")
+            .segments(ProxyKind::ALL.map(|kind| Segment::new(kind.label())))
+            .selected_index(
+                ProxyKind::ALL
+                    .iter()
+                    .position(|kind| *kind == self.proxy_kind),
+            )
+            .on_change(cx.listener(|this, index: &usize, _, cx| {
+                if let Some(kind) = ProxyKind::ALL.get(*index).copied() {
+                    this.proxy_kind = kind;
+                    cx.notify();
+                }
+            }));
+        let note = match self.proxy_scope {
+            ProxyScope::Default if !self.proxy_enabled => {
+                Some(t!("assistant.settings.proxy.default_off").to_string())
+            }
+            ProxyScope::Provider(_) if self.proxy_mode == ProxyChoice::Default => {
+                let url = assistant
+                    .proxy_enabled
+                    .then(|| assistant.proxy.url())
+                    .flatten();
+                Some(match url {
+                    Some(url) => {
+                        t!("assistant.settings.proxy.follows_default", url = url).to_string()
+                    }
+                    None => t!("assistant.settings.proxy.no_default").to_string(),
+                })
+            }
+            ProxyScope::Provider(_) if self.proxy_mode == ProxyChoice::Off => {
+                Some(t!("assistant.settings.proxy.provider_off").to_string())
+            }
+            _ => None,
+        };
+        let saved = match self.proxy_scope {
+            ProxyScope::Default => assistant.proxy.password_saved,
+            ProxyScope::Provider(protocol) => assistant.provider(protocol).proxy.password_saved,
+        };
+        let mut form = if matches!(self.proxy_scope, ProxyScope::Default) {
+            Form::new().child(
+                Field::new()
+                    .label(t!("assistant.settings.proxy.default_title"))
+                    .child(
+                        Checkbox::new("assistant-config-proxy-enabled")
+                            .label(t!("assistant.settings.proxy.enable"))
+                            .checked(self.proxy_enabled)
+                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                this.proxy_enabled = *checked;
+                                cx.notify();
+                            })),
+                    ),
+            )
+        } else {
+            Form::new().child(
+                Field::new()
+                    .label(t!("assistant.settings.proxy.mode"))
+                    .child(modes),
+            )
+        };
+        form = form
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.proxy.kind"))
+                    .child(kinds),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.proxy.address"))
+                    .description(t!("assistant.settings.proxy.address.hint"))
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(div().flex_1().min_w_0().child(
+                                Input::new(&self.proxy_host).id("assistant-config-proxy-host"),
+                            ))
+                            .child(div().w_24().child(
+                                Input::new(&self.proxy_port).id("assistant-config-proxy-port"),
+                            )),
+                    ),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.proxy.username.label"))
+                    .description(t!("assistant.settings.proxy.username.hint"))
+                    .child(Input::new(&self.proxy_username).id("assistant-config-proxy-username")),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.proxy.password.label"))
+                    .description(t!("assistant.settings.proxy.password.hint"))
+                    .child(Input::new(&self.proxy_password).id("assistant-config-proxy-password")),
+            )
+            .footer(
+                h_flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        Button::new("assistant-config-proxy-save")
+                            .small()
+                            .primary()
+                            .label(t!("assistant.action.save"))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.save_proxy(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("assistant-config-proxy-test")
+                            .small()
+                            .label(t!("assistant.settings.proxy.test.action"))
+                            .on_click(cx.listener(|this, _, _, cx| this.test_proxy(cx))),
+                    )
+                    .child(div().text_xs().text_color(muted).child(if saved {
+                        t!("assistant.settings.proxy.password.saved")
+                    } else {
+                        t!("assistant.settings.proxy.password.unsaved")
+                    })),
+            );
+        v_flex()
+            .id("assistant-config-proxy")
+            .gap_3()
+            .child(div().text_sm().child(t!("assistant.settings.proxy.title")))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(t!("assistant.settings.proxy.hint")),
+            )
+            .child(scopes)
+            .when_some(note, |body, note| {
+                body.child(div().text_xs().text_color(muted).child(note))
+            })
+            .child(form)
+            .when_some(self.proxy_result.as_ref(), |body, result| {
+                let (text, color) = match result {
+                    ProxyCheck::Running => (
+                        t!("assistant.settings.proxy.test.running").to_string(),
+                        muted,
+                    ),
+                    ProxyCheck::Passed(status) => (
+                        t!("assistant.settings.proxy.test.passed", status = status).to_string(),
+                        success,
+                    ),
+                    ProxyCheck::Failed(message) => (message.to_string(), danger),
+                };
+                body.child(div().text_xs().text_color(color).child(text))
+            })
             .into_any_element()
     }
 
@@ -1056,6 +1576,7 @@ impl Render for AssistantConfigDialog {
             .child(tabs)
             .child(match self.tab {
                 ConfigTab::Model => self.render_model(cx),
+                ConfigTab::Proxy => self.render_proxy(cx),
                 ConfigTab::Headers => self.render_headers(cx),
                 ConfigTab::Rules => self.render_rules(cx),
                 ConfigTab::Classifier => self.render_classifier(cx),

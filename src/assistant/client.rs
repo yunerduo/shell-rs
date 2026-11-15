@@ -14,7 +14,29 @@ use super::chat::{ChatMessage, ToolCall};
 use super::protocol::{
     self, ChatError, ParsedEvent, SseChunk, SseDecoder, ToolCallDelta, ToolTerminal,
 };
-use super::settings::{ProviderProtocol, RequestHeader, account};
+use super::settings::{ProviderProtocol, ProxyConfig, ProxyRoute, RequestHeader, account};
+
+/// A proxy the answer goes through. The password stays in the keychain: the
+/// worker reads it by account name and never sends it back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProxySetting {
+    /// The proxy's URL, scheme included.
+    pub url: String,
+    /// Empty when the proxy needs no account.
+    pub username: String,
+    /// The keychain account holding the password.
+    pub password_account: String,
+}
+
+impl From<ProxyRoute> for ProxySetting {
+    fn from(route: ProxyRoute) -> Self {
+        Self {
+            url: route.config.url().unwrap_or_default(),
+            username: route.config.username.clone(),
+            password_account: route.account,
+        }
+    }
+}
 
 /// Everything one answer needs. The key is not here: only the name of the
 /// keychain entry holding it.
@@ -35,6 +57,9 @@ pub struct StreamRequest {
     /// Headers the provider's settings add; a name the protocol already
     /// sets keeps the protocol's value.
     pub headers: Vec<RequestHeader>,
+    /// The proxy in force, if any. None leaves the system's own proxy in
+    /// charge, as before.
+    pub proxy: Option<ProxySetting>,
 }
 
 /// What the worker reports. `Delta` is a fragment of the answer as it
@@ -138,11 +163,7 @@ pub(super) fn run_with_key(
     };
     protocol::append_headers(&mut spec.headers, &request.headers);
 
-    let client = reqwest::blocking::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(request.timeout)
-        .build()
-        .map_err(ChatError::from)?;
+    let client = build_client(request)?;
 
     let mut call = client
         .post(&spec.url)
@@ -171,6 +192,133 @@ pub(super) fn run_with_key(
         let _ = tx.send(StreamEvent::ToolCalls(calls.finish()));
     }
     outcome
+}
+
+/// The HTTP client one answer uses, with the proxy in force. The proxy's
+/// password is read here, on the worker thread, and stays in the client.
+fn build_client(request: &StreamRequest) -> Result<reqwest::blocking::Client, ChatError> {
+    let mut builder = reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(request.timeout);
+    if let Some(proxy) = &request.proxy {
+        let password = if proxy.username.is_empty() {
+            None
+        } else {
+            KeychainSecretStore::read_account(&proxy.password_account)
+                .map_err(|error| ChatError::Keychain(short(&error.to_string())))?
+        };
+        let mut configured = reqwest::Proxy::all(&proxy.url)?;
+        if !proxy.username.is_empty() {
+            configured = configured.basic_auth(
+                &proxy.username,
+                password.as_deref().map(String::as_str).unwrap_or(""),
+            );
+        }
+        builder = builder.proxy(configured);
+    }
+    builder.build().map_err(ChatError::from)
+}
+
+/// Why a proxy check failed. The reasons are kept apart so the settings can
+/// name the one that happened.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProxyTestError {
+    /// The address does not make a proxy URL.
+    Address,
+    /// The proxy or the service behind it could not be resolved.
+    Dns,
+    /// Nothing accepted the connection.
+    Refused,
+    /// The proxy rejected the account or password.
+    Auth,
+    Timeout,
+    Other(String),
+}
+
+impl ProxyTestError {
+    pub fn message(&self) -> gpui_kit::SharedString {
+        use crate::i18n::t;
+        match self {
+            ProxyTestError::Address => t!("assistant.settings.proxy.test.address"),
+            ProxyTestError::Dns => t!("assistant.settings.proxy.test.dns"),
+            ProxyTestError::Refused => t!("assistant.settings.proxy.test.refused"),
+            ProxyTestError::Auth => t!("assistant.settings.proxy.test.auth"),
+            ProxyTestError::Timeout => t!("assistant.settings.proxy.test.timeout"),
+            ProxyTestError::Other(reason) => {
+                t!(
+                    "assistant.settings.proxy.test.failed",
+                    reason = reason.as_str()
+                )
+            }
+        }
+    }
+}
+
+/// Send one real request through the proxy. Any HTTP answer means the tunnel
+/// worked; 407 means the proxy refused the credentials. `target` is the
+/// service address the assistant would call.
+pub fn test_proxy(
+    config: &ProxyConfig,
+    password: Option<&str>,
+    target: &str,
+) -> Result<u16, ProxyTestError> {
+    let url = config.url().ok_or(ProxyTestError::Address)?;
+    let mut proxy = reqwest::Proxy::all(&url)
+        .map_err(|error| ProxyTestError::Other(short(&error.to_string())))?;
+    if !config.username.is_empty() {
+        proxy = proxy.basic_auth(&config.username, password.unwrap_or(""));
+    }
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(20))
+        .proxy(proxy)
+        .build()
+        .map_err(|error| ProxyTestError::Other(short(&error.to_string())))?;
+    let response = client
+        .get(target)
+        .header("User-Agent", "shellrs-assistant-proxy-check")
+        .send()
+        .map_err(classify_proxy_error)?;
+    let status = response.status().as_u16();
+    if status == 407 {
+        return Err(ProxyTestError::Auth);
+    }
+    Ok(status)
+}
+
+/// Name the failure from the error and everything under it: hyper and the
+/// system say different words for the same thing.
+fn classify_proxy_error(error: reqwest::Error) -> ProxyTestError {
+    if error.is_timeout() {
+        return ProxyTestError::Timeout;
+    }
+    let mut text = String::new();
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(&error);
+    while let Some(cause) = source {
+        text.push_str(&cause.to_string());
+        text.push(' ');
+        source = cause.source();
+    }
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("dns")
+        || lower.contains("failed to lookup")
+        || lower.contains("name or service not known")
+        || lower.contains("nodename nor servname")
+        || lower.contains("name resolution")
+        || lower.contains("no such host")
+        || lower.contains("11001")
+    {
+        ProxyTestError::Dns
+    } else if lower.contains("connection refused")
+        || lower.contains("actively refused")
+        || lower.contains("10061")
+    {
+        ProxyTestError::Refused
+    } else if lower.contains("proxy authentication") {
+        ProxyTestError::Auth
+    } else {
+        ProxyTestError::Other(short(text.trim()))
+    }
 }
 
 /// Read the streamed body and forward text as it comes, keeping the tool
@@ -332,6 +480,72 @@ mod tests {
         assert!(calls.finish().is_empty());
     }
 
+    /// A port with nothing behind it is its own reason, not a generic failure.
+    #[test]
+    fn a_closed_port_is_named_as_refused() {
+        let port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+            listener.local_addr().expect("the bound address").port()
+        };
+        let config = ProxyConfig {
+            host: "127.0.0.1".into(),
+            port,
+            ..ProxyConfig::default()
+        };
+        assert_eq!(
+            test_proxy(&config, None, "http://example.com/"),
+            Err(ProxyTestError::Refused)
+        );
+    }
+
+    /// A proxy that answers 407 is reachable, but it rejected us; that is not
+    /// the same as being unreachable.
+    #[test]
+    fn a_proxy_that_asks_for_credentials_is_an_auth_failure() {
+        use std::io::Write as _;
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("the bound address").port();
+        let server = std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut request = [0u8; 1024];
+            let _ = stream.read(&mut request);
+            let _ = stream.write_all(
+                b"HTTP/1.1 407 Proxy Authentication Required\r\n\
+                  Content-Length: 0\r\n\
+                  \r\n",
+            );
+            let _ = stream.flush();
+        });
+        let config = ProxyConfig {
+            host: "127.0.0.1".into(),
+            port,
+            ..ProxyConfig::default()
+        };
+        assert_eq!(
+            test_proxy(&config, None, "http://example.com/"),
+            Err(ProxyTestError::Auth)
+        );
+        server.join().expect("the fake proxy should finish");
+    }
+
+    /// The reserved top-level domain never resolves, so this is a DNS answer
+    /// without leaving the machine.
+    #[test]
+    fn an_unknown_proxy_host_is_a_dns_failure() {
+        let config = ProxyConfig {
+            host: "no-such-proxy.invalid".into(),
+            port: 8080,
+            ..ProxyConfig::default()
+        };
+        assert_eq!(
+            test_proxy(&config, None, "http://example.com/"),
+            Err(ProxyTestError::Dns)
+        );
+    }
+
     /// The one check that talks to a real service. It is ignored by default
     /// and takes the key from the environment, so no file holds one:
     ///
@@ -360,6 +574,7 @@ mod tests {
             terminals: Vec::new(),
             scheduled: false,
             headers: Vec::new(),
+            proxy: None,
         };
         let (tx, rx) = mpsc::channel();
         let cancel = AtomicBool::new(false);

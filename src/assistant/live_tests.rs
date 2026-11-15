@@ -60,6 +60,7 @@ fn ask_with(terminals: Vec<ToolTerminal>, prompt: &str) -> Vec<ToolCall> {
         terminals,
         scheduled: false,
         headers: Vec::new(),
+        proxy: None,
     };
     let (tx, rx) = mpsc::channel();
     let cancel = AtomicBool::new(false);

@@ -23,10 +23,6 @@ impl KeychainSecretStore {
         }
     }
 
-    fn entry(&self, secret: &SecretRef) -> Result<Entry> {
-        Self::account_entry(&secret.account())
-    }
-
     fn account_entry(account: &str) -> Result<Entry> {
         Entry::new(SERVICE, account).map_err(|error| describe(Action::Open, error))
     }
@@ -46,6 +42,15 @@ impl KeychainSecretStore {
             .set_password(value)
             .map_err(|error| describe(Action::Write, error))
     }
+
+    /// Delete a shared application record. Blocking. A missing entry is not
+    /// an error: the record is gone either way.
+    pub(crate) fn delete_account(account: &str) -> Result<()> {
+        match Self::account_entry(account)?.delete_credential() {
+            Ok(()) | Err(Error::NoEntry) => Ok(()),
+            Err(error) => Err(describe(Action::Delete, error)),
+        }
+    }
 }
 
 impl Default for KeychainSecretStore {
@@ -64,10 +69,7 @@ impl SecretStore for KeychainSecretStore {
     }
 
     fn delete(&self, secret: &SecretRef) -> Result<()> {
-        match self.entry(secret)?.delete_credential() {
-            Ok(()) | Err(Error::NoEntry) => Ok(()),
-            Err(error) => Err(describe(Action::Delete, error)),
-        }
+        Self::delete_account(&secret.account())
     }
 
     fn is_available(&self) -> bool {

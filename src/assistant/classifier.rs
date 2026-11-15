@@ -119,6 +119,7 @@ pub fn request(settings: &AssistantSettings, command: &str, shell: &str) -> Stre
         terminals: Vec::new(),
         scheduled: false,
         headers: provider.headers.clone(),
+        proxy: settings.proxy_route(settings.protocol).map(Into::into),
     }
 }
 

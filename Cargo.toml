@@ -117,8 +117,9 @@ trash = "5"
 # Online update: the signed manifest, its versions and the downloads. The
 # default features keep rustls with the OS trust store and the system proxy
 # (a GUI app started from Finder or the Start menu has no HTTPS_PROXY).
+# `socks` adds the SOCKS5 proxy the assistant can be pointed at.
 minisign-verify = "0.2"
-reqwest = { version = "0.13", features = ["blocking"] }
+reqwest = { version = "0.13", features = ["blocking", "socks"] }
 semver = { version = "1", features = ["serde"] }
 # 匿名使用统计: the system's name and version for Aptabase, as its own Tauri
 # plugin reads them.
