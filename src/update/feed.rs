@@ -1,4 +1,4 @@
-//! Fetching manifests and packages.
+//! Fetching releases and packages.
 //!
 //! Every method blocks and runs on an update worker thread. The feed only
 //! moves bytes: whether to believe them is `verify`'s job, so a feed cannot
@@ -12,16 +12,17 @@ use std::time::Duration;
 
 use reqwest::StatusCode;
 use reqwest::blocking::{Client, Response};
-use reqwest::header::{CONTENT_RANGE, RANGE};
+use reqwest::header::{ACCEPT, CONTENT_RANGE, RANGE};
 
 use super::build_info::{self, Channel};
 use super::error::UpdateError;
 use super::platform;
 use crate::i18n::t;
 
-/// Where manifests and packages come from.
+/// Where releases and packages come from.
 pub trait UpdateFeed: Send + Sync {
-    /// The signed envelope for `channel`, as served.
+    /// What the server says about `channel`: a signed envelope, or a GitHub
+    /// release description.
     fn fetch(&self, channel: Channel) -> Result<Vec<u8>, UpdateError>;
 
     /// Download a package of `size` bytes into `dest`, trying `urls` in
@@ -45,37 +46,47 @@ pub fn part_path(dest: &Path) -> PathBuf {
     dest.with_file_name(name)
 }
 
-/// The largest manifest believed to be one.
-const MANIFEST_LIMIT: u64 = 1024 * 1024;
+/// The largest release description believed to be one.
+const RELEASE_LIMIT: u64 = 1024 * 1024;
 
 /// The real feed, over HTTPS.
 pub struct HttpFeed {
-    /// The manifest's address, with `{channel}` for the channel.
-    manifest_url: String,
+    /// The releases' address; a channel appends `/latest` or `?per_page=20`.
+    releases_url: String,
     /// How long a connection may stay silent, while connecting, waiting for
     /// an answer or in the middle of a download.
     patience: Duration,
     /// Whether to go through the system's proxy. Only the loopback tests turn
     /// it off: a developer's proxy would capture 127.0.0.1.
     system_proxy: bool,
+    /// Whether a request must use HTTPS. Only the loopback tests turn it off.
+    secure: bool,
 }
 
 impl HttpFeed {
     /// The feed release builds use. A debug build can be pointed at a local
     /// server with `SHELLRS_UPDATE_URL`; a release build cannot, so nothing
-    /// in the environment decides where ShellRS updates itself from.
+    /// in the environment decides where the app updates itself from.
     pub fn system() -> Self {
         let override_url = cfg!(debug_assertions)
             .then(|| std::env::var("SHELLRS_UPDATE_URL").ok())
             .flatten();
-        Self::new(override_url.unwrap_or_else(|| build_info::MANIFEST_URL.to_string()))
+        match override_url {
+            Some(url) => Self {
+                // A developer's local server does not speak HTTPS.
+                secure: false,
+                ..Self::new(url)
+            },
+            None => Self::new(build_info::RELEASES_API.to_string()),
+        }
     }
 
-    pub fn new(manifest_url: String) -> Self {
+    pub fn new(releases_url: String) -> Self {
         Self {
-            manifest_url,
+            releases_url: releases_url.trim_end_matches('/').to_string(),
             patience: Duration::from_secs(30),
             system_proxy: true,
+            secure: true,
         }
     }
 
@@ -84,6 +95,7 @@ impl HttpFeed {
     /// async context.
     fn client(&self) -> Result<Client, UpdateError> {
         let builder = Client::builder()
+            .https_only(self.secure)
             .user_agent(platform::user_agent(build_info::VERSION))
             .connect_timeout(self.patience)
             // Per read, in the blocking client: a download that stops
@@ -171,20 +183,43 @@ impl HttpFeed {
 impl UpdateFeed for HttpFeed {
     fn fetch(&self, channel: Channel) -> Result<Vec<u8>, UpdateError> {
         let client = self.client()?;
-        let url = self.manifest_url.replace("{channel}", channel.key());
+        // A development build may still point at a server that serves one
+        // file per channel.
+        let url = if self.releases_url.contains("{channel}") {
+            self.releases_url.replace("{channel}", channel.key())
+        } else {
+            match channel {
+                Channel::Stable => format!("{}/latest", self.releases_url),
+                Channel::Beta => format!("{}?per_page=20", self.releases_url),
+            }
+        };
         let response = client
             .get(url)
+            .header(ACCEPT, "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
             .send()
             .map_err(|error| UpdateError::Network(describe(&error)))?;
-        if !response.status().is_success() {
-            return Err(UpdateError::Http(response.status().as_u16()));
+        let status = response.status();
+        if !status.is_success() {
+            let rate_limited = response
+                .headers()
+                .get("x-ratelimit-remaining")
+                .and_then(|value| value.to_str().ok())
+                == Some("0");
+            return Err(match status.as_u16() {
+                403 | 429 if rate_limited || status == StatusCode::TOO_MANY_REQUESTS => {
+                    UpdateError::RateLimited
+                }
+                404 => UpdateError::NotFound,
+                code => UpdateError::Http(code),
+            });
         }
         let mut body = Vec::new();
         response
-            .take(MANIFEST_LIMIT + 1)
+            .take(RELEASE_LIMIT + 1)
             .read_to_end(&mut body)
             .map_err(read_error)?;
-        if body.len() as u64 > MANIFEST_LIMIT {
+        if body.len() as u64 > RELEASE_LIMIT {
             return Err(UpdateError::BadManifest(
                 t!("update.feed.too_large").to_string(),
             ));
@@ -294,6 +329,8 @@ pub(crate) mod tests {
         /// The headers, then nothing.
         Silence(Vec<u8>),
         Status(u16),
+        /// GitHub's answer to too many requests in an hour.
+        RateLimited,
     }
 
     /// A request as the server saw it.
@@ -343,12 +380,13 @@ pub(crate) mod tests {
             self.seen.lock().unwrap().clone()
         }
 
-        /// A feed reading this server's `/{channel}.json`.
+        /// A feed reading this server's `/releases`.
         pub(crate) fn feed(&self) -> HttpFeed {
             HttpFeed {
-                manifest_url: self.url("/{channel}.json"),
+                releases_url: self.url("/releases"),
                 patience: Duration::from_millis(500),
                 system_proxy: false,
+                secure: false,
             }
         }
     }
@@ -401,6 +439,8 @@ pub(crate) mod tests {
             Some(Answer::Status(code)) => {
                 stream.write_all(head(&format!("{code} Whatever"), 0, "").as_bytes())
             }
+            Some(Answer::RateLimited) => stream
+                .write_all(head("403 Forbidden", 0, "x-ratelimit-remaining: 0\r\n").as_bytes()),
             Some(Answer::Body(body)) => match start {
                 Some(start) if start < body.len() => {
                     let extra = format!(
@@ -452,22 +492,40 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_manifest_is_fetched_with_the_shellrs_user_agent() {
+    fn the_release_is_fetched_with_the_forks_user_agent() {
         let server = Server::start();
-        server.answer("/beta.json", Answer::Body(b"{}".to_vec()));
-        assert_eq!(server.feed().fetch(Channel::Beta), Ok(b"{}".to_vec()));
+        server.answer(
+            "/releases?per_page=20",
+            Answer::Body(br#"{"tag_name":"v0.2.0"}"#.to_vec()),
+        );
+        assert_eq!(
+            server.feed().fetch(Channel::Beta),
+            Ok(br#"{"tag_name":"v0.2.0"}"#.to_vec())
+        );
+        // Nothing was published yet.
         assert_eq!(
             server.feed().fetch(Channel::Stable),
-            Err(UpdateError::Http(404))
+            Err(UpdateError::NotFound)
         );
         let seen = server.seen();
-        assert_eq!(seen[0].path, "/beta.json");
+        assert_eq!(seen[0].path, "/releases?per_page=20");
+        assert_eq!(seen[1].path, "/releases/latest");
         assert!(
             seen[0]
                 .user_agent
                 .as_deref()
-                .is_some_and(|agent| agent.starts_with("ShellRS/")),
+                .is_some_and(|agent| agent.starts_with("AgreeShellAS/")),
             "{seen:?}"
+        );
+    }
+
+    #[test]
+    fn a_rate_limited_check_says_so() {
+        let server = Server::start();
+        server.answer("/releases/latest", Answer::RateLimited);
+        assert_eq!(
+            server.feed().fetch(Channel::Stable),
+            Err(UpdateError::RateLimited)
         );
     }
 

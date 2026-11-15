@@ -1,4 +1,4 @@
-//! Trusting what the update server sends.
+//! Trusting what the release host sends.
 //!
 //! The manifest is signed as a whole: its notes are shown with clickable
 //! links and its addresses are where the next ShellRS comes from, so none of
@@ -8,6 +8,12 @@
 //! signed manifest from being served as a newer one, and a beta manifest
 //! from being served on the stable channel. A package is then trusted by its
 //! size and SHA-256, which the signed manifest gives.
+//!
+//! This fork publishes plain GitHub releases, which carry no manifest to
+//! sign. [`open`] reads a signed envelope when there is one and otherwise
+//! builds the manifest from the release, where GitHub's per-asset SHA-256
+//! digest is the thing that is trusted (`github`). The signature path stays
+//! first so a release host that signs again needs no change here.
 
 use std::fs::File;
 use std::io::Read;
@@ -59,6 +65,39 @@ pub enum Opened {
     NewerFormat {
         version: Version,
     },
+}
+
+/// Open what the release host answered: a signed envelope when it serves
+/// one, otherwise the GitHub release the fork publishes. `package_key` is
+/// this copy's package, whose digest must be there before it is offered.
+pub fn open(
+    bytes: &[u8],
+    channel: Channel,
+    keys: &TrustedKeys,
+    package_key: &str,
+) -> Result<Opened, UpdateError> {
+    if is_envelope(bytes) {
+        open_envelope(bytes, channel, keys)
+    } else {
+        super::github::manifest(bytes, channel, package_key).map(Opened::Manifest)
+    }
+}
+
+/// Whether the answer carries a manifest and its signature. A signed
+/// envelope that fails to verify must not fall through to the unsigned
+/// path, so only the shape is checked here and the signature decides after.
+fn is_envelope(bytes: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(bytes)
+        .ok()
+        .and_then(|value| value.as_object().cloned())
+        .is_some_and(|object| {
+            object
+                .get("manifest")
+                .is_some_and(|field| field.is_string())
+                && object
+                    .get("signature")
+                    .is_some_and(|field| field.is_string())
+        })
 }
 
 /// Check the envelope's signature and open the manifest inside.
@@ -417,5 +456,48 @@ pub(crate) mod tests {
     #[test]
     fn the_builtin_keys_all_parse() {
         assert_eq!(TrustedKeys::builtin().0.len(), TRUSTED_KEYS.len());
+    }
+
+    #[test]
+    fn open_reads_a_signed_envelope_through_its_signature() {
+        let (pair, public) = test_key();
+        let keys = TrustedKeys::new([public.as_str()]);
+        let bytes = envelope(
+            &pair,
+            &manifest_text("0.2.0"),
+            "shellrs-manifest stable 0.2.0",
+        );
+        assert!(matches!(
+            open(&bytes, Channel::Stable, &keys, "macos-aarch64"),
+            Ok(Opened::Manifest(_))
+        ));
+        // A signed answer that does not verify is refused, never parsed as
+        // an unsigned release.
+        let (stranger, _) = test_key();
+        let forged = envelope(
+            &stranger,
+            &manifest_text("0.2.0"),
+            "shellrs-manifest stable 0.2.0",
+        );
+        assert_eq!(
+            open(&forged, Channel::Stable, &keys, "macos-aarch64"),
+            Err(UpdateError::BadSignature)
+        );
+    }
+
+    #[test]
+    fn open_reads_a_github_release_with_its_digest() {
+        let release = r#"{"tag_name":"v0.4.0","assets":[{"name":"ShellRS-0.4.0-macos-aarch64.app.zip","size":7,"browser_download_url":"https://github.com/yunerduo/shell-rs/releases/download/v0.4.0/ShellRS-0.4.0-macos-aarch64.app.zip","digest":"sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"}]}"#;
+        // No keys at all: a GitHub release needs no signature.
+        let Ok(Opened::Manifest(manifest)) = open(
+            release.as_bytes(),
+            Channel::Stable,
+            &TrustedKeys::default(),
+            "macos-aarch64",
+        ) else {
+            panic!("a GitHub release opens without keys");
+        };
+        assert_eq!(manifest.version, Version::new(0, 4, 0));
+        assert_eq!(manifest.assets["macos-aarch64"].size, 7);
     }
 }

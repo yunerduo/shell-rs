@@ -1,14 +1,16 @@
 //! 在线升级：检查、下载、校验并安装新版本。
 //!
-//! The manifest and packages come from `dl.shellrs.com` (`feed`), are
-//! believed only after `verify`, and `install` puts the new version in
-//! place the way each platform's package wants. Nothing here knows about
-//! the window: the workspace wires the updater to the title bar, the
-//! settings page and the restart.
+//! Releases come from this fork's GitHub Releases (`feed`): a signed
+//! manifest when one is published, otherwise the release description whose
+//! asset digests are checked (`github`). `verify` decides what to believe,
+//! and `install` puts the new version in place the way each platform's
+//! package wants. Nothing here knows about the window: the workspace wires
+//! the updater to the title bar, the settings page and the restart.
 
 pub mod build_info;
 pub mod error;
 pub mod feed;
+pub mod github;
 pub mod install;
 // Each platform's installer also builds in the tests elsewhere, as far as
 // its system calls allow, so that a Mac runs them all.
@@ -38,4 +40,4 @@ pub use updater::{
     ManualUpdate, Phase, Stage, UpdateServices, UpdateSnapshot, Updater, UpdaterEvent,
     start_handed_over,
 };
-pub use verify::{Opened, TrustedKeys};
+pub use verify::{Opened, TrustedKeys, open};

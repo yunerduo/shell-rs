@@ -23,7 +23,7 @@ use super::error::UpdateError;
 use super::feed::{HttpFeed, UpdateFeed};
 use super::install::{Installer, Launch, Relaunch, Staged, Unsupported, system_installer};
 use super::manifest::{Offer, Release};
-use super::verify::{Opened, TrustedKeys, open_envelope, verify_file};
+use super::verify::{Opened, TrustedKeys, open, verify_file};
 use crate::i18n::t;
 
 /// The first look, a while after start so it does not compete with the
@@ -372,7 +372,7 @@ impl Updater {
             let opened = services
                 .feed
                 .fetch(channel)
-                .and_then(|bytes| open_envelope(&bytes, channel, &services.keys));
+                .and_then(|bytes| open(&bytes, channel, &services.keys, services.platform));
             let _ = events.send_blocking(WorkerEvent::Checked(opened));
         });
         self.changed(cx);

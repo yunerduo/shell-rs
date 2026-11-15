@@ -16,28 +16,23 @@ pub const COMMIT: Option<&str> = option_env!("SHELLRS_COMMIT");
 /// The day the release was built, `YYYY-MM-DD`.
 pub const BUILD_DATE: Option<&str> = option_env!("SHELLRS_BUILD_DATE");
 
-/// The Apple team that signs ShellRS: a new bundle must come from it.
+/// The Apple team that signs this app: a new bundle must come from it.
 pub const APPLE_TEAM_ID: Option<&str> = option_env!("SHELLRS_APPLE_TEAM_ID");
 
-/// Where each channel's signed manifest lives. Every ShellRS ever shipped
-/// asks here, so the address never changes; a new manifest format gets a
-/// new `schema`, not a new path.
-pub const MANIFEST_URL: &str = "https://dl.shellrs.com/update/v1/{channel}.json";
+/// This fork's GitHub releases. Updates come from here, over HTTPS and
+/// without a token: the repository is public.
+pub const RELEASES_API: &str = "https://api.github.com/repos/yunerduo/shell-rs/releases";
 
-/// The ShellRS website.
-pub const WEBSITE: &str = "https://shellrs.com";
+/// The project page.
+pub const WEBSITE: &str = "https://github.com/yunerduo/shell-rs";
 
-/// Where a person downloads ShellRS by hand.
-pub const DOWNLOAD_PAGE: &str = "https://shellrs.com/download";
+/// Where a person downloads the app by hand.
+pub const DOWNLOAD_PAGE: &str = "https://github.com/yunerduo/shell-rs/releases";
 
-/// What each version changed, for the interface in `locale`: the website's
-/// Chinese page shows the Chinese changelog, the others the English one.
-pub fn changelog_page(locale: &str) -> &'static str {
-    if locale == "zh-CN" {
-        "https://shellrs.com/zh/changelog"
-    } else {
-        "https://shellrs.com/changelog"
-    }
+/// What each version changed: the releases page carries every changelog,
+/// in the language it was written in.
+pub fn changelog_page(_locale: &str) -> &'static str {
+    DOWNLOAD_PAGE
 }
 
 /// The minisign public keys a manifest may be signed with: the key in use,
@@ -63,7 +58,7 @@ pub enum Channel {
 }
 
 impl Channel {
-    /// The name in the manifest's path and in its signature.
+    /// The name in a manifest's signature and in the settings file.
     pub fn key(self) -> &'static str {
         match self {
             Self::Stable => "stable",
@@ -84,8 +79,13 @@ impl Channel {
         option_env!("SHELLRS_UPDATE_CHANNEL").and_then(Self::from_key)
     }
 
-    pub fn manifest_url(self) -> String {
-        MANIFEST_URL.replace("{channel}", self.key())
+    /// The GitHub API address of this channel's releases: the latest
+    /// stable one, or the newest of the list (which also holds betas).
+    pub fn releases_url(self) -> String {
+        match self {
+            Self::Stable => format!("{RELEASES_API}/latest"),
+            Self::Beta => format!("{RELEASES_API}?per_page=20"),
+        }
     }
 }
 
@@ -99,15 +99,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn each_channel_has_a_manifest_of_its_own() {
+    fn each_channel_asks_github_for_its_releases() {
         assert_eq!(
-            Channel::Stable.manifest_url(),
-            "https://dl.shellrs.com/update/v1/stable.json"
+            Channel::Stable.releases_url(),
+            "https://api.github.com/repos/yunerduo/shell-rs/releases/latest"
         );
         assert_eq!(
-            Channel::Beta.manifest_url(),
-            "https://dl.shellrs.com/update/v1/beta.json"
+            Channel::Beta.releases_url(),
+            "https://api.github.com/repos/yunerduo/shell-rs/releases?per_page=20"
         );
+        assert!(Channel::Stable.releases_url().starts_with("https://"));
         assert_eq!(Channel::from_key("nightly"), None);
     }
 

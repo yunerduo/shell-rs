@@ -11,6 +11,14 @@ pub enum UpdateError {
     Network(String),
     /// The server answered, but not with the file.
     Http(u16),
+    /// There is no release to look at (404).
+    NotFound,
+    /// The release host refused the check for too many requests.
+    RateLimited,
+    /// A package carries no SHA-256 digest, so it cannot be trusted.
+    Unverified(String),
+    /// An update address that is not HTTPS.
+    Insecure,
     /// Nothing arrived for a while in the middle of a download.
     Stalled,
     /// The manifest is not signed by a key this build trusts, or was
@@ -35,6 +43,10 @@ impl fmt::Display for UpdateError {
         let text = match self {
             Self::Network(reason) => t!("update.error.network", reason = reason),
             Self::Http(status) => t!("update.error.http", status = status),
+            Self::NotFound => t!("update.error.not_found"),
+            Self::RateLimited => t!("update.error.rate_limited"),
+            Self::Unverified(asset) => t!("update.error.unverified", asset = asset),
+            Self::Insecure => t!("update.error.insecure"),
             Self::Stalled => t!("update.error.stalled"),
             Self::BadSignature => t!("update.error.bad_signature"),
             Self::BadManifest(reason) => t!("update.error.bad_manifest", reason = reason),

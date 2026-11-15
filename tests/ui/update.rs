@@ -267,7 +267,10 @@ fn the_about_page_opens_the_website(cx: &mut TestAppContext) {
     let (handle, _) = open_workspace(cx);
     open_about_settings(cx, handle);
     in_frame(cx, handle, |window, cx| window.click("open-website", cx));
-    assert_eq!(cx.opened_url().as_deref(), Some("https://shellrs.com"));
+    assert_eq!(
+        cx.opened_url().as_deref(),
+        Some("https://github.com/yunerduo/shell-rs")
+    );
 }
 
 /// Open 设置 › 关于.
@@ -385,7 +388,7 @@ async fn a_found_update_downloads_by_itself_and_the_title_bar_offers_it(cx: &mut
     );
     assert_eq!(
         update_status(cx, handle),
-        "新版本 0.2.0 已下载，重启 ShellRS 即可完成更新。"
+        "新版本 0.2.0 已下载，重启 Agree ShellAS 即可完成更新。"
     );
     in_frame(cx, handle, |window, _| {
         // One button: restarting takes the place of 检查更新.
@@ -446,7 +449,7 @@ async fn the_update_dialog_links_the_changelog_and_restarts_into_the_new_version
     in_frame(cx, handle, |window, cx| window.click("open-changelog", cx));
     assert_eq!(
         cx.opened_url().as_deref(),
-        Some("https://shellrs.com/zh/changelog")
+        Some("https://github.com/yunerduo/shell-rs/releases")
     );
     let settings = cx.update(|cx| workspace.read(cx).settings().clone());
     cx.update(|cx| {
@@ -461,7 +464,7 @@ async fn the_update_dialog_links_the_changelog_and_restarts_into_the_new_version
     in_frame(cx, handle, |window, cx| window.click("open-changelog", cx));
     assert_eq!(
         cx.opened_url().as_deref(),
-        Some("https://shellrs.com/changelog")
+        Some("https://github.com/yunerduo/shell-rs/releases")
     );
     in_frame(cx, handle, |window, _| {
         assert!(window.try_find("update-dialog").is_some());
@@ -557,7 +560,7 @@ async fn an_unsupported_install_offers_the_download_page(cx: &mut TestAppContext
         window.click("check-for-updates", cx)
     });
     wait_for_update_status(cx, handle, |status| {
-        status == "发现新版本 0.2.0。这份 ShellRS 不是 AppImage，请用安装它的方式更新。"
+        status == "发现新版本 0.2.0。这份 Agree ShellAS 不是 AppImage，请用安装它的方式更新。"
     })
     .await;
     assert_eq!(fixture.downloads(), 0);
@@ -633,7 +636,7 @@ async fn a_failed_check_says_why_on_the_about_page(cx: &mut TestAppContext) {
         window.click("check-for-updates", cx)
     });
     wait_for_update_status(cx, handle, |status| {
-        status == "检查更新失败：更新服务器返回 HTTP 503"
+        status == "检查更新失败：GitHub 返回 HTTP 503"
     })
     .await;
     assert_eq!(fixture.fetches(), 1);
@@ -690,7 +693,7 @@ async fn switching_the_update_channel_looks_at_that_channel(cx: &mut TestAppCont
     // With 自动升级 on, the other channel is looked at right away.
     set_update_channel(cx, &workspace, Channel::Beta);
     wait_for_update_status(cx, handle, |status| {
-        status == "新版本 0.2.0-beta.1 已下载，重启 ShellRS 即可完成更新。"
+        status == "新版本 0.2.0-beta.1 已下载，重启 Agree ShellAS 即可完成更新。"
     })
     .await;
     assert_eq!(fixture.channels(), [Channel::Stable, Channel::Beta]);
