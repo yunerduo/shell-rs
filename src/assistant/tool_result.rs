@@ -7,7 +7,7 @@ use gpui_kit::SharedString;
 use crate::i18n::t;
 use crate::terminal::ExecDetailResult;
 
-use super::chat::{RunCommandArgs, ToolCall};
+use super::chat::{RunCommandArgs, ToolCall, WaitForOutputArgs};
 use super::output;
 
 /// The most characters of one tool result a card draws. The result sent to
@@ -17,6 +17,18 @@ const DISPLAY_CHARS: usize = 4000;
 /// What the model is told when a call could not be read or resolved.
 pub(super) fn tool_error(reason: &str) -> String {
     serde_json::json!({ "status": "error", "reason": reason }).to_string()
+}
+
+/// What the model is told when it named an alias no binding holds. The
+/// aliases it may use go with the refusal, so it cannot fall back to a
+/// "current" terminal that does not exist.
+pub(super) fn unknown_terminal(aliases: &[String]) -> String {
+    serde_json::json!({
+        "status": "error",
+        "reason": "unknown_terminal",
+        "available": aliases,
+    })
+    .to_string()
 }
 
 /// What the model is told when the policy refused the command, with the
@@ -81,6 +93,20 @@ pub(super) fn tool_card_parts(text: &str) -> (String, String) {
     };
     match value.get("status").and_then(|status| status.as_str()) {
         Some("ok") => {
+            // A wait's answer is the line it matched, not a command output.
+            if let Some(matched) = value.get("matched").and_then(|line| line.as_str()) {
+                let mut summary = t!("assistant.tool.wait_hit").to_string();
+                if value.get("echo_possible").and_then(|flag| flag.as_bool()) == Some(true) {
+                    summary.push_str(" · ");
+                    summary.push_str(&t!("assistant.tool.echo_possible"));
+                }
+                let body = if matched.trim().is_empty() {
+                    t!("assistant.tool.no_output").to_string()
+                } else {
+                    matched.to_string()
+                };
+                return (summary, cut(body));
+            }
             // An answer is not a command's output: it has no exit code and
             // no streams.
             if let Some(answer) = value.get("answer").and_then(|answer| answer.as_str()) {
@@ -137,6 +163,34 @@ pub(super) fn tool_card_parts(text: &str) -> (String, String) {
             (summary, cut(body))
         }
         Some("denied") => (t!("assistant.tool.denied").to_string(), reason_text(&value)),
+        Some("timeout") => {
+            let mut summary = t!("assistant.tool.wait_timeout").to_string();
+            if value.get("echo_possible").and_then(|flag| flag.as_bool()) == Some(true) {
+                summary.push_str(" · ");
+                summary.push_str(&t!("assistant.tool.echo_possible"));
+            }
+            let tail = value
+                .get("recent")
+                .and_then(|lines| lines.as_array())
+                .map(|lines| {
+                    lines
+                        .iter()
+                        .filter_map(|line| line.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default();
+            let body = if tail.trim().is_empty() {
+                t!("assistant.tool.no_output").to_string()
+            } else {
+                tail
+            };
+            (summary, cut(body))
+        }
+        Some("cancelled") => (
+            t!("assistant.error.cancelled").to_string(),
+            reason_line(&value),
+        ),
         Some("unsupported") => (
             t!("assistant.tool.unsupported").to_string(),
             reason_line(&value),
@@ -150,6 +204,7 @@ pub(super) fn tool_card_parts(text: &str) -> (String, String) {
             }
             (t!("assistant.tool.unknown").to_string(), body)
         }
+        Some("error") => (t!("assistant.tool.failed").to_string(), reason_line(&value)),
         _ => (t!("assistant.tool.failed").to_string(), reason_text(&value)),
     }
 }
@@ -170,8 +225,28 @@ fn reason_line(value: &serde_json::Value) -> String {
     match reason.as_str() {
         "unknown_tool" => t!("assistant.tool.reason.unknown_tool"),
         "bad_arguments" => t!("assistant.tool.reason.bad_arguments"),
-        "unknown_terminal" => t!("assistant.tool.reason.unknown_terminal"),
+        "unknown_terminal" => match value
+            .get("available")
+            .and_then(|aliases| aliases.as_array())
+            .map(|aliases| {
+                aliases
+                    .iter()
+                    .filter_map(|alias| alias.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .filter(|aliases| !aliases.is_empty())
+        {
+            Some(aliases) => t!(
+                "assistant.tool.reason.unknown_terminal_list",
+                aliases = aliases
+            ),
+            None => t!("assistant.tool.reason.unknown_terminal"),
+        },
         "terminal_closed" => t!("assistant.tool.reason.terminal_closed"),
+        "wait_busy" => t!("assistant.tool.reason.wait_busy"),
+        "background_running" => t!("assistant.tool.reason.background_running"),
+        "user_takeover" => t!("assistant.tool.reason.user_takeover"),
         "command_changed" => t!("assistant.tool.reason.command_changed"),
         "shell_only" => t!("assistant.tool.reason.shell_only"),
         "closed" => t!("assistant.tool.reason.closed"),
@@ -205,8 +280,19 @@ fn reason_line(value: &serde_json::Value) -> String {
 }
 
 /// One call as a line in the conversation: the alias and command a person
-/// can check, or the raw call when it is not `run_command`.
+/// can check, the terminal and text a wait watches, or the raw call when it
+/// is neither.
 pub(super) fn call_line(call: &ToolCall) -> String {
+    if call.name == "wait_for_output"
+        && let Ok(args) = serde_json::from_str::<WaitForOutputArgs>(&call.arguments)
+    {
+        return t!(
+            "assistant.tool.waiting_for",
+            alias = args.terminal.as_str(),
+            pattern = args.pattern.as_str()
+        )
+        .to_string();
+    }
     match serde_json::from_str::<RunCommandArgs>(&call.arguments) {
         Ok(args) => t!(
             "assistant.tool.calling",
@@ -403,5 +489,57 @@ mod tests {
         };
         let line = call_line(&call);
         assert!(line.contains("other"), "{line}");
+    }
+
+    #[test]
+    fn a_wait_call_shows_the_terminal_and_the_text() {
+        let call = ToolCall {
+            id: "1".into(),
+            name: "wait_for_output".into(),
+            arguments: r#"{"terminal":"server","pattern":"Serving HTTP"}"#.into(),
+        };
+        let line = call_line(&call);
+        assert!(line.contains("server"), "{line}");
+        assert!(line.contains("Serving HTTP"), "{line}");
+    }
+
+    #[test]
+    fn a_wait_hit_reads_back_the_line_it_matched() {
+        let (summary, body) = tool_card_parts(
+            r#"{"status":"ok","matched":"Serving HTTP on 0.0.0.0","elapsed":2,"echo_possible":true}"#,
+        );
+        assert!(
+            summary.contains(t!("assistant.tool.wait_hit").as_ref()),
+            "{summary}"
+        );
+        assert!(
+            summary.contains(t!("assistant.tool.echo_possible").as_ref()),
+            "{summary}"
+        );
+        assert_eq!(body, "Serving HTTP on 0.0.0.0");
+    }
+
+    #[test]
+    fn a_wait_timeout_shows_the_tail_and_the_echo_hint() {
+        let (summary, body) = tool_card_parts(
+            r#"{"status":"timeout","waited":30,"recent":["one","two"],"echo_possible":true}"#,
+        );
+        assert!(
+            summary.contains(t!("assistant.tool.wait_timeout").as_ref()),
+            "{summary}"
+        );
+        assert!(
+            summary.contains(t!("assistant.tool.echo_possible").as_ref()),
+            "{summary}"
+        );
+        assert_eq!(body, "one\ntwo");
+    }
+
+    #[test]
+    fn an_unknown_alias_names_the_ones_that_exist() {
+        let text = unknown_terminal(&["web".to_string(), "db".to_string()]);
+        let (summary, body) = tool_card_parts(&text);
+        assert_eq!(summary, t!("assistant.tool.failed").to_string());
+        assert!(body.contains("web, db"), "{body}");
     }
 }

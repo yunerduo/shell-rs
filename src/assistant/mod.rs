@@ -14,6 +14,7 @@ pub mod policy;
 pub mod protocol;
 pub mod settings;
 pub mod tool_result;
+pub mod wait;
 
 #[cfg(test)]
 mod live_tests;

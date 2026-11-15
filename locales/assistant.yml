@@ -153,6 +153,42 @@ assistant.tool.takeover.required:
 assistant.tool.takeover_closed:
   zh-CN: 你接管了 %{alias}，已停止注入
   en: "You took %{alias} back; the injection was stopped"
+assistant.tool.waiting_for:
+  zh-CN: 等待 %{alias} 出现「%{pattern}」
+  en: "Waiting on %{alias} for \"%{pattern}\""
+assistant.tool.wait_hit:
+  zh-CN: 等到输出
+  en: Output appeared
+assistant.tool.wait_timeout:
+  zh-CN: 等待超时
+  en: Timed out waiting
+assistant.tool.echo_possible:
+  zh-CN: 可能命中的是命令回声
+  en: The match may be the command's echo
+assistant.tool.reason.unknown_terminal_list:
+  zh-CN: 没有这个别名；可用别名：%{aliases}
+  en: "No bound terminal has that alias; available: %{aliases}"
+assistant.tool.reason.wait_busy:
+  zh-CN: 这个终端已经有一个等待在看了
+  en: A wait is already watching this terminal
+assistant.tool.reason.background_running:
+  zh-CN: 这个终端有后台命令在跑，先停掉它再执行
+  en: A background command holds this terminal; stop it first
+assistant.tool.reason.user_takeover:
+  zh-CN: 你接管了终端
+  en: You took the terminal back
+assistant.terminals.limit:
+  zh-CN: 一次最多绑定 %{limit} 个终端
+  en: At most %{limit} terminals can be bound at once
+assistant.terminals.pending:
+  zh-CN: "%{alias} · 待重绑"
+  en: "%{alias} · rebind"
+assistant.terminals.pending_hint:
+  zh-CN: 上次绑定的 %{title} 这次没能唯一匹配；点击忽略
+  en: "The %{title} bound last time could not be told apart; click to dismiss"
+assistant.terminals.save_failed:
+  zh-CN: 绑定没有保存成功：%{reason}
+  en: "The bindings could not be saved: %{reason}"
 assistant.tool.background:
   zh-CN: 后台运行：命令启动后立即返回
   en: "Background: returns once the command is running"

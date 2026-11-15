@@ -42,6 +42,55 @@ pub struct RunCommandArgs {
     pub mode: RunMode,
 }
 
+/// How `wait_for_output` compares a line with its pattern.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MatchMode {
+    /// The line contains the pattern anywhere.
+    #[default]
+    Contains,
+    /// The whole line, trimmed, is the pattern.
+    Line,
+}
+
+/// How long a wait runs when the model does not say, and the longest it may
+/// ask for: a wait holds a tool call open, so it is bounded.
+pub const WAIT_DEFAULT_SECONDS: u32 = 30;
+pub const WAIT_MAX_SECONDS: u32 = 120;
+
+/// The arguments of `wait_for_output`, as the tool's schema declares them.
+/// It waits for text on one terminal and runs nothing.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaitForOutputArgs {
+    pub terminal: String,
+    pub pattern: String,
+    #[serde(default)]
+    pub r#match: MatchMode,
+    #[serde(default = "default_wait_seconds")]
+    pub timeout_seconds: u32,
+    #[serde(default)]
+    pub ignore_case: bool,
+}
+
+fn default_wait_seconds() -> u32 {
+    WAIT_DEFAULT_SECONDS
+}
+
+impl WaitForOutputArgs {
+    /// Whether the wait is worth starting: a pattern short enough to scan
+    /// for. The timeout is clamped rather than refused.
+    pub fn usable(&self) -> bool {
+        let pattern = self.pattern.trim();
+        !pattern.is_empty() && pattern.chars().count() <= 200
+    }
+
+    /// The timeout, kept between one second and the maximum.
+    pub fn timeout_seconds(&self) -> u32 {
+        self.timeout_seconds.clamp(1, WAIT_MAX_SECONDS)
+    }
+}
+
 /// One choice the model offers the user.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct AskOption {
@@ -244,6 +293,49 @@ mod tests {
 
     fn ask(json: &str) -> AskUserArgs {
         serde_json::from_str(json).expect("parse")
+    }
+
+    #[test]
+    fn a_wait_reads_its_pattern_and_defaults() {
+        let wait: WaitForOutputArgs =
+            serde_json::from_str(r#"{"terminal":"server","pattern":"Serving HTTP on"}"#)
+                .expect("parse");
+        assert_eq!(wait.r#match, MatchMode::Contains);
+        assert_eq!(wait.timeout_seconds(), WAIT_DEFAULT_SECONDS);
+        assert!(!wait.ignore_case);
+        assert!(wait.usable());
+        assert!(serde_json::from_str::<WaitForOutputArgs>(r#"{"pattern":"x"}"#).is_err());
+    }
+
+    #[test]
+    fn a_wait_takes_a_line_match_and_a_bounded_timeout() {
+        let wait: WaitForOutputArgs = serde_json::from_str(
+            r#"{"terminal":"server","pattern":"ready","match":"line","timeoutSeconds":600,"ignoreCase":true}"#,
+        )
+        .expect("parse");
+        assert_eq!(wait.r#match, MatchMode::Line);
+        assert!(wait.ignore_case);
+        assert_eq!(wait.timeout_seconds(), WAIT_MAX_SECONDS);
+        assert!(
+            serde_json::from_str::<WaitForOutputArgs>(
+                r#"{"terminal":"server","pattern":"x","match":"regex"}"#
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_wait_needs_a_pattern_short_enough_to_scan_for() {
+        assert!(
+            !serde_json::from_str::<WaitForOutputArgs>(r#"{"terminal":"s","pattern":"  "}"#)
+                .expect("parse")
+                .usable()
+        );
+        let long = "a".repeat(201);
+        let wait: WaitForOutputArgs =
+            serde_json::from_str(&format!(r#"{{"terminal":"s","pattern":"{long}"}}"#))
+                .expect("parse");
+        assert!(!wait.usable());
     }
 
     #[test]

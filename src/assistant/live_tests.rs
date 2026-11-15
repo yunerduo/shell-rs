@@ -17,7 +17,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use super::chat::{AskUserArgs, ChatMessage, RunCommandArgs, RunMode, ToolCall};
+use super::chat::{AskUserArgs, ChatMessage, RunCommandArgs, RunMode, ToolCall, WaitForOutputArgs};
 use super::classifier;
 use super::client::{self, StreamEvent, StreamRequest};
 use super::policy::{self, AuthorizationLevel, Classified, Policy, Risk, Rule, Verdict};
@@ -37,6 +37,17 @@ fn model_env() -> (String, String, String) {
 
 /// A conversation that names one terminal and nothing else.
 fn ask(prompt: &str) -> Vec<ToolCall> {
+    ask_with(
+        vec![ToolTerminal {
+            alias: "prod".into(),
+            title: "Production".into(),
+        }],
+        prompt,
+    )
+}
+
+/// A conversation with the terminals it may name.
+fn ask_with(terminals: Vec<ToolTerminal>, prompt: &str) -> Vec<ToolCall> {
     let (key, base_url, model) = model_env();
     let request = StreamRequest {
         protocol: ProviderProtocol::OpenAi,
@@ -46,10 +57,7 @@ fn ask(prompt: &str) -> Vec<ToolCall> {
         messages: vec![ChatMessage::user(prompt)],
         max_tokens: 512,
         timeout: Duration::from_secs(120),
-        terminals: vec![ToolTerminal {
-            alias: "prod".into(),
-            title: "Production".into(),
-        }],
+        terminals,
     };
     let (tx, rx) = mpsc::channel();
     let cancel = AtomicBool::new(false);
@@ -171,6 +179,48 @@ fn live_a_choice_only_the_user_can_make_is_asked() {
         args.question, args.options, args.allow_free_text
     );
     assert!(args.usable(), "{args:?}");
+}
+
+#[test]
+#[ignore = "needs a model endpoint; see the module docs"]
+fn live_a_second_terminal_waits_for_the_first() {
+    let calls = ask_with(
+        vec![
+            ToolTerminal {
+                alias: "web".into(),
+                title: "Web".into(),
+            },
+            ToolTerminal {
+                alias: "db".into(),
+                title: "Database".into(),
+            },
+        ],
+        "我已在 web 上启动了 `python3 -m http.server 8000`，它还在启动中。\
+         请先用 wait_for_output 等 web 上出现 `Serving HTTP`，再用 curl 在 db 上\
+         请求 http://127.0.0.1:8000/ 验证。每个调用都只用别名指代终端。",
+    );
+    let wait = calls
+        .iter()
+        .find(|call| call.name == "wait_for_output")
+        .unwrap_or_else(|| panic!("the model asked for no wait: {calls:?}"));
+    let wait_args: WaitForOutputArgs = serde_json::from_str(&wait.arguments)
+        .unwrap_or_else(|error| panic!("the arguments do not parse ({error}): {}", wait.arguments));
+    println!("wait={wait_args:?}");
+    assert_eq!(wait_args.terminal, "web");
+    assert!(wait_args.usable(), "{wait_args:?}");
+    let command = calls
+        .iter()
+        .find(|call| call.name == "run_command")
+        .unwrap_or_else(|| panic!("the model asked for no follow-up command: {calls:?}"));
+    let command_args: RunCommandArgs =
+        serde_json::from_str(&command.arguments).unwrap_or_else(|error| {
+            panic!(
+                "the arguments do not parse ({error}): {}",
+                command.arguments
+            )
+        });
+    println!("follow-up={command_args:?}");
+    assert_eq!(command_args.terminal, "db");
 }
 
 /// One classifier call against the live endpoint, without the keychain:

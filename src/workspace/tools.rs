@@ -865,40 +865,29 @@ impl Workspace {
     }
 
     /// The terminals the assistant may use: every open terminal tab, named
-    /// as its tab names it. The aliases are the panel's to make.
+    /// as its tab names it. All of them, not only the ones in sight: a
+    /// binding must not end because another tab or another group is shown.
+    /// The aliases are the panel's to make.
     fn assistant_terminals(&self, cx: &App) -> Vec<AssistantTerminal> {
         let mut terminals = Vec::new();
-        for tab in self.visible_center_tabs(cx) {
-            match tab {
-                CenterTab::Terminal(id) => {
-                    let Some(panel) = self.terminals.get(&id) else {
-                        continue;
-                    };
-                    let panel = panel.read(cx);
-                    terminals.push(
-                        AssistantTerminal::new(
-                            format!("remote:{}", id.0),
-                            panel.host().name.clone(),
-                        )
-                        .with_view(panel.terminal(), panel.shell_only()),
-                    );
-                }
-                CenterTab::LocalTerminal(id) => {
-                    let Some(panel) = self.local_terminals.get(&id) else {
-                        continue;
-                    };
-                    terminals.push(
-                        AssistantTerminal::new(
-                            format!("local:{}", id.0),
-                            t!("assistant.terminal.local").to_string(),
-                        )
-                        .with_view(panel.read(cx).terminal(), false)
-                        .local(),
-                    );
-                }
-                _ => {}
-            }
+        for (id, panel) in &self.terminals {
+            let panel = panel.read(cx);
+            terminals.push(
+                AssistantTerminal::new(format!("remote:{}", id.0), panel.host().name.clone())
+                    .with_view(panel.terminal(), panel.shell_only()),
+            );
         }
+        for (id, panel) in &self.local_terminals {
+            terminals.push(
+                AssistantTerminal::new(
+                    format!("local:{}", id.0),
+                    t!("assistant.terminal.local").to_string(),
+                )
+                .with_view(panel.read(cx).terminal(), false)
+                .local(),
+            );
+        }
+        terminals.sort_by(|left, right| left.id.cmp(&right.id));
         terminals
     }
 }

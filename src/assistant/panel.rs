@@ -28,8 +28,10 @@ use crate::terminal::{
 };
 
 use super::audit;
-use super::bindings::{AssistantTerminal, Bindings};
-use super::chat::{self, AskOption, AskUserArgs, ChatMessage, RunCommandArgs, RunMode, ToolCall};
+use super::bindings::{self, AssistantTerminal, Bindings};
+use super::chat::{
+    self, AskOption, AskUserArgs, ChatMessage, RunCommandArgs, RunMode, ToolCall, WaitForOutputArgs,
+};
 use super::classifier::{self, Judged};
 use super::client::{self, StreamEvent, StreamHandle, StreamRequest};
 use super::inject::{self, InjectOutcome, Route};
@@ -37,8 +39,10 @@ use super::policy::{self, AuthorizationLevel, Classified, Decision, Policy, Risk
 use super::protocol::ToolTerminal;
 use super::settings::ProviderProtocol;
 use super::tool_result::{
-    call_line, denied_result, tool_card_parts, tool_error, tool_result_body, unsupported_result,
+    call_line, denied_result, tool_card_parts, tool_error, tool_result_body, unknown_terminal,
+    unsupported_result,
 };
+use super::wait::{self, Watcher};
 
 /// How often the panel looks at the answer's channel.
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -63,6 +67,14 @@ const FULL_ACCESS_HOLD: Duration = Duration::from_secs(10);
 /// How many classifier calls one exchange may make. Past that, an
 /// unplaceable command keeps the rules' R2.
 const CLASSIFIER_LIMIT: u32 = 20;
+
+/// How many terminals may run a command at the same time. One terminal
+/// still runs one command; different terminals run side by side.
+const GLOBAL_RUNS: usize = 3;
+
+/// How often a wait looks at its screen. Fast enough for a service that
+/// starts in a second, slow enough not to reread the grid every tick.
+const WAIT_CHECK: Duration = Duration::from_millis(200);
 
 /// A call waiting for the user's answer. Its command is the one the card
 /// showed; the hash is checked again before it runs.
@@ -120,10 +132,12 @@ struct Granted {
     override_reason: Option<&'static str>,
 }
 
-/// One command running beside the shell now.
+/// One command running beside its shell now.
 struct ExecRun {
     call_id: String,
     alias: String,
+    /// The terminal it runs on: one run per terminal.
+    terminal_id: String,
     decision: Decision,
     approver: &'static str,
     level: &'static str,
@@ -162,6 +176,29 @@ struct BackgroundRun {
     handle: RunHandle,
 }
 
+/// A judged call waiting for its terminal or for a slot under the global
+/// limit. Calls keep their order per terminal.
+struct WaitingCall {
+    granted: Granted,
+    background: bool,
+    route: Route,
+    terminal_id: String,
+}
+
+/// One wait watching a terminal's screen. It sends no bytes and runs no
+/// command; only the screen reaches it.
+struct WaitRun {
+    call_id: String,
+    terminal_id: String,
+    view: Entity<TerminalView>,
+    watcher: Watcher,
+    started: Instant,
+    timeout: Duration,
+    /// When the screen was last read, so reads stay at one per
+    /// [`WAIT_CHECK`].
+    last_check: Instant,
+}
+
 /// The parts of one command list's section in the settings.
 struct ListSection<'a> {
     prefix: &'static str,
@@ -194,14 +231,25 @@ pub struct AssistantPanel {
     queue: VecDeque<ToolCall>,
     /// Calls waiting for the user, oldest first.
     pending: VecDeque<PendingCall>,
-    /// The command running now.
-    exec: Option<ExecRun>,
-    /// The command typed into a terminal now.
-    inject: Option<InjectRun>,
+    /// The commands running beside their shells, one per terminal.
+    execs: Vec<ExecRun>,
+    /// The commands typed into their terminals, one per terminal.
+    injects: Vec<InjectRun>,
+    /// Judged calls waiting for their terminal or for a free slot.
+    waiting: VecDeque<WaitingCall>,
+    /// Waits watching a terminal's screen.
+    waits: Vec<WaitRun>,
+    /// One tick serves every run and wait.
+    ticking: bool,
     /// Commands the background mode left running.
     backgrounds: Vec<BackgroundRun>,
+    /// The command last typed into a terminal, for echo suppression.
+    echoes: Vec<(String, String)>,
     /// Terminal views whose input the panel already watches.
     watched: Vec<String>,
+    /// Whether the saved bindings were read in; later syncs only retry
+    /// what is still pending.
+    bindings_restored: bool,
     /// Restricted unless the user confirmed full access.
     level: AuthorizationLevel,
     /// The terminals full access covers: those bound when it was confirmed.
@@ -343,10 +391,15 @@ impl AssistantPanel {
             stream: None,
             queue: VecDeque::new(),
             pending: VecDeque::new(),
-            exec: None,
-            inject: None,
+            execs: Vec::new(),
+            injects: Vec::new(),
+            waiting: VecDeque::new(),
+            waits: Vec::new(),
+            ticking: false,
             backgrounds: Vec::new(),
+            echoes: Vec::new(),
             watched: Vec::new(),
+            bindings_restored: false,
             level: AuthorizationLevel::Restricted,
             covered: Vec::new(),
             full_access_card: None,
@@ -366,20 +419,32 @@ impl AssistantPanel {
     }
 
     /// Which terminals are open, and which one is in front. The front one
-    /// joins an empty conversation on its own.
+    /// joins an empty conversation on its own. The list holds every open
+    /// terminal, not just the ones in sight, so switching tabs or groups
+    /// changes no binding; a terminal that is gone is closed here once.
     pub fn set_terminals(
         &mut self,
         terminals: Vec<AssistantTerminal>,
         front: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        let closed: Vec<String> = self
+            .available
+            .iter()
+            .map(|terminal| terminal.id.clone())
+            .filter(|id| !terminals.iter().any(|terminal| &terminal.id == id))
+            .collect();
+        if !self.bindings_restored {
+            self.bindings_restored = true;
+            self.bindings
+                .restore(Bindings::load(&Self::bindings_path()));
+        }
         self.bindings.sync(&terminals);
+        let mut changed = self.bindings.match_pending(&terminals);
         let front = front
             .as_deref()
             .and_then(|id| terminals.iter().find(|terminal| terminal.id == id));
-        if front.is_some() {
-            self.bindings.follow_front(front);
-        }
+        changed |= self.bindings.follow_front(front);
         self.available = terminals;
         // A user's own typing takes the terminal back from an injection; the
         // panel hears it from the view, the same way the view hears the user.
@@ -394,7 +459,111 @@ impl AssistantPanel {
         for (id, view) in views {
             self.watch_input(&id, &view, cx);
         }
+        for id in closed {
+            self.close_terminal(&id, cx);
+        }
+        if changed {
+            self.save_bindings(cx);
+        }
         cx.notify();
+    }
+
+    fn bindings_path() -> std::path::PathBuf {
+        bindings::path_in(&crate::app::data_dir())
+    }
+
+    /// Keep the aliases for the next session. A failed write is a notice,
+    /// not a reason to change what is bound now.
+    fn save_bindings(&mut self, cx: &mut Context<Self>) {
+        if let Err(error) = self.bindings.save(&Self::bindings_path()) {
+            self.notice = Some(t!(
+                "assistant.terminals.save_failed",
+                reason = error.to_string()
+            ));
+        }
+        cx.notify();
+    }
+
+    /// A terminal was closed: its cards, calls, runs, background command and
+    /// waits end with it, and no other terminal is touched.
+    fn close_terminal(&mut self, terminal_id: &str, cx: &mut Context<Self>) {
+        self.covered.retain(|id| id != terminal_id);
+        self.echoes.retain(|(id, _)| id != terminal_id);
+
+        let mut pending = VecDeque::new();
+        while let Some(call) = self.pending.pop_front() {
+            if call.terminal.id == terminal_id {
+                self.record(
+                    &call.alias,
+                    &call.decision,
+                    "denied",
+                    None,
+                    "user",
+                    call.level,
+                    Some("terminal_closed"),
+                );
+                self.push_result(call.call.id, tool_error("terminal_closed"));
+            } else {
+                pending.push_back(call);
+            }
+        }
+        self.pending = pending;
+
+        let mut waiting = VecDeque::new();
+        while let Some(call) = self.waiting.pop_front() {
+            if call.terminal_id == terminal_id {
+                self.push_result(
+                    call.granted.call_id,
+                    wait::cancelled_body("terminal_closed"),
+                );
+            } else {
+                waiting.push_back(call);
+            }
+        }
+        self.waiting = waiting;
+
+        let mut execs = Vec::new();
+        for run in std::mem::take(&mut self.execs) {
+            if run.terminal_id == terminal_id {
+                self.push_result(run.call_id, wait::cancelled_body("terminal_closed"));
+            } else {
+                execs.push(run);
+            }
+        }
+        self.execs = execs;
+
+        let mut injects = Vec::new();
+        for run in std::mem::take(&mut self.injects) {
+            if run.terminal_id == terminal_id {
+                run.handle.cancel();
+                self.push_result(run.call_id, wait::cancelled_body("terminal_closed"));
+            } else {
+                injects.push(run);
+            }
+        }
+        self.injects = injects;
+
+        let mut backgrounds = Vec::new();
+        for run in std::mem::take(&mut self.backgrounds) {
+            if run.terminal_id == terminal_id {
+                run.handle.cancel();
+            } else {
+                backgrounds.push(run);
+            }
+        }
+        self.backgrounds = backgrounds;
+
+        let mut waits = Vec::new();
+        for run in std::mem::take(&mut self.waits) {
+            if run.terminal_id == terminal_id {
+                self.push_result(run.call_id, wait::cancelled_body("terminal_closed"));
+            } else {
+                waits.push(run);
+            }
+        }
+        self.waits = waits;
+
+        self.advance(cx);
     }
 
     fn watch_input(&mut self, id: &str, view: &Entity<TerminalView>, cx: &mut Context<Self>) {
@@ -411,26 +580,65 @@ impl AssistantPanel {
         self._subscriptions.push(subscription);
     }
 
-    /// The user typed in the terminal the assistant was using: the takeover
-    /// is over. A foreground run gets its ^C; a background one is left
-    /// alone, because stopping it is the user's own choice on the card.
+    /// The user typed in one terminal the assistant was using: that
+    /// terminal's takeover is over. Its injection gets its ^C, its queued
+    /// calls and waits end, and its cards are refused; other terminals keep
+    /// running. A background run is left alone, because stopping it is the
+    /// user's own choice on the card.
     fn user_took_over(&mut self, terminal_id: &str, cx: &mut Context<Self>) {
         let mut taken = false;
         if let Some(run) = self
-            .inject
-            .as_mut()
-            .filter(|run| run.terminal_id == terminal_id)
+            .injects
+            .iter_mut()
+            .find(|run| run.terminal_id == terminal_id)
         {
             run.cancelled_by = Some("user");
             run.handle.cancel();
             taken = true;
         }
-        if !self.queue.is_empty() {
-            // Calls not begun would run after the user took the terminal
-            // back; they are dropped, not retried.
-            self.queue.clear();
-            taken = true;
+
+        let mut waiting = VecDeque::new();
+        while let Some(call) = self.waiting.pop_front() {
+            if call.terminal_id == terminal_id {
+                self.push_result(call.granted.call_id, wait::cancelled_body("user_takeover"));
+                taken = true;
+            } else {
+                waiting.push_back(call);
+            }
         }
+        self.waiting = waiting;
+
+        let mut waits = Vec::new();
+        for run in std::mem::take(&mut self.waits) {
+            if run.terminal_id == terminal_id {
+                self.push_result(run.call_id, wait::cancelled_body("user_takeover"));
+                taken = true;
+            } else {
+                waits.push(run);
+            }
+        }
+        self.waits = waits;
+
+        let mut pending = VecDeque::new();
+        while let Some(call) = self.pending.pop_front() {
+            if call.terminal.id == terminal_id {
+                self.record(
+                    &call.alias,
+                    &call.decision,
+                    "denied",
+                    None,
+                    "user",
+                    call.level,
+                    Some("user_takeover"),
+                );
+                self.push_result(call.call.id, denied_result(&call.decision));
+                taken = true;
+            } else {
+                pending.push_back(call);
+            }
+        }
+        self.pending = pending;
+
         if let Some(background) = self
             .backgrounds
             .iter()
@@ -441,7 +649,7 @@ impl AssistantPanel {
             taken = true;
         }
         if taken {
-            cx.notify();
+            self.advance(cx);
         }
     }
 
@@ -449,9 +657,16 @@ impl AssistantPanel {
         let Some(terminal) = self.available.iter().find(|terminal| terminal.id == id) else {
             return;
         };
-        self.bindings.toggle(terminal);
+        let terminal = terminal.clone();
+        let bound = self.bindings.toggle(&terminal);
         self.error = None;
-        cx.notify();
+        if !bound && !self.bindings.has_room() {
+            self.notice = Some(t!(
+                "assistant.terminals.limit",
+                limit = bindings::MAX_BINDINGS
+            ));
+        }
+        self.save_bindings(cx);
     }
 
     fn toggle_settings(&mut self, cx: &mut Context<Self>) {
@@ -538,8 +753,10 @@ impl AssistantPanel {
     /// again.
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.stream.is_some()
-            || self.exec.is_some()
-            || self.inject.is_some()
+            || !self.execs.is_empty()
+            || !self.injects.is_empty()
+            || !self.waits.is_empty()
+            || !self.waiting.is_empty()
             || self.classify.is_some()
             || self.ask.is_some()
             || !self.pending.is_empty()
@@ -583,8 +800,10 @@ impl AssistantPanel {
     /// read yet.
     fn request_round(&mut self, cx: &mut Context<Self>) {
         if self.stream.is_some()
-            || self.exec.is_some()
-            || self.inject.is_some()
+            || !self.execs.is_empty()
+            || !self.injects.is_empty()
+            || !self.waits.is_empty()
+            || !self.waiting.is_empty()
             || self.classify.is_some()
             || self.ask.is_some()
             || !self.pending.is_empty()
@@ -705,24 +924,141 @@ impl AssistantPanel {
         cx.notify();
     }
 
-    /// Handle the next queued call, or let the model answer now that every
-    /// result is in the conversation.
+    /// Handle every queued call that can be handled now, start what is
+    /// waiting where there is room, and let the model answer once every
+    /// result is in the conversation. A card, a question or a classifier
+    /// call stops the dispatch: the conversation waits on the user or the
+    /// classifier.
     fn advance(&mut self, cx: &mut Context<Self>) {
-        if let Some(call) = self.queue.pop_front() {
+        while let Some(call) = self.queue.pop_front() {
             self.handle_call(call, cx);
-            return;
+            if self.classify.is_some() || self.ask.is_some() || !self.pending.is_empty() {
+                cx.notify();
+                return;
+            }
         }
-        if self.exec.is_some()
-            || self.inject.is_some()
+        self.pump(cx);
+        if !self.execs.is_empty()
+            || !self.injects.is_empty()
+            || !self.waits.is_empty()
+            || !self.waiting.is_empty()
             || self.classify.is_some()
             || self.ask.is_some()
             || !self.pending.is_empty()
             || self.stream.is_some()
         {
+            cx.notify();
             return;
         }
         self.request_round(cx);
         cx.notify();
+    }
+
+    /// Start the waiting calls whose terminal is free, while the global
+    /// limit has room. Order is kept: a call never passes one ahead of it on
+    /// the same terminal.
+    fn pump(&mut self, cx: &mut Context<Self>) {
+        let mut index = 0;
+        while index < self.waiting.len() {
+            if self.execs.len() + self.injects.len() >= GLOBAL_RUNS {
+                break;
+            }
+            let terminal_id = self.waiting[index].terminal_id.clone();
+            if self.terminal_busy(&terminal_id) {
+                index += 1;
+                continue;
+            }
+            let Some(call) = self.waiting.remove(index) else {
+                break;
+            };
+            self.start(call, cx);
+        }
+    }
+
+    /// One terminal runs one command at a time; different terminals do not
+    /// wait for each other.
+    fn terminal_busy(&self, terminal_id: &str) -> bool {
+        self.execs.iter().any(|run| run.terminal_id == terminal_id)
+            || self
+                .injects
+                .iter()
+                .any(|run| run.terminal_id == terminal_id)
+    }
+
+    fn start(&mut self, call: WaitingCall, cx: &mut Context<Self>) {
+        match call.route {
+            Route::Exec => self.execute(call.granted, cx),
+            Route::Inject => self.execute_inject(call.granted, call.background, cx),
+            // A call is only queued with a route that can start.
+            Route::NeedTakeover | Route::Unavailable(_) => {
+                self.push_result(call.granted.call_id, unsupported_result("not_started"));
+            }
+        }
+        self.ensure_tick(cx);
+    }
+
+    /// Put a judged call in line. It runs now when its terminal is free and
+    /// the global limit has room; otherwise it waits for its turn.
+    fn schedule(
+        &mut self,
+        granted: Granted,
+        background: bool,
+        route: Route,
+        cx: &mut Context<Self>,
+    ) {
+        let terminal_id = granted.terminal.id.clone();
+        // A background run holds its terminal: rather than queue behind it
+        // for as long as the user leaves it running, the model is told to
+        // have it stopped first.
+        if self
+            .backgrounds
+            .iter()
+            .any(|background| background.terminal_id == terminal_id)
+        {
+            self.push_result(granted.call_id, tool_error("background_running"));
+            return;
+        }
+        self.waiting.push_back(WaitingCall {
+            granted,
+            background,
+            route,
+            terminal_id,
+        });
+        self.pump(cx);
+    }
+
+    /// One tick serves every run and wait. It polls each channel, starts
+    /// what may start, and asks for the next turn once nothing is in flight.
+    fn ensure_tick(&mut self, cx: &mut Context<Self>) {
+        if self.ticking {
+            return;
+        }
+        self.ticking = true;
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(POLL_INTERVAL).await;
+                let keep = this.update(cx, |this, cx| this.tick(cx)).unwrap_or(false);
+                if !keep {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn tick(&mut self, cx: &mut Context<Self>) -> bool {
+        self.poll_execs(cx);
+        self.poll_injects(cx);
+        self.poll_waits(cx);
+        self.pump(cx);
+        let busy = !self.execs.is_empty() || !self.injects.is_empty() || !self.waits.is_empty();
+        if busy {
+            cx.notify();
+        } else {
+            self.ticking = false;
+            self.advance(cx);
+        }
+        busy
     }
 
     /// Judge one call and either refuse it, ask, or run it.
@@ -742,19 +1078,25 @@ impl AssistantPanel {
                 // once.
                 _ => {
                     self.push_result(call.id, tool_error("bad_arguments"));
-                    self.advance(cx);
+                }
+            }
+            return;
+        }
+        if call.name == "wait_for_output" {
+            match serde_json::from_str::<WaitForOutputArgs>(&call.arguments) {
+                Ok(args) if args.usable() => self.start_wait(call.id, args, cx),
+                _ => {
+                    self.push_result(call.id, tool_error("bad_arguments"));
                 }
             }
             return;
         }
         if call.name != "run_command" {
             self.push_result(call.id, tool_error("unknown_tool"));
-            self.advance(cx);
             return;
         }
         let Ok(args) = serde_json::from_str::<RunCommandArgs>(&call.arguments) else {
             self.push_result(call.id, tool_error("bad_arguments"));
-            self.advance(cx);
             return;
         };
         // The model names an alias; the panel resolves it to the terminal
@@ -766,8 +1108,7 @@ impl AssistantPanel {
             .find(|entry| entry.alias == args.terminal)
             .cloned()
         else {
-            self.push_result(call.id, tool_error("unknown_terminal"));
-            self.advance(cx);
+            self.push_result(call.id, unknown_terminal(&self.aliases()));
             return;
         };
         let Some(terminal) = self
@@ -777,7 +1118,6 @@ impl AssistantPanel {
             .cloned()
         else {
             self.push_result(call.id, tool_error("terminal_closed"));
-            self.advance(cx);
             return;
         };
 
@@ -866,6 +1206,68 @@ impl AssistantPanel {
         }
     }
 
+    /// The aliases the model may name, in binding order.
+    fn aliases(&self) -> Vec<String> {
+        self.bindings
+            .entries()
+            .iter()
+            .map(|entry| entry.alias.clone())
+            .collect()
+    }
+
+    /// Watch one terminal's screen for the model. A wait sends nothing to
+    /// the shell and runs no command; only one waits on a terminal at a
+    /// time, so its results cannot be mixed up.
+    fn start_wait(&mut self, call_id: String, args: WaitForOutputArgs, cx: &mut Context<Self>) {
+        let Some(entry) = self
+            .bindings
+            .entries()
+            .iter()
+            .find(|entry| entry.alias == args.terminal)
+            .cloned()
+        else {
+            self.push_result(call_id, unknown_terminal(&self.aliases()));
+            return;
+        };
+        let Some(terminal) = self
+            .available
+            .iter()
+            .find(|terminal| terminal.id == entry.id)
+            .cloned()
+        else {
+            self.push_result(call_id, tool_error("terminal_closed"));
+            return;
+        };
+        if self
+            .waits
+            .iter()
+            .any(|wait| wait.terminal_id == terminal.id)
+        {
+            self.push_result(call_id, tool_error("wait_busy"));
+            return;
+        }
+        let Some(view) = terminal.view.as_ref().and_then(|weak| weak.upgrade()) else {
+            self.push_result(call_id, tool_error("closed"));
+            return;
+        };
+        let screen = view.read(cx).screen_text(cx);
+        let mut watcher = Watcher::new(&args.pattern, args.r#match, args.ignore_case, &screen);
+        if let Some((_, command)) = self.echoes.iter().find(|(id, _)| id == &terminal.id) {
+            watcher.watched_command(command);
+        }
+        self.waits.push(WaitRun {
+            call_id,
+            terminal_id: terminal.id,
+            view,
+            watcher,
+            started: Instant::now(),
+            timeout: Duration::from_secs(u64::from(args.timeout_seconds())),
+            last_check: Instant::now(),
+        });
+        self.ensure_tick(cx);
+        cx.notify();
+    }
+
     /// Route one judged call: refuse it, put it on a card, or run it.
     #[allow(clippy::too_many_arguments)]
     fn resolve(
@@ -902,7 +1304,6 @@ impl AssistantPanel {
             Verdict::Deny => {
                 self.record(&alias, &decision, "denied", None, "policy", level, None);
                 self.push_result(call.id, denied_result(&decision));
-                self.advance(cx);
             }
             Verdict::Confirm => {
                 self.pending.push_back(PendingCall {
@@ -926,7 +1327,7 @@ impl AssistantPanel {
                     terminal.can_inject(),
                     false,
                 ) {
-                    Route::Exec => self.execute(
+                    Route::Exec => self.schedule(
                         Granted {
                             call_id: call.id,
                             alias,
@@ -937,6 +1338,8 @@ impl AssistantPanel {
                             level,
                             override_reason: None,
                         },
+                        background,
+                        Route::Exec,
                         cx,
                     ),
                     // A background run, and a terminal with no channel
@@ -960,7 +1363,6 @@ impl AssistantPanel {
                     Route::Unavailable(reason) => {
                         self.record(&alias, &decision, "unsupported", None, "auto", level, None);
                         self.push_result(call.id, unsupported_result(reason));
-                        self.advance(cx);
                     }
                     Route::Inject => unreachable!("no takeover was given"),
                 }
@@ -1019,6 +1421,7 @@ impl AssistantPanel {
             overridable,
             cx,
         );
+        self.advance(cx);
         cx.notify();
         true
     }
@@ -1056,7 +1459,6 @@ impl AssistantPanel {
                 None,
             );
             self.push_result(call_id, unsupported_result(reason));
-            self.advance(cx);
             return;
         };
         let Some(receiver) = view
@@ -1073,19 +1475,18 @@ impl AssistantPanel {
                 None,
             );
             self.push_result(call_id, unsupported_result("not_running"));
-            self.advance(cx);
             return;
         };
-        self.exec = Some(ExecRun {
+        self.execs.push(ExecRun {
             call_id,
             alias,
+            terminal_id: terminal.id,
             decision,
             approver,
             level,
             override_reason,
             receiver,
         });
-        self.begin_exec_poll(cx);
         cx.notify();
     }
 
@@ -1137,8 +1538,10 @@ impl AssistantPanel {
             override_reason: pending.overridable.then_some("classifier_forbid"),
         };
         match route {
-            Route::Exec => self.execute(granted, cx),
-            Route::Inject => self.execute_inject(granted, background, cx),
+            Route::Exec | Route::Inject => {
+                self.schedule(granted, background, route, cx);
+                self.advance(cx);
+            }
             Route::NeedTakeover | Route::Unavailable(_) => unreachable!("both were handled above"),
         }
     }
@@ -1291,7 +1694,7 @@ impl AssistantPanel {
         if let Some(stream) = self.stream.take() {
             stream.cancel();
         }
-        if let Some(run) = self.inject.as_mut() {
+        for run in &mut self.injects {
             run.cancelled_by = Some("stop");
             run.handle.cancel();
         }
@@ -1310,7 +1713,17 @@ impl AssistantPanel {
             );
             self.push_result(pending.call.id, denied_result(&pending.decision));
         }
-        self.queue.clear();
+        // A call that never ran still gets an answer, so the conversation
+        // the user continues later has one for every tool call.
+        while let Some(call) = self.queue.pop_front() {
+            self.push_result(call.id, tool_error("user_stop"));
+        }
+        while let Some(call) = self.waiting.pop_front() {
+            self.push_result(call.granted.call_id, wait::cancelled_body("user_stop"));
+        }
+        for run in std::mem::take(&mut self.waits) {
+            self.push_result(run.call_id, wait::cancelled_body("user_stop"));
+        }
         self.classify = None;
         if let Some(ask) = self.ask.take() {
             self.push_result(ask.call_id, tool_error("user_stop"));
@@ -1357,51 +1770,118 @@ impl AssistantPanel {
         }
     }
 
-    fn begin_exec_poll(&mut self, cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(POLL_INTERVAL).await;
-                let finished = this
-                    .update(cx, |this, cx| this.poll_exec(cx))
-                    .unwrap_or(true);
-                if finished {
-                    break;
-                }
-            }
-        })
-        .detach();
-    }
-
-    /// Take the command's answer once it is there; `true` when there is
-    /// nothing more to wait for.
-    fn poll_exec(&mut self, cx: &mut Context<Self>) -> bool {
-        let result = match self.exec.as_ref() {
-            None => return true,
-            Some(run) => match run.receiver.try_recv() {
+    /// Take the answers of every exec run that has one. A run whose channel
+    /// closed is reported, not left waiting.
+    fn poll_execs(&mut self, cx: &mut Context<Self>) {
+        let mut index = 0;
+        while index < self.execs.len() {
+            let result = match self.execs[index].receiver.try_recv() {
                 Ok(result) => result,
-                Err(TryRecvError::Empty) => return false,
+                Err(TryRecvError::Empty) => {
+                    index += 1;
+                    continue;
+                }
                 Err(TryRecvError::Disconnected) => {
                     Err(t!("assistant.tool.transport_closed").to_string())
                 }
-            },
-        };
-        let Some(run) = self.exec.take() else {
-            return true;
-        };
-        let (body, exit_code) = tool_result_body(result);
-        self.record(
-            &run.alias,
-            &run.decision,
-            "exec",
-            exit_code,
-            run.approver,
-            run.level,
-            run.override_reason,
-        );
-        self.push_result(run.call_id, body);
-        self.advance(cx);
+            };
+            let run = self.execs.remove(index);
+            let (body, exit_code) = tool_result_body(result);
+            self.record(
+                &run.alias,
+                &run.decision,
+                "exec",
+                exit_code,
+                run.approver,
+                run.level,
+                run.override_reason,
+            );
+            self.push_result(run.call_id, body);
+        }
         cx.notify();
-        true
+    }
+
+    /// Take the outcome of every injection that has one, and keep a
+    /// background run's handle so the user can stop it later.
+    fn poll_injects(&mut self, cx: &mut Context<Self>) {
+        let mut index = 0;
+        while index < self.injects.len() {
+            let message = match self.injects[index].receiver.try_recv() {
+                Ok(message) => message,
+                Err(TryRecvError::Empty) => {
+                    index += 1;
+                    continue;
+                }
+                Err(TryRecvError::Disconnected) => InjectMessage::Done(InjectOutcome {
+                    failure: Some(RunFailure::Disconnected),
+                    ..InjectOutcome::default()
+                }),
+            };
+            let run = self.injects.remove(index);
+            let (mut outcome, finished_handle) = match message {
+                InjectMessage::Done(outcome) => (outcome, None),
+                InjectMessage::Background(handle, outcome) => (outcome, Some(handle)),
+            };
+            outcome.cancelled_by = run.cancelled_by;
+            let channel = if finished_handle.is_some() {
+                "inject-background"
+            } else {
+                "inject"
+            };
+            self.record(
+                &run.alias,
+                &run.decision,
+                channel,
+                outcome.exit_code,
+                run.approver,
+                run.level,
+                run.override_reason,
+            );
+            self.push_result(run.call_id, outcome.body());
+            if let Some(handle) = finished_handle {
+                self.backgrounds.push(BackgroundRun {
+                    alias: run.alias,
+                    terminal_id: run.terminal_id,
+                    handle,
+                });
+            }
+        }
+        cx.notify();
+    }
+
+    /// End a wait whose text appeared, whose time ran out, or both; the
+    /// screen is read at most once every [`WAIT_CHECK`].
+    fn poll_waits(&mut self, cx: &mut Context<Self>) {
+        let now = Instant::now();
+        let mut index = 0;
+        while index < self.waits.len() {
+            let answer = {
+                let run = &mut self.waits[index];
+                if now.duration_since(run.last_check) < WAIT_CHECK {
+                    index += 1;
+                    continue;
+                }
+                run.last_check = now;
+                let screen = run.view.read(cx).screen_text(cx);
+                let elapsed = now.duration_since(run.started);
+                match run.watcher.observe(&screen) {
+                    Some(hit) => Some(wait::hit_body(&hit, elapsed)),
+                    None if elapsed >= run.timeout => Some(wait::timeout_body(
+                        run.timeout,
+                        &wait::recent(&screen),
+                        run.watcher.echo_seen(),
+                    )),
+                    None => None,
+                }
+            };
+            let Some(body) = answer else {
+                index += 1;
+                continue;
+            };
+            let run = self.waits.remove(index);
+            self.push_result(run.call_id, body);
+        }
+        cx.notify();
     }
 
     /// Type one command into its terminal. The user has already authorized
@@ -1429,10 +1909,10 @@ impl AssistantPanel {
                 None,
             );
             self.push_result(call_id, unsupported_result("takeover_closed"));
-            self.advance(cx);
-            cx.notify();
             return;
         };
+        // What the terminal will echo; a wait must not read it as output.
+        let typed = command.clone();
         let (run, events) = TerminalRun::new(command);
         let handle = run.handle();
         if let Err(failure) = view.read(cx).run_command(handle.clone(), cx) {
@@ -1447,8 +1927,6 @@ impl AssistantPanel {
                 None,
             );
             self.push_result(call_id, inject::failure_body(&failure));
-            self.advance(cx);
-            cx.notify();
             return;
         }
         let terminal_id = terminal.id;
@@ -1505,7 +1983,9 @@ impl AssistantPanel {
             };
             let _ = tx.send(InjectMessage::Done(outcome));
         });
-        self.inject = Some(InjectRun {
+        self.echoes.retain(|(id, _)| id != &terminal_id);
+        self.echoes.push((terminal_id.clone(), typed));
+        self.injects.push(InjectRun {
             call_id,
             alias,
             terminal_id,
@@ -1517,18 +1997,16 @@ impl AssistantPanel {
             receiver,
             cancelled_by: None,
         });
-        self.begin_inject_poll(cx);
         cx.notify();
     }
 
-    /// Stop the foreground injection with a ^C. Its result comes back like
-    /// any other, marked with who stopped it.
+    /// Stop every foreground injection with a ^C. Their results come back
+    /// like any other, marked with who stopped them.
     fn stop_inject(&mut self, cx: &mut Context<Self>) {
-        let Some(run) = self.inject.as_mut() else {
-            return;
-        };
-        run.cancelled_by = Some("stop");
-        run.handle.cancel();
+        for run in &mut self.injects {
+            run.cancelled_by = Some("stop");
+            run.handle.cancel();
+        }
         cx.notify();
     }
 
@@ -1543,70 +2021,6 @@ impl AssistantPanel {
             alias = background.alias
         ));
         cx.notify();
-    }
-
-    fn begin_inject_poll(&mut self, cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(POLL_INTERVAL).await;
-                let finished = this
-                    .update(cx, |this, cx| this.poll_inject(cx))
-                    .unwrap_or(true);
-                if finished {
-                    break;
-                }
-            }
-        })
-        .detach();
-    }
-
-    /// Take the injection's outcome once it is there; `true` when there is
-    /// nothing more to wait for.
-    fn poll_inject(&mut self, cx: &mut Context<Self>) -> bool {
-        let message = match self.inject.as_ref() {
-            None => return true,
-            Some(run) => match run.receiver.try_recv() {
-                Ok(message) => message,
-                Err(TryRecvError::Empty) => return false,
-                Err(TryRecvError::Disconnected) => InjectMessage::Done(InjectOutcome {
-                    failure: Some(RunFailure::Disconnected),
-                    ..InjectOutcome::default()
-                }),
-            },
-        };
-        let Some(run) = self.inject.take() else {
-            return true;
-        };
-        let (mut outcome, finished_handle) = match message {
-            InjectMessage::Done(outcome) => (outcome, None),
-            InjectMessage::Background(handle, outcome) => (outcome, Some(handle)),
-        };
-        outcome.cancelled_by = run.cancelled_by;
-        let channel = if finished_handle.is_some() {
-            "inject-background"
-        } else {
-            "inject"
-        };
-        self.record(
-            &run.alias,
-            &run.decision,
-            channel,
-            outcome.exit_code,
-            run.approver,
-            run.level,
-            run.override_reason,
-        );
-        self.push_result(run.call_id, outcome.body());
-        if let Some(handle) = finished_handle {
-            self.backgrounds.push(BackgroundRun {
-                alias: run.alias,
-                terminal_id: run.terminal_id,
-                handle,
-            });
-        }
-        self.advance(cx);
-        cx.notify();
-        true
     }
 
     fn add_blacklist(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1787,6 +2201,29 @@ impl AssistantPanel {
                 button = button.danger();
             }
             row = row.child(button);
+        }
+        // Aliases saved from an earlier session whose terminal could not be
+        // identified: shown, never used, and dismissed with a click.
+        for (index, wanted) in self.bindings.pending().iter().enumerate() {
+            row = row.child(
+                Button::new(("assistant-rebind", index))
+                    .xsmall()
+                    .ghost()
+                    .label(t!(
+                        "assistant.terminals.pending",
+                        alias = wanted.alias.as_str()
+                    ))
+                    .tooltip(t!(
+                        "assistant.terminals.pending_hint",
+                        title = wanted.title.as_str()
+                    ))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if this.bindings.dismiss_pending(index) {
+                            this.save_bindings(cx);
+                        }
+                        cx.notify();
+                    })),
+            );
         }
         row
     }
@@ -2264,11 +2701,13 @@ impl AssistantPanel {
         let border = cx.theme().border;
         let muted = cx.theme().muted_foreground;
         let streaming = self.stream.is_some();
-        let injecting = self.inject.is_some();
+        let injecting = !self.injects.is_empty();
         // A command runs, or a card waits: a new question would have no
         // turn to run in.
-        let busy = self.exec.is_some()
+        let busy = !self.execs.is_empty()
             || injecting
+            || !self.waits.is_empty()
+            || !self.waiting.is_empty()
             || !self.pending.is_empty()
             || self.ask.is_some()
             || self.classify.is_some();

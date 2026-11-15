@@ -1,8 +1,15 @@
 //! Which terminals the assistant may speak to, and what the model calls
 //! them. The alias is the only handle the model sees: terminal ids are the
-//! host's business.
+//! host's business. The bound aliases are saved with the terminal's name so
+//! a later session can take them back from the one terminal that still
+//! carries that name; when it cannot, the alias waits to be bound again
+//! rather than silently moving to another terminal.
+
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use gpui_kit::gpui::{Entity, WeakEntity};
+use serde::{Deserialize, Serialize};
 
 use crate::terminal::TerminalView;
 
@@ -86,6 +93,25 @@ impl AssistantTerminal {
 /// The longest alias, so a chain of collisions cannot grow without bound.
 const ALIAS_LIMIT: usize = 24;
 
+/// How many terminals one conversation may bind. A card per terminal, and
+/// four is as many as a person can follow at once.
+pub const MAX_BINDINGS: usize = 4;
+
+/// One binding as the file keeps it: what an alias needs to find its
+/// terminal again, without the runtime id.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedBinding {
+    pub alias: String,
+    pub title: String,
+    #[serde(default)]
+    pub local: bool,
+}
+
+/// The file bindings are kept in, under the assistant's directory.
+pub fn path_in(dir: &Path) -> PathBuf {
+    dir.join("assistant").join("bindings.json")
+}
+
 /// A stable name for a terminal, from its title: lower case, Latin letters,
 /// digits and dashes; a name with nothing usable falls back to a numbered
 /// one. Collisions take `-2`, `-3`, and so on.
@@ -133,8 +159,9 @@ pub fn alias_for(title: &str, taken: &[String], sequence: usize) -> String {
 }
 
 /// The terminals a conversation is bound to. One is the front terminal by
-/// default; the user may add others. Bindings are kept for the session in
-/// P0; saving them across restarts is P4's.
+/// default; the user may add others, up to [`MAX_BINDINGS`]. The names are
+/// saved across restarts; an alias whose terminal cannot be identified
+/// again is kept as pending until the user binds it or dismisses it.
 #[derive(Debug, Default)]
 pub struct Bindings {
     entries: Vec<AssistantTerminal>,
@@ -143,6 +170,8 @@ pub struct Bindings {
     unbound: Vec<String>,
     /// Numbers the fallback names.
     sequence: usize,
+    /// Saved aliases still looking for their terminal.
+    pending: Vec<SavedBinding>,
 }
 
 impl Bindings {
@@ -158,10 +187,25 @@ impl Bindings {
         self.entries.iter().any(|entry| entry.id == id)
     }
 
-    /// Bind a terminal, giving it an alias no other binding holds.
-    pub fn bind(&mut self, terminal: &AssistantTerminal) {
+    /// Aliases that could not be matched to a terminal this session. They
+    /// are not usable and are shown as waiting to be bound again.
+    pub fn pending(&self) -> &[SavedBinding] {
+        &self.pending
+    }
+
+    /// Whether another terminal may be bound.
+    pub fn has_room(&self) -> bool {
+        self.entries.len() < MAX_BINDINGS
+    }
+
+    /// Bind a terminal, giving it an alias no other binding holds. Returns
+    /// whether it is bound afterwards: the list may be full.
+    pub fn bind(&mut self, terminal: &AssistantTerminal) -> bool {
         if self.is_bound(&terminal.id) {
-            return;
+            return true;
+        }
+        if !self.has_room() {
+            return false;
         }
         self.unbound.retain(|id| id != &terminal.id);
         self.sequence += 1;
@@ -173,6 +217,31 @@ impl Bindings {
         let mut entry = terminal.clone();
         entry.alias = alias_for(&terminal.title, &taken, self.sequence);
         self.entries.push(entry);
+        // Binding by hand answers a saved alias of the same terminal.
+        self.pending
+            .retain(|wanted| !same_terminal_name(wanted, terminal));
+        true
+    }
+
+    /// Bind with a name the file kept, if that name is free.
+    fn bind_as(&mut self, terminal: &AssistantTerminal, alias: &str) -> bool {
+        if self.is_bound(&terminal.id) || !self.has_room() {
+            return false;
+        }
+        if self
+            .entries
+            .iter()
+            .any(|entry| entry.alias.eq_ignore_ascii_case(alias))
+        {
+            return false;
+        }
+        let mut entry = terminal.clone();
+        entry.alias = alias.to_ascii_lowercase();
+        self.unbound.retain(|id| id != &terminal.id);
+        self.entries.push(entry);
+        self.pending
+            .retain(|wanted| !wanted.alias.eq_ignore_ascii_case(alias));
+        true
     }
 
     /// Take a terminal off. Remembered, so the front terminal does not come
@@ -184,11 +253,14 @@ impl Bindings {
         }
     }
 
-    pub fn toggle(&mut self, terminal: &AssistantTerminal) {
+    /// Bind or take off, as the sidebar's checkbox says. Returns whether the
+    /// terminal is bound afterwards.
+    pub fn toggle(&mut self, terminal: &AssistantTerminal) -> bool {
         if self.is_bound(&terminal.id) {
             self.unbind(&terminal.id);
+            false
         } else {
-            self.bind(terminal);
+            self.bind(terminal)
         }
     }
 
@@ -207,18 +279,101 @@ impl Bindings {
     }
 
     /// Put the front terminal in the conversation when nothing is bound.
-    pub fn follow_front(&mut self, front: Option<&AssistantTerminal>) {
+    pub fn follow_front(&mut self, front: Option<&AssistantTerminal>) -> bool {
         let Some(front) = front else {
-            return;
+            return false;
         };
         if !self.entries.is_empty()
             || self.is_bound(&front.id)
             || self.unbound.iter().any(|id| id == &front.id)
         {
-            return;
+            return false;
         }
-        self.bind(front);
+        self.bind(front)
     }
+
+    /// Keep the saved aliases for this session: each is bound again only
+    /// when exactly one open terminal carries its name.
+    pub fn restore(&mut self, saved: Vec<SavedBinding>) {
+        self.pending = saved;
+    }
+
+    /// Look for the terminals the pending aliases name. Returns whether a
+    /// binding changed; the rest stay pending.
+    pub fn match_pending(&mut self, open: &[AssistantTerminal]) -> bool {
+        let mut changed = false;
+        let mut still = Vec::new();
+        for wanted in std::mem::take(&mut self.pending) {
+            let candidates: Vec<&AssistantTerminal> = open
+                .iter()
+                .filter(|terminal| {
+                    terminal.local == wanted.local
+                        && terminal.title.eq_ignore_ascii_case(&wanted.title)
+                        && !self.is_bound(&terminal.id)
+                })
+                .collect();
+            if candidates.len() == 1 && self.bind_as(candidates[0], &wanted.alias) {
+                changed = true;
+            } else {
+                still.push(wanted);
+            }
+        }
+        self.pending = still;
+        changed
+    }
+
+    /// Forget a pending alias the user does not want back.
+    pub fn dismiss_pending(&mut self, index: usize) -> bool {
+        if index >= self.pending.len() {
+            return false;
+        }
+        self.pending.remove(index);
+        true
+    }
+
+    /// Everything the next session should know: the bound aliases and the
+    /// ones still waiting.
+    pub fn saved(&self) -> Vec<SavedBinding> {
+        let mut saved: Vec<SavedBinding> = self
+            .entries
+            .iter()
+            .map(|entry| SavedBinding {
+                alias: entry.alias.clone(),
+                title: entry.title.clone(),
+                local: entry.local,
+            })
+            .collect();
+        saved.extend(self.pending.iter().cloned());
+        saved
+    }
+
+    /// Write the bindings, replacing the file in one step so a half-written
+    /// list is never read.
+    pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let text = serde_json::to_string_pretty(&self.saved())
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        let temporary = path.with_extension("json.tmp");
+        fs::write(&temporary, text)?;
+        fs::rename(&temporary, path)
+    }
+
+    /// Read a saved list. A missing or unreadable file is no bindings at
+    /// all, not an error the panel has to report.
+    pub fn load(path: &Path) -> Vec<SavedBinding> {
+        fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
+    }
+}
+
+/// Whether a saved alias names this terminal: the same name on the same
+/// side of the connection.
+fn same_terminal_name(wanted: &SavedBinding, terminal: &AssistantTerminal) -> bool {
+    wanted.local == terminal.local && wanted.title.eq_ignore_ascii_case(&terminal.title)
 }
 
 #[cfg(test)]
@@ -315,5 +470,106 @@ mod tests {
             Some("shell_only"),
             "no view means no channel to run on"
         );
+    }
+
+    #[test]
+    fn four_bindings_are_the_most_one_conversation_takes() {
+        let mut bindings = Bindings::default();
+        for index in 0..MAX_BINDINGS {
+            assert!(bindings.bind(&terminal(&format!("remote:{index}"), "web")));
+        }
+        assert!(!bindings.has_room());
+        assert!(
+            !bindings.bind(&terminal("remote:9", "cache")),
+            "the fifth is refused"
+        );
+        assert_eq!(bindings.entries().len(), MAX_BINDINGS);
+    }
+
+    #[test]
+    fn a_saved_alias_returns_to_the_one_terminal_of_that_name() {
+        let mut bindings = Bindings::default();
+        bindings.restore(vec![SavedBinding {
+            alias: "web".into(),
+            title: "Web".into(),
+            local: false,
+        }]);
+        assert!(bindings.match_pending(&[terminal("remote:7", "web")]));
+        assert_eq!(bindings.entries().len(), 1);
+        assert_eq!(bindings.entries()[0].alias, "web");
+        assert!(bindings.pending().is_empty());
+    }
+
+    #[test]
+    fn an_ambiguous_or_missing_name_waits_instead_of_switching_terminals() {
+        let saved = vec![SavedBinding {
+            alias: "web".into(),
+            title: "web".into(),
+            local: false,
+        }];
+        let mut bindings = Bindings::default();
+        bindings.restore(saved.clone());
+        let twins = [terminal("remote:1", "web"), terminal("remote:2", "web")];
+        assert!(!bindings.match_pending(&twins));
+        assert!(bindings.is_empty(), "nothing bound by guess");
+        assert_eq!(bindings.pending().len(), 1);
+        assert_eq!(bindings.pending()[0].alias, "web");
+
+        let mut bindings = Bindings::default();
+        bindings.restore(saved);
+        assert!(!bindings.match_pending(&[terminal("remote:9", "db")]));
+        assert!(bindings.is_empty());
+        assert_eq!(bindings.pending().len(), 1);
+    }
+
+    #[test]
+    fn a_local_terminal_and_a_remote_one_of_the_same_name_do_not_mix() {
+        let mut bindings = Bindings::default();
+        bindings.restore(vec![SavedBinding {
+            alias: "shell".into(),
+            title: "shell".into(),
+            local: true,
+        }]);
+        bindings.match_pending(&[terminal("remote:1", "shell")]);
+        assert!(bindings.is_empty(), "the remote one is a different host");
+        bindings.match_pending(&[terminal("local:1", "shell").local()]);
+        assert!(bindings.is_bound("local:1"));
+    }
+
+    #[test]
+    fn bindings_survive_a_write_and_a_read() {
+        let dir = std::env::temp_dir().join(format!(
+            "shellrs-bindings-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        let path = path_in(&dir);
+        let mut bindings = Bindings::default();
+        bindings.bind(&terminal("remote:1", "web"));
+        bindings.bind(&terminal("local:1", "shell").local());
+        bindings.save(&path).expect("save");
+        let saved = Bindings::load(&path);
+        assert_eq!(saved.len(), 2);
+        assert_eq!(saved[0].alias, "web");
+        assert!(saved[1].local);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(Bindings::load(&path_in(&dir)).is_empty(), "nothing on disk");
+    }
+
+    #[test]
+    fn a_pending_alias_is_resolved_by_binding_its_terminal_by_hand() {
+        let mut bindings = Bindings::default();
+        bindings.restore(vec![SavedBinding {
+            alias: "web".into(),
+            title: "web".into(),
+            local: false,
+        }]);
+        assert!(bindings.bind(&terminal("remote:5", "web")));
+        assert!(bindings.pending().is_empty());
+        assert!(!bindings.dismiss_pending(0), "nothing left to dismiss");
     }
 }
