@@ -388,24 +388,6 @@ fn clip(text: &str, chars: usize) -> String {
     text.chars().take(chars).collect()
 }
 
-/// Where an app key's events go: the key names Aptabase's region
-/// (`A-US-…`). `None` for a key ShellRS cannot send with, a self-hosted or
-/// malformed one.
-pub fn endpoint(app_key: &str) -> Option<&'static str> {
-    let parts: Vec<&str> = app_key.split('-').collect();
-    let [first, region, number] = parts.as_slice() else {
-        return None;
-    };
-    if *first != "A" || number.is_empty() || !number.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    match *region {
-        "US" => Some("https://us.aptabase.com/api/v0/events"),
-        "EU" => Some("https://eu.aptabase.com/api/v0/events"),
-        _ => None,
-    }
-}
-
 /// How a request went.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Delivery {
@@ -793,26 +775,11 @@ mod tests {
     }
 
     #[test]
-    fn the_region_comes_from_the_app_key() {
-        assert_eq!(
-            endpoint("A-US-1582708162"),
-            Some("https://us.aptabase.com/api/v0/events")
-        );
-        assert_eq!(
-            endpoint("A-EU-1234567890"),
-            Some("https://eu.aptabase.com/api/v0/events")
-        );
-        for key in [
-            "A-SH-1234567890",
-            "A-DEV-1",
-            "A-US-",
-            "A-US-12x",
-            "B-US-1",
-            "A-US",
-        ] {
-            assert_eq!(endpoint(key), None, "{key}");
-        }
-        assert!(endpoint(super::super::APP_KEY).is_some());
+    fn the_endpoint_is_the_forks_and_https() {
+        let endpoint = super::super::ENDPOINT;
+        assert!(endpoint.starts_with("https://"), "{endpoint}");
+        assert!(endpoint.ends_with("/api/v0/events"), "{endpoint}");
+        assert!(endpoint.contains("shellas.agree.host"), "{endpoint}");
     }
 
     #[test]

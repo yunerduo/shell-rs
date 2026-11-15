@@ -11,11 +11,9 @@ use chrono::Utc;
 use reqwest::blocking::Client;
 use reqwest::header::{CONTENT_TYPE, USER_AGENT};
 
-use super::APP_KEY;
-use super::model::{
-    Counter, Delivery, Pace, Reporter, Signal, Snapshot, State, SystemProps, body, endpoint,
-};
+use super::model::{Counter, Delivery, Pace, Reporter, Signal, Snapshot, State, SystemProps, body};
 use super::system::SystemInfo;
+use super::{APP_KEY, ENDPOINT};
 use crate::update::{Channel, build_info};
 
 /// Lets a development build report, to its debug view, to try it out.
@@ -114,9 +112,8 @@ impl AnalyticsServices {
         if is_debug && std::env::var_os(DEBUG_ENV).is_none() {
             return None;
         }
-        let endpoint = endpoint(APP_KEY)?;
         Some(Self {
-            transport: Arc::new(HttpTransport::new(endpoint, APP_KEY)),
+            transport: Arc::new(HttpTransport::new(ENDPOINT, APP_KEY)),
             state_path: crate::app::analytics_path(),
             is_debug,
             detect: SystemInfo::detect,
@@ -431,6 +428,28 @@ mod tests {
         };
         assert!(state.installed);
         assert_eq!(state.counting.unwrap().counts["ssh"], 1);
+    }
+
+    #[test]
+    fn switched_off_the_thread_makes_no_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let (bodies, received) = mpsc::channel();
+        let services = AnalyticsServices {
+            transport: Arc::new(FakeTransport(Mutex::new(bodies))),
+            state_path: dir.path().join("analytics.json"),
+            is_debug: true,
+            detect: a_mac,
+        };
+        let mut analytics = Analytics::start(services, false);
+        analytics.started(Snapshot::default());
+        analytics.window_active(Snapshot::default());
+        analytics.count(Counter::Ssh);
+        assert!(received.recv_timeout(Duration::from_millis(500)).is_err());
+        // Once on, the same signals report: the silence above was the
+        // switch, not a harness that never sends.
+        analytics.set_enabled(true);
+        analytics.started(Snapshot::default());
+        received.recv_timeout(Duration::from_secs(5)).unwrap();
     }
 
     #[test]

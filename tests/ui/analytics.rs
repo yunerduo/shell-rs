@@ -5,21 +5,41 @@ use shellrs::analytics::{Analytics, Counter, Signal};
 
 use crate::support::*;
 
-/// Have the workspace report to a channel the test reads.
+/// Have the workspace report to a channel the test reads, at the current
+/// setting. Statistics are off by default, so tests about what is reported
+/// use [`reporting`], which turns them on first.
 fn report(
     cx: &mut TestAppContext,
     handle: WindowHandle<Root>,
     workspace: &Entity<Workspace>,
 ) -> mpsc::Receiver<Signal> {
     let (sender, receiver) = mpsc::channel();
+    let enabled = workspace.read_with(cx, |workspace, cx| {
+        workspace.settings().read(cx).settings().analytics.enabled
+    });
     cx.update_window(handle.into(), |_, window, cx| {
         workspace.update(cx, |workspace, cx| {
-            workspace.set_analytics(Analytics::new(sender, true), window, cx)
+            workspace.set_analytics(Analytics::new(sender, enabled), window, cx)
         });
     })
     .unwrap();
     cx.run_until_parked();
     receiver
+}
+
+/// Turn the statistics on, then report to a channel the test reads.
+fn reporting(
+    cx: &mut TestAppContext,
+    handle: WindowHandle<Root>,
+    workspace: &Entity<Workspace>,
+) -> mpsc::Receiver<Signal> {
+    workspace.update(cx, |workspace, cx| {
+        workspace.settings().update(cx, |settings, cx| {
+            settings.update(|settings| settings.analytics.enabled = true, cx)
+        });
+    });
+    cx.run_until_parked();
+    report(cx, handle, workspace)
 }
 
 fn counted(signals: &[Signal]) -> Vec<Counter> {
@@ -46,7 +66,7 @@ fn bring_forward(cx: &mut TestAppContext, handle: WindowHandle<Root>) {
 #[gpui_kit::test]
 fn the_window_coming_forward_is_reported_with_the_setup(cx: &mut TestAppContext) {
     let (handle, workspace) = open_workspace(cx);
-    let signals = report(cx, handle, &workspace);
+    let signals = reporting(cx, handle, &workspace);
     bring_forward(cx, handle);
     let received: Vec<Signal> = signals.try_iter().collect();
     let snapshot = received.iter().find_map(|signal| match signal {
@@ -67,7 +87,7 @@ fn the_window_coming_forward_is_reported_with_the_setup(cx: &mut TestAppContext)
 async fn the_features_used_are_counted(cx: &mut TestAppContext) {
     let (store, host) = one_host_store(AuthKind::NoPassword);
     let (handle, workspace) = open_workspace_with_store(cx, store);
-    let signals = report(cx, handle, &workspace);
+    let signals = reporting(cx, handle, &workspace);
 
     in_frame(cx, handle, |window, cx| {
         window.dispatch_action(Box::new(NewLocalTerminal), cx)
@@ -122,7 +142,7 @@ async fn a_serial_terminal_is_counted_alone(cx: &mut TestAppContext) {
         None,
     ));
     let (handle, workspace) = open_workspace_with_store(cx, store);
-    let signals = report(cx, handle, &workspace);
+    let signals = reporting(cx, handle, &workspace);
     in_frame(cx, handle, |window, cx| {
         window.dispatch_action(Box::new(ConnectHost(host)), cx)
     });
@@ -140,7 +160,7 @@ async fn a_telnet_terminal_is_counted_alone(cx: &mut TestAppContext) {
     let mut store = HostStore::empty();
     let host = store.insert_unnotified(HostDraft::telnet("switch", "10.0.0.5", 23, None));
     let (handle, workspace) = open_workspace_with_store(cx, store);
-    let signals = report(cx, handle, &workspace);
+    let signals = reporting(cx, handle, &workspace);
     in_frame(cx, handle, |window, cx| {
         window.dispatch_action(Box::new(ConnectHost(host)), cx)
     });
@@ -156,7 +176,7 @@ async fn a_telnet_terminal_is_counted_alone(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn switches_turned_in_the_settings_are_counted(cx: &mut TestAppContext) {
     let (handle, workspace) = open_workspace(cx);
-    let signals = report(cx, handle, &workspace);
+    let signals = reporting(cx, handle, &workspace);
     let set_highlight = |cx: &mut TestAppContext, on: bool| {
         workspace.update(cx, |workspace, cx| {
             workspace.settings().update(cx, |settings, cx| {
@@ -174,7 +194,7 @@ fn switches_turned_in_the_settings_are_counted(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn turned_off_in_the_settings_nothing_is_reported(cx: &mut TestAppContext) {
+fn the_settings_switch_decides_whether_anything_is_reported(cx: &mut TestAppContext) {
     let (handle, workspace) = open_workspace(cx);
     let signals = report(cx, handle, &workspace);
     let enabled = |cx: &mut TestAppContext| {
@@ -182,20 +202,33 @@ fn turned_off_in_the_settings_nothing_is_reported(cx: &mut TestAppContext) {
             workspace.settings().read(cx).settings().analytics.enabled
         })
     };
-    assert!(enabled(cx));
+    assert!(!enabled(cx), "off until the user turns it on");
 
     // 设置 › 关于 › 隐私 › 发送匿名使用统计.
     in_frame(cx, handle, |window, cx| window.click("open-settings", cx));
     in_frame(cx, handle, |window, cx| {
         window.within("settings").click("0-8", cx)
     });
+    assert!(counted(&signals.try_iter().collect::<Vec<_>>()).is_empty());
+
     in_frame(cx, handle, |window, cx| {
         let switch = window
             .within("settings")
             .within("group-1")
             .within("item-0")
             .find("check");
-        assert_eq!(switch.checked(), Some(true));
+        assert_eq!(switch.checked(), Some(false));
+        window
+            .within("settings")
+            .within("group-1")
+            .within("item-0")
+            .click("check", cx);
+    });
+    assert!(enabled(cx));
+    let received: Vec<Signal> = signals.try_iter().collect();
+    assert!(received.contains(&Signal::Enabled(true)), "{received:?}");
+
+    in_frame(cx, handle, |window, cx| {
         window
             .within("settings")
             .within("group-1")

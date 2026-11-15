@@ -545,15 +545,24 @@ impl Default for UpdateSettings {
 
 /// 关于 → 隐私.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
 pub struct AnalyticsSettings {
-    /// 发送匿名使用统计. On unless the user turns it off.
+    /// 发送匿名使用统计. Off unless the user turns it on.
+    #[serde(default)]
     pub enabled: bool,
+    /// Whether this file has been through the build that made reporting
+    /// opt-in. Without it the file predates that build, so its `enabled`
+    /// is the old default rather than a choice; `normalized` clears it
+    /// once and sets this.
+    #[serde(default)]
+    pub opt_in: bool,
 }
 
 impl Default for AnalyticsSettings {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: false,
+            opt_in: true,
+        }
     }
 }
 
@@ -667,6 +676,13 @@ impl AppSettings {
             .shell
             .map(|shell| shell.trim().to_string())
             .filter(|shell| !shell.is_empty());
+        // Reporting became opt-in: a `true` left by the old default is not a
+        // choice, so it is cleared once. After this the switch is the
+        // user's alone.
+        if !self.analytics.opt_in {
+            self.analytics.enabled = false;
+            self.analytics.opt_in = true;
+        }
         self.assistant.normalize();
         self
     }
@@ -875,6 +891,24 @@ mod tests {
         assert_eq!(background.opacity, DEFAULT_BACKGROUND_OPACITY);
         background.image = Some("night.png".into());
         assert_eq!(background.shown(), None, "off, it shows nothing");
+    }
+
+    #[test]
+    fn reporting_is_off_until_the_user_turns_it_on() {
+        assert!(!AppSettings::default().analytics.enabled);
+
+        // A file from a build that had reporting on by default: the `true`
+        // is that default, not a choice, so it is cleared once.
+        let settings: AppSettings =
+            serde_json::from_str(r#"{"analytics":{"enabled":true}}"#).unwrap();
+        let settings = settings.normalized();
+        assert!(!settings.analytics.enabled);
+        assert!(settings.analytics.opt_in);
+
+        // After the change the switch holds a choice.
+        let settings: AppSettings =
+            serde_json::from_str(r#"{"analytics":{"enabled":true,"opt_in":true}}"#).unwrap();
+        assert!(settings.normalized().analytics.enabled);
     }
 
     #[test]
@@ -1284,14 +1318,20 @@ mod tests {
     }
 
     #[test]
-    fn usage_statistics_are_sent_unless_the_file_says_otherwise() {
+    fn usage_statistics_are_off_until_the_user_turns_them_on() {
         let settings: AppSettings = serde_json::from_str("{}").unwrap();
-        assert!(settings.analytics.enabled);
-        let settings: AppSettings = serde_json::from_str(r#"{"analytics":{}}"#).unwrap();
-        assert!(settings.analytics.enabled);
-        let settings: AppSettings =
-            serde_json::from_str(r#"{"analytics":{"enabled":false}}"#).unwrap();
         assert!(!settings.analytics.enabled);
+        let settings: AppSettings = serde_json::from_str(r#"{"analytics":{}}"#).unwrap();
+        assert!(!settings.analytics.enabled);
+        // A `true` left by the old default carries no opt-in mark, so it is
+        // cleared rather than mistaken for a choice.
+        let settings: AppSettings =
+            serde_json::from_str(r#"{"analytics":{"enabled":true}}"#).unwrap();
+        assert!(!settings.normalized().analytics.enabled);
+        // A choice made after the switch is kept.
+        let settings: AppSettings =
+            serde_json::from_str(r#"{"analytics":{"enabled":true,"opt_in":true}}"#).unwrap();
+        assert!(settings.normalized().analytics.enabled);
     }
 
     #[test]
