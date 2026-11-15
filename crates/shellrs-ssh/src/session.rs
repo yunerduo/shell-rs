@@ -114,6 +114,76 @@ pub async fn run_exec(
     .unwrap_or_else(|_| Err(anyhow!(ChannelError::ExecTimeout)))
 }
 
+/// What one command printed when it was run with its streams kept apart:
+/// both of them, up to a shared limit, its exit code when the server sent
+/// one, and whether it was cut short.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ExecDetail {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub exit_code: Option<u32>,
+    /// `limit` was reached: what came after was dropped.
+    pub truncated: bool,
+    /// `timeout` ran out before the command ended; what it printed before
+    /// that is still here.
+    pub timed_out: bool,
+}
+
+/// Run `command` on a channel of its own and give back both streams and the
+/// exit code, keeping at most `limit` bytes across the two. A command that
+/// outlives `timeout` keeps what it printed until then, marked
+/// [`ExecDetail::timed_out`].
+pub async fn run_exec_detail(
+    handle: &SshHandle,
+    command: &str,
+    limit: usize,
+    timeout: Duration,
+) -> Result<ExecDetail> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut channel = tokio::time::timeout_at(deadline, handle.channel_open_session())
+        .await
+        .map_err(|_| anyhow!(ChannelError::ExecTimeout))?
+        .map_err(|_| anyhow!(ChannelError::ExecChannelFailed))?;
+    tokio::time::timeout_at(deadline, channel.exec(true, command))
+        .await
+        .map_err(|_| anyhow!(ChannelError::ExecTimeout))?
+        .map_err(|_| anyhow!(ChannelError::ExecSendFailed))?;
+
+    let mut detail = ExecDetail::default();
+    let mut room = limit;
+    loop {
+        match tokio::time::timeout_at(deadline, channel.wait()).await {
+            Err(_) => {
+                detail.timed_out = true;
+                break;
+            }
+            Ok(Some(ChannelMsg::Data { data })) => {
+                push_capped(&mut detail.stdout, &data, &mut room, &mut detail.truncated)
+            }
+            Ok(Some(ChannelMsg::ExtendedData { data, .. })) => {
+                push_capped(&mut detail.stderr, &data, &mut room, &mut detail.truncated)
+            }
+            Ok(Some(ChannelMsg::ExitStatus { exit_status })) => {
+                detail.exit_code = Some(exit_status)
+            }
+            Ok(Some(ChannelMsg::Failure)) => return Err(anyhow!(ChannelError::ExecRefused)),
+            Ok(Some(ChannelMsg::Eof | ChannelMsg::Close)) | Ok(None) => break,
+            Ok(Some(_)) => {}
+        }
+    }
+    Ok(detail)
+}
+
+/// Keep what `room` allows of one chunk and say when it was cut.
+fn push_capped(target: &mut Vec<u8>, data: &[u8], room: &mut usize, truncated: &mut bool) {
+    let kept = data.len().min(*room);
+    target.extend_from_slice(&data[..kept]);
+    *room -= kept;
+    if kept < data.len() {
+        *truncated = true;
+    }
+}
+
 /// Open an SFTP channel. Gives up after `timeout`.
 pub async fn open_sftp_channel(
     handle: &SshHandle,
@@ -159,4 +229,39 @@ pub async fn open_probe(
     // acknowledgement would cost another round trip for nothing.
     channel.exec(false, command).await.ok()?;
     Some(channel)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::push_capped;
+
+    #[test]
+    fn chunks_share_one_budget_and_the_cut_is_marked() {
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let mut room = 6;
+        let mut truncated = false;
+        push_capped(&mut stdout, b"abcd", &mut room, &mut truncated);
+        assert_eq!(stdout, b"abcd");
+        assert!(!truncated);
+        push_capped(&mut stderr, b"efgh", &mut room, &mut truncated);
+        assert_eq!(stderr, b"ef");
+        assert!(truncated, "the chunk was cut");
+        assert_eq!(room, 0);
+        push_capped(&mut stdout, b"i", &mut room, &mut truncated);
+        assert_eq!(stdout, b"abcd", "nothing is kept once the budget is spent");
+        assert!(truncated);
+    }
+
+    #[test]
+    fn output_under_the_budget_is_kept_whole() {
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let mut room = 1024;
+        let mut truncated = false;
+        push_capped(&mut stdout, b"hello\n", &mut room, &mut truncated);
+        push_capped(&mut stderr, b"warn\n", &mut room, &mut truncated);
+        assert_eq!(stdout, b"hello\n");
+        assert_eq!(stderr, b"warn\n");
+        assert!(!truncated);
+        assert_eq!(room, 1024 - 11);
+    }
 }

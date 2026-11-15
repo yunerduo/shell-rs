@@ -279,6 +279,17 @@ impl TerminalTransport for FakeTerminalTransport {
                         let _ = request.reply.send(Ok(output));
                     }
                 }
+                TerminalTransportCommand::ExecDetail(request) => {
+                    self.exec_commands
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .push(request.command.clone());
+                    // The fake runs nothing: an empty result is enough for
+                    // the panel to see its card settle.
+                    let _ = request
+                        .reply
+                        .send(Ok(shellrs::terminal::ExecDetail::default()));
+                }
                 TerminalTransportCommand::OpenSftp(request) => {
                     self.sftp_opens
                         .lock()

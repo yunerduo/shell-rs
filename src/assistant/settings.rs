@@ -135,7 +135,17 @@ pub struct AssistantSettings {
     pub anthropic: AssistantProvider,
     /// How long one answer may take, streaming included.
     pub timeout_seconds: u64,
+    /// Commands refused whatever the level. Entries may use `*` in an
+    /// argument position.
+    pub user_blacklist: Vec<String>,
+    /// Read-only commands allowed without a card. Only plain, single
+    /// commands: no metacharacter, no wildcard.
+    pub user_whitelist: Vec<String>,
 }
+
+/// The most entries each list keeps. Enough for a person, not a policy
+/// file: the panel shows them all.
+const LIST_LIMIT: usize = 50;
 
 impl Default for AssistantSettings {
     fn default() -> Self {
@@ -144,6 +154,8 @@ impl Default for AssistantSettings {
             openai: AssistantProvider::for_protocol(ProviderProtocol::OpenAi),
             anthropic: AssistantProvider::for_protocol(ProviderProtocol::Anthropic),
             timeout_seconds: 120,
+            user_blacklist: Vec::new(),
+            user_whitelist: Vec::new(),
         }
     }
 }
@@ -177,12 +189,40 @@ impl AssistantSettings {
     }
 
     /// Every number in range, every blank field back to its default, so a
-    /// hand-edited file cannot hand a request an empty address.
+    /// hand-edited file cannot hand a request an empty address. The lists
+    /// lose entries the policy would not accept, and duplicates.
     pub fn normalize(&mut self) {
         self.openai.normalize(ProviderProtocol::OpenAi);
         self.anthropic.normalize(ProviderProtocol::Anthropic);
         self.timeout_seconds = self.timeout_seconds.clamp(10, 600);
+        self.user_blacklist = clean_list(
+            &self.user_blacklist,
+            crate::assistant::policy::clean_blacklist_entry,
+        );
+        self.user_whitelist = clean_list(
+            &self.user_whitelist,
+            crate::assistant::policy::clean_whitelist_entry,
+        );
     }
+}
+
+/// Keep the entries `clean` accepts, in order, without repeats, up to the
+/// list's limit.
+fn clean_list(entries: &[String], clean: fn(&str) -> Option<String>) -> Vec<String> {
+    let mut kept: Vec<String> = Vec::new();
+    for entry in entries {
+        let Some(entry) = clean(entry) else {
+            continue;
+        };
+        if kept.contains(&entry) {
+            continue;
+        }
+        kept.push(entry);
+        if kept.len() == LIST_LIMIT {
+            break;
+        }
+    }
+    kept
 }
 
 #[cfg(test)]
@@ -220,6 +260,12 @@ mod tests {
                 max_tokens: 99_999,
             },
             timeout_seconds: 1,
+            user_blacklist: vec![
+                "  systemctl   stop * ".into(),
+                "".into(),
+                "systemctl stop *".into(),
+            ],
+            user_whitelist: vec![" df -h ".into(), "rm -rf /".into(), "df -h".into()],
         };
         settings.normalize();
         assert_eq!(settings.openai.base_url, "https://example.test/v1");
@@ -231,6 +277,8 @@ mod tests {
         assert_eq!(settings.anthropic.keychain_id, "assistant-anthropic");
         assert_eq!(settings.anthropic.max_tokens, 8192);
         assert_eq!(settings.timeout_seconds, 10);
+        assert_eq!(settings.user_blacklist, vec!["systemctl stop *"]);
+        assert_eq!(settings.user_whitelist, vec!["df -h"]);
     }
 
     #[test]

@@ -544,6 +544,19 @@ impl TerminalView {
         self.engine.read(cx).exec(command)
     }
 
+    /// Run `command` beside the shell and keep both streams, the exit code
+    /// and how it ended; see [`super::ExecDetailRequest`]. `None` while the
+    /// shell is not running.
+    pub fn exec_detail(
+        &self,
+        command: String,
+        timeout: std::time::Duration,
+        limit: usize,
+        cx: &App,
+    ) -> Option<std::sync::mpsc::Receiver<super::ExecDetailResult>> {
+        self.engine.read(cx).exec_detail(command, timeout, limit)
+    }
+
     /// Take up an `exec --terminal` run; see [`TerminalEngine::run_command`].
     pub fn run_command(&self, run: super::RunHandle, cx: &App) -> Result<(), super::RunFailure> {
         self.engine.read(cx).run_command(run)

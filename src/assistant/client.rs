@@ -10,8 +10,10 @@ use std::time::Duration;
 
 use crate::secrets::KeychainSecretStore;
 
-use super::chat::ChatMessage;
-use super::protocol::{self, ChatError, ParsedEvent, SseChunk, SseDecoder};
+use super::chat::{ChatMessage, ToolCall};
+use super::protocol::{
+    self, ChatError, ParsedEvent, SseChunk, SseDecoder, ToolCallDelta, ToolTerminal,
+};
 use super::settings::{ProviderProtocol, account};
 
 /// Everything one answer needs. The key is not here: only the name of the
@@ -25,13 +27,17 @@ pub struct StreamRequest {
     pub messages: Vec<ChatMessage>,
     pub max_tokens: u32,
     pub timeout: Duration,
+    /// The terminals the tool prompt may name.
+    pub terminals: Vec<ToolTerminal>,
 }
 
 /// What the worker reports. `Delta` is a fragment of the answer as it
-/// arrives; nothing else is forwarded.
+/// arrives; `ToolCalls` is what the turn asked to run, sent once when the
+/// turn ends.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StreamEvent {
     Delta(String),
+    ToolCalls(Vec<ToolCall>),
     Done,
     Failed(ChatError),
 }
@@ -110,6 +116,7 @@ fn run_with_key(
         key,
         &request.messages,
         request.max_tokens,
+        &request.terminals,
     );
 
     let client = reqwest::blocking::Client::builder()
@@ -137,6 +144,26 @@ fn run_with_key(
 
     let mut response = response;
     let mut decoder = SseDecoder::default();
+    let mut calls = ToolAccumulator::default();
+    let outcome = stream_into(request, &mut response, tx, cancel, &mut decoder, &mut calls);
+    // The turn may end either way; a half-merged call without an id is
+    // dropped rather than run.
+    if outcome.is_ok() && !calls.is_empty() {
+        let _ = tx.send(StreamEvent::ToolCalls(calls.finish()));
+    }
+    outcome
+}
+
+/// Read the streamed body and forward text as it comes, keeping the tool
+/// call fragments whole until the turn ends.
+fn stream_into(
+    request: &StreamRequest,
+    response: &mut reqwest::blocking::Response,
+    tx: &mpsc::Sender<StreamEvent>,
+    cancel: &AtomicBool,
+    decoder: &mut SseDecoder,
+    calls: &mut ToolAccumulator,
+) -> Result<(), ChatError> {
     let mut chunk = [0u8; 8192];
     loop {
         if cancel.load(Ordering::Relaxed) {
@@ -156,11 +183,61 @@ fn run_with_key(
                             return Err(ChatError::Cancelled);
                         }
                     }
+                    ParsedEvent::ToolCalls(deltas) => {
+                        for delta in deltas {
+                            calls.merge(delta);
+                        }
+                    }
                     ParsedEvent::Done => return Ok(()),
                     ParsedEvent::Text(_) | ParsedEvent::Ignore => {}
                 },
             }
         }
+    }
+}
+
+/// The tool calls of one turn, put back together from the chunks that
+/// carried them.
+#[derive(Default)]
+struct ToolAccumulator {
+    ids: Vec<Option<String>>,
+    names: Vec<Option<String>>,
+    arguments: Vec<String>,
+}
+
+impl ToolAccumulator {
+    fn merge(&mut self, delta: ToolCallDelta) {
+        while self.ids.len() <= delta.index {
+            self.ids.push(None);
+            self.names.push(None);
+            self.arguments.push(String::new());
+        }
+        if let Some(id) = delta.id {
+            self.ids[delta.index] = Some(id);
+        }
+        if let Some(name) = delta.name {
+            self.names[delta.index] = Some(name);
+        }
+        self.arguments[delta.index].push_str(&delta.arguments);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.ids.is_empty()
+    }
+
+    fn finish(self) -> Vec<ToolCall> {
+        self.ids
+            .into_iter()
+            .zip(self.names)
+            .zip(self.arguments)
+            .filter_map(|((id, name), arguments)| {
+                Some(ToolCall {
+                    id: id?,
+                    name: name?,
+                    arguments,
+                })
+            })
+            .collect()
     }
 }
 
@@ -192,6 +269,50 @@ mod tests {
         assert_eq!(account("assistant-openai"), "assistant:assistant-openai");
     }
 
+    #[test]
+    fn tool_call_chunks_merge_by_index_and_keep_the_order() {
+        let mut calls = ToolAccumulator::default();
+        calls.merge(ToolCallDelta {
+            index: 1,
+            id: Some("call-b".into()),
+            name: Some("run_command".into()),
+            arguments: String::new(),
+        });
+        calls.merge(ToolCallDelta {
+            index: 0,
+            id: Some("call-a".into()),
+            name: Some("run_command".into()),
+            arguments: r#"{"terminal":"#.into(),
+        });
+        calls.merge(ToolCallDelta {
+            index: 0,
+            id: None,
+            name: None,
+            arguments: r#""web","command":"df -h"}"#.into(),
+        });
+        let calls = calls.finish();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].id, "call-a");
+        assert_eq!(
+            calls[0].arguments,
+            r#"{"terminal":"web","command":"df -h"}"#
+        );
+        assert_eq!(calls[1].id, "call-b");
+        assert_eq!(calls[1].arguments, "");
+    }
+
+    #[test]
+    fn a_fragment_without_a_name_is_dropped() {
+        let mut calls = ToolAccumulator::default();
+        calls.merge(ToolCallDelta {
+            index: 0,
+            id: Some("call-a".into()),
+            name: None,
+            arguments: "{}".into(),
+        });
+        assert!(calls.finish().is_empty());
+    }
+
     /// The one check that talks to a real service. It is ignored by default
     /// and takes the key from the environment, so no file holds one:
     ///
@@ -217,6 +338,7 @@ mod tests {
             messages: vec![ChatMessage::user("Reply with the single word: pong")],
             max_tokens: 64,
             timeout: Duration::from_secs(60),
+            terminals: Vec::new(),
         };
         let (tx, rx) = mpsc::channel();
         let cancel = AtomicBool::new(false);

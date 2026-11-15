@@ -874,10 +874,14 @@ impl Workspace {
                     let Some(panel) = self.terminals.get(&id) else {
                         continue;
                     };
-                    terminals.push(AssistantTerminal::new(
-                        format!("remote:{}", id.0),
-                        panel.read(cx).host().name.clone(),
-                    ));
+                    let panel = panel.read(cx);
+                    terminals.push(
+                        AssistantTerminal::new(
+                            format!("remote:{}", id.0),
+                            panel.host().name.clone(),
+                        )
+                        .with_view(panel.terminal(), panel.shell_only()),
+                    );
                 }
                 CenterTab::LocalTerminal(id) if self.local_terminals.contains_key(&id) => {
                     terminals.push(AssistantTerminal::new(

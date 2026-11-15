@@ -2,16 +2,17 @@ use super::describe::{describe_channel_error, describe_error, describe_login_err
 use super::{
     ChannelError, ConnectError, HostOsProbe, LATENCY_INTERVAL, ProbeOutcome, PtySize,
     SshConnectionConfig, SshConnector, SshHandle, SshPrompts, open_probe, open_sftp_channel,
-    open_shell, resize_pty, round_trip, run_exec, run_terminal_worker, write_shell,
+    open_shell, resize_pty, round_trip, run_exec, run_exec_detail, run_terminal_worker,
+    write_shell,
 };
 use crate::{
     connection::Latency,
     host::{HostLogin, HostOs},
     i18n::t,
     terminal::{
-        ExecRequest, RemoteTerminalTransportProvider, SftpChannel, SftpChannelRequest,
-        SharedTerminalTransportFactory, TerminalSize, TerminalTransport, TerminalTransportCommand,
-        TerminalTransportEvent, TerminalTransportFactory,
+        ExecDetailRequest, ExecRequest, RemoteTerminalTransportProvider, SftpChannel,
+        SftpChannelRequest, SharedTerminalTransportFactory, TerminalSize, TerminalTransport,
+        TerminalTransportCommand, TerminalTransportEvent, TerminalTransportFactory,
     },
 };
 use anyhow::{Result, anyhow, bail};
@@ -33,6 +34,10 @@ const EXEC_TIMEOUT: Duration = Duration::from_secs(10);
 /// The most output kept from a command run beside the shell; the rest is
 /// dropped.
 const EXEC_OUTPUT_LIMIT: usize = 1 << 20;
+/// At most how long a detailed run may wait, and at most how much it keeps:
+/// a tool card is waiting on it and its text goes to the model afterwards.
+const EXEC_DETAIL_TIMEOUT_MAX: Duration = Duration::from_secs(120);
+const EXEC_DETAIL_LIMIT_MAX: usize = 1 << 20;
 
 /// Production remote-terminal adapter for the shared SSH connector.
 pub struct SshTerminalTransportProvider {
@@ -176,6 +181,12 @@ impl SshTerminalTransport {
                     Some(TerminalTransportCommand::Exec(request)) => {
                         side_queue.push_back(Box::pin(answer_exec(&handle, request)));
                     }
+                    Some(TerminalTransportCommand::ExecDetail(request)) if shell_only => {
+                        let _ = request.reply.send(Err(describe_channel_error(&ChannelError::ShellOnly)));
+                    }
+                    Some(TerminalTransportCommand::ExecDetail(request)) => {
+                        side_queue.push_back(Box::pin(answer_exec_detail(&handle, request)));
+                    }
                     Some(TerminalTransportCommand::OpenSftp(request)) if shell_only => {
                         let _ = request.reply.send(Err(describe_channel_error(&ChannelError::ShellOnlySftp)));
                     }
@@ -274,6 +285,24 @@ async fn answer_exec(handle: &SshHandle, request: ExecRequest) {
     let result = run_exec(handle, &command, EXEC_OUTPUT_LIMIT, EXEC_TIMEOUT)
         .await
         .map(|output| String::from_utf8_lossy(&output).into_owned())
+        .map_err(|error| describe_error(&error));
+    // The asker may have stopped waiting.
+    let _ = reply.send(result);
+}
+
+/// Run one command beside the shell with its streams kept apart and answer
+/// its request: what it printed, how it ended, or why it did not run.
+async fn answer_exec_detail(handle: &SshHandle, request: ExecDetailRequest) {
+    let ExecDetailRequest {
+        command,
+        timeout,
+        limit,
+        reply,
+    } = request;
+    let timeout = timeout.clamp(Duration::from_millis(1), EXEC_DETAIL_TIMEOUT_MAX);
+    let limit = limit.clamp(1, EXEC_DETAIL_LIMIT_MAX);
+    let result = run_exec_detail(handle, &command, limit, timeout)
+        .await
         .map_err(|error| describe_error(&error));
     // The asker may have stopped waiting.
     let _ = reply.send(result);

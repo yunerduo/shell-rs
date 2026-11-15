@@ -36,6 +36,84 @@ assistant.role.user:
 assistant.role.assistant:
   zh-CN: 助手
   en: Assistant
+assistant.role.tool:
+  zh-CN: 执行结果
+  en: Result
+assistant.tool.calling:
+  zh-CN: "调用 %{alias}: %{command}"
+  en: "Calls %{alias}: %{command}"
+assistant.tool.calling_raw:
+  zh-CN: "调用 %{tool}: %{arguments}"
+  en: "Calls %{tool}: %{arguments}"
+assistant.tool.round_limit:
+  zh-CN: 已连续调用 %{rounds} 轮，停止本次对话
+  en: "Stopped after %{rounds} turns of calls"
+assistant.tool.audit_failed:
+  zh-CN: 审计记录写入失败，已批准的命令仍会执行
+  en: The audit trail could not be written; the approved command still runs
+assistant.tool.transport_closed:
+  zh-CN: 终端连接已断开
+  en: The terminal connection closed
+assistant.tool.binary_output:
+  zh-CN: 二进制输出，已省略
+  en: Binary output, omitted
+assistant.tool.exit:
+  zh-CN: 退出码 %{code}
+  en: "Exit code %{code}"
+assistant.tool.denied:
+  zh-CN: 已拒绝
+  en: Refused
+assistant.tool.unsupported:
+  zh-CN: 该终端无法执行
+  en: This terminal cannot run commands
+assistant.tool.failed:
+  zh-CN: 执行出错
+  en: The call failed
+assistant.tool.result:
+  zh-CN: 结果
+  en: Result
+assistant.tool.no_output:
+  zh-CN: 没有输出
+  en: No output
+assistant.tool.timed_out:
+  zh-CN: 超时
+  en: Timed out
+assistant.tool.confirm_title:
+  zh-CN: 需要你确认
+  en: Needs your approval
+assistant.tool.allow:
+  zh-CN: 允许
+  en: Allow
+assistant.tool.deny:
+  zh-CN: 拒绝
+  en: Refuse
+assistant.tool.alias:
+  zh-CN: 终端
+  en: Terminal
+assistant.tool.reason.unknown_tool:
+  zh-CN: 不认识这个工具
+  en: Unknown tool
+assistant.tool.reason.bad_arguments:
+  zh-CN: 工具参数无法解析
+  en: The tool arguments could not be read
+assistant.tool.reason.unknown_terminal:
+  zh-CN: 模型指定的终端不在绑定里
+  en: The named terminal is not bound
+assistant.tool.reason.terminal_closed:
+  zh-CN: 终端已经关闭
+  en: The terminal has closed
+assistant.tool.reason.command_changed:
+  zh-CN: 命令与确认时显示的不一致，已丢弃
+  en: The command differs from the one shown; it was dropped
+assistant.tool.reason.shell_only:
+  zh-CN: 该连接只提供 shell，无法旁路执行
+  en: This connection carries only a shell; a command cannot run beside it
+assistant.tool.reason.closed:
+  zh-CN: 终端已经关闭
+  en: The terminal has closed
+assistant.tool.reason.not_running:
+  zh-CN: 终端未在运行
+  en: The terminal is not running
 assistant.action.copy:
   zh-CN: 复制 Markdown
   en: Copy Markdown
@@ -84,6 +162,36 @@ assistant.settings.key_kept:
 assistant.settings.key_failed:
   zh-CN: 保存 Key 失败：%{error}
   en: "The key could not be saved: %{error}"
+assistant.settings.blacklist.title:
+  zh-CN: 命令黑名单
+  en: Command blacklist
+assistant.settings.blacklist.hint:
+  zh-CN: 命中的命令一律拒绝；参数位置可以用 * 通配。
+  en: A matching command is always refused; an argument may use * as a wildcard.
+assistant.settings.blacklist.placeholder:
+  zh-CN: 例如 systemctl stop *
+  en: "For example systemctl stop *"
+assistant.settings.whitelist.title:
+  zh-CN: 只读白名单
+  en: Read-only whitelist
+assistant.settings.whitelist.hint:
+  zh-CN: 只对单条只读命令生效，命中时不再弹确认。
+  en: Applies to one plain read-only command, which then needs no card.
+assistant.settings.whitelist.placeholder:
+  zh-CN: 例如 df -h
+  en: "For example df -h"
+assistant.settings.list.add:
+  zh-CN: 添加
+  en: Add
+assistant.settings.list.remove:
+  zh-CN: 删除
+  en: Remove
+assistant.settings.list.invalid:
+  zh-CN: 这一条无法加入：只允许单条命令，不能带重定向或替换
+  en: This entry cannot be added; it must be one plain command, with no redirect or substitution
+assistant.settings.list.empty:
+  zh-CN: 还没有条目
+  en: No entries yet
 assistant.error.no_terminal:
   zh-CN: 先在顶部绑定一个终端
   en: Bind a terminal at the top first
@@ -123,3 +231,73 @@ assistant.error.protocol:
 assistant.error.empty:
   zh-CN: 模型没有返回内容
   en: The model returned nothing
+assistant.rule.empty:
+  zh-CN: 空命令
+  en: Empty command
+assistant.rule.multiline:
+  zh-CN: 多行脚本，不逐行执行
+  en: A multi-line script is not run line by line
+assistant.rule.user_blacklist:
+  zh-CN: 命中你的黑名单：%{entry}
+  en: "Matched your blacklist: %{entry}"
+assistant.rule.builtin_blacklist:
+  zh-CN: 命中内置黑名单：%{entry}
+  en: "Matched the built-in blacklist: %{entry}"
+assistant.rule.interactive:
+  zh-CN: 交互式命令，无终端时无法控制
+  en: An interactive command cannot be driven without a terminal
+assistant.rule.destructive:
+  zh-CN: 可能破坏数据或设备
+  en: May destroy data or a device
+assistant.rule.remote_code:
+  zh-CN: 下载后直接执行远端代码
+  en: Runs code downloaded from elsewhere
+assistant.rule.privilege:
+  zh-CN: 提权执行
+  en: Runs with elevated privilege
+assistant.rule.recursive_delete:
+  zh-CN: 递归删除绝对路径或通配范围
+  en: A recursive delete over a path or wildcard range
+assistant.rule.package_change:
+  zh-CN: 安装、升级或卸载软件包
+  en: Installs, upgrades or removes packages
+assistant.rule.network_change:
+  zh-CN: 修改网络或防火墙配置
+  en: Changes the network or the firewall
+assistant.rule.resource_delete:
+  zh-CN: 删除服务或集群资源
+  en: Removes a service or a cluster resource
+assistant.rule.power:
+  zh-CN: 关机或重启
+  en: Shuts down or restarts
+assistant.rule.pipe:
+  zh-CN: 多段命令，需确认
+  en: A compound command needs confirmation
+assistant.rule.redirect:
+  zh-CN: 写文件或设备，需确认
+  en: Writes a file or a device; confirmation needed
+assistant.rule.substitution:
+  zh-CN: 含命令替换或解释执行，无法可靠解析
+  en: Command substitution or interpreted code cannot be parsed reliably
+assistant.rule.unreliable:
+  zh-CN: 引号或编码让分词不可靠
+  en: Quoting or encoding makes the words unreliable
+assistant.rule.write:
+  zh-CN: 局部写操作
+  en: A local write
+assistant.rule.service_change:
+  zh-CN: 启停服务或进程
+  en: Starts or stops a service or a process
+assistant.rule.sensitive_path:
+  zh-CN: 涉及敏感路径或凭据：%{path}
+  en: "Touches a sensitive path or credential: %{path}"
+assistant.rule.unknown:
+  zh-CN: 无法归类，按需确认
+  en: Not recognised; ask first
+assistant.rule.read_only:
+  zh-CN: 只读命令
+  en: A read-only command
+assistant.rule.whitelist:
+  zh-CN: 命中白名单，只读且单条
+  en: "Whitelisted: one read-only command"
+

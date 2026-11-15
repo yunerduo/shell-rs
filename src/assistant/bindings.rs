@@ -2,15 +2,38 @@
 //! them. The alias is the only handle the model sees: terminal ids are the
 //! host's business.
 
+use gpui_kit::gpui::{Entity, WeakEntity};
+
+use crate::terminal::TerminalView;
+
 /// One terminal the sidebar can offer. `alias` is filled in when it is
 /// bound; before that it is empty.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct AssistantTerminal {
     pub id: String,
     /// The tab's title, for people; not the alias.
     pub title: String,
     pub alias: String,
+    /// The view a tool call runs on. A local terminal has none: a command
+    /// cannot be run beside a shell of this computer, so the panel answers
+    /// `unsupported` instead.
+    pub view: Option<WeakEntity<TerminalView>>,
+    /// The connection carries only the shell: a command cannot go beside it.
+    pub shell_only: bool,
 }
+
+/// The identity of a terminal is its id and the two names; the view is a
+/// handle to the same terminal, not a part of what it is.
+impl PartialEq for AssistantTerminal {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.title == other.title
+            && self.alias == other.alias
+            && self.shell_only == other.shell_only
+    }
+}
+
+impl Eq for AssistantTerminal {}
 
 impl AssistantTerminal {
     pub fn new(id: impl Into<String>, title: impl Into<String>) -> Self {
@@ -18,7 +41,24 @@ impl AssistantTerminal {
             id: id.into(),
             title: title.into(),
             alias: String::new(),
+            view: None,
+            shell_only: false,
         }
+    }
+
+    /// Offer the terminal with the view its commands run on.
+    pub fn with_view(mut self, view: &Entity<TerminalView>, shell_only: bool) -> Self {
+        self.view = Some(view.downgrade());
+        self.shell_only = shell_only;
+        self
+    }
+
+    /// Why a command cannot run here, if it cannot.
+    pub fn unsupported(&self) -> Option<&'static str> {
+        if self.shell_only || self.view.is_none() {
+            return Some("shell_only");
+        }
+        None
     }
 }
 
@@ -241,5 +281,18 @@ mod tests {
         assert!(bindings.is_bound("remote:1"));
         bindings.toggle(&web);
         assert!(!bindings.is_bound("remote:1"));
+    }
+
+    #[test]
+    fn a_terminal_without_a_view_says_it_cannot_run() {
+        assert_eq!(
+            terminal("local:1", "local").unsupported(),
+            Some("shell_only")
+        );
+        assert_eq!(
+            AssistantTerminal::new("remote:1", "web").unsupported(),
+            Some("shell_only"),
+            "no view means no channel to run on"
+        );
     }
 }

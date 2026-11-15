@@ -36,9 +36,9 @@ use super::run::{BusyReason, RunFailure, RunHandle};
 use super::search::{MatchMarker, SearchDirection, SearchMark, SearchPosition, TerminalSearch};
 use super::zmodem::{Fed, Shown, Zmodem, ZmodemControl, ZmodemDirection, ZmodemReply};
 use super::{
-    ExecRequest, ExecResult, SharedTerminalTransportFactory, TerminalChannels, TerminalColors,
-    TerminalInteraction, TerminalLifecycle, TerminalSize, TerminalStatus, TerminalTheme,
-    TerminalTransportCommand, TerminalTransportEvent,
+    ExecDetailRequest, ExecDetailResult, ExecRequest, ExecResult, SharedTerminalTransportFactory,
+    TerminalChannels, TerminalColors, TerminalInteraction, TerminalLifecycle, TerminalSize,
+    TerminalStatus, TerminalTheme, TerminalTransportCommand, TerminalTransportEvent,
 };
 
 pub type AlacrittyTerm = Term<TerminalEventProxy>;
@@ -640,6 +640,21 @@ impl TerminalEngine {
         self.runtime.exec(command)
     }
 
+    /// Run `command` beside the shell and keep both streams, the exit code
+    /// and how it ended; see [`ExecDetailRequest`]. `None` while the shell
+    /// is not running, and so there is no connection to run it on.
+    pub fn exec_detail(
+        &self,
+        command: String,
+        timeout: std::time::Duration,
+        limit: usize,
+    ) -> Option<mpsc::Receiver<ExecDetailResult>> {
+        if !matches!(self.lifecycle, TerminalLifecycle::Running) {
+            return None;
+        }
+        self.runtime.exec_detail(command, timeout, limit)
+    }
+
     /// Take up an `exec --terminal` run (see [`super::TerminalRun`]): ^C to
     /// whatever has the terminal, the rest as the output comes. Refused
     /// while a full-screen program has the screen, which ^C does not end
@@ -1100,6 +1115,24 @@ impl TerminalRuntime {
         self.commands
             .send(TerminalTransportCommand::Exec(ExecRequest {
                 command,
+                reply,
+            }))
+            .ok()?;
+        Some(receiver)
+    }
+
+    fn exec_detail(
+        &self,
+        command: String,
+        timeout: std::time::Duration,
+        limit: usize,
+    ) -> Option<mpsc::Receiver<ExecDetailResult>> {
+        let (reply, receiver) = mpsc::channel();
+        self.commands
+            .send(TerminalTransportCommand::ExecDetail(ExecDetailRequest {
+                command,
+                timeout,
+                limit,
                 reply,
             }))
             .ok()?;

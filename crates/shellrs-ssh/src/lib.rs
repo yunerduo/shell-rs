@@ -49,6 +49,6 @@ pub use prompt::{
 };
 pub use secret::{SecretRef, SecretSource, SharedSecretSource, read_secret};
 pub use session::{
-    ChannelStream, PtySize, SftpChannel, open_probe, open_sftp_channel, open_shell, resize_pty,
-    run_exec, write_shell,
+    ChannelStream, ExecDetail, PtySize, SftpChannel, open_probe, open_sftp_channel, open_shell,
+    resize_pty, run_exec, run_exec_detail, write_shell,
 };

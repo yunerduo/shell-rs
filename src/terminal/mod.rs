@@ -73,14 +73,14 @@ pub use terminal_view::{
 pub use theme::{TerminalColors, TerminalTheme};
 pub(crate) use transport::send_event;
 pub use transport::{
-    ChannelStream, ExecRequest, ExecResult, FixedLocalTerminalTransportProvider,
-    FixedRemoteTerminalTransportProvider, FixedSerialTerminalTransportProvider,
-    FixedTelnetTerminalTransportProvider, HostTerminalTransports, LocalTerminalTransportProvider,
-    RemoteTerminalTransportProvider, SerialTerminalTransportProvider, SftpChannel,
-    SftpChannelRequest, SharedLocalTerminalTransportProvider,
-    SharedRemoteTerminalTransportProvider, SharedSerialTerminalTransportProvider,
-    SharedTelnetTerminalTransportProvider, SharedTerminalTransportFactory,
-    TelnetTerminalTransportProvider, TerminalChannels, TerminalTransport, TerminalTransportCommand,
-    TerminalTransportEvent, TerminalTransportFactory,
+    ChannelStream, ExecDetail, ExecDetailRequest, ExecDetailResult, ExecRequest, ExecResult,
+    FixedLocalTerminalTransportProvider, FixedRemoteTerminalTransportProvider,
+    FixedSerialTerminalTransportProvider, FixedTelnetTerminalTransportProvider,
+    HostTerminalTransports, LocalTerminalTransportProvider, RemoteTerminalTransportProvider,
+    SerialTerminalTransportProvider, SftpChannel, SftpChannelRequest,
+    SharedLocalTerminalTransportProvider, SharedRemoteTerminalTransportProvider,
+    SharedSerialTerminalTransportProvider, SharedTelnetTerminalTransportProvider,
+    SharedTerminalTransportFactory, TelnetTerminalTransportProvider, TerminalChannels,
+    TerminalTransport, TerminalTransportCommand, TerminalTransportEvent, TerminalTransportFactory,
 };
 pub use zmodem::{ZmodemDirection, ZmodemReply};

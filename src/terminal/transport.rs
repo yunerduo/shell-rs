@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
+use std::time::Duration;
 
 use anyhow::Result;
 use async_channel::Sender;
@@ -24,6 +25,10 @@ pub enum TerminalTransportCommand {
     /// Run a command beside the shell. Only a transport with a connection of
     /// its own runs it; the others drop the request.
     Exec(ExecRequest),
+    /// Run a command beside the shell and keep both streams, the exit code
+    /// and how it ended. Like `Exec`, only a transport with a connection of
+    /// its own runs it.
+    ExecDetail(ExecDetailRequest),
     /// Open an SFTP channel beside the shell, for the right sidebar's
     /// 文件. Dropped like `Exec` by a transport without a connection.
     OpenSftp(SftpChannelRequest),
@@ -48,6 +53,24 @@ pub struct ExecRequest {
     pub command: String,
     pub reply: mpsc::Sender<ExecResult>,
 }
+
+/// What a command run beside the shell printed, both streams apart, or why
+/// it did not run.
+pub type ExecDetailResult = Result<ExecDetail, String>;
+
+/// A command to run beside the shell with its streams kept apart: what the
+/// assistant's tool cards show. Answered once on `reply`, with whatever the
+/// command printed before it ended, or with why it could not run.
+pub struct ExecDetailRequest {
+    pub command: String,
+    /// How long it may run; the transport clamps it to its own range.
+    pub timeout: Duration,
+    /// The most bytes kept across both streams.
+    pub limit: usize,
+    pub reply: mpsc::Sender<ExecDetailResult>,
+}
+
+pub use crate::ssh::ExecDetail;
 
 pub use crate::ssh::{ChannelStream, SftpChannel};
 
@@ -109,6 +132,10 @@ impl std::fmt::Debug for TerminalTransportCommand {
                 .finish(),
             Self::Exec(request) => formatter
                 .debug_tuple("Exec")
+                .field(&request.command.len())
+                .finish(),
+            Self::ExecDetail(request) => formatter
+                .debug_tuple("ExecDetail")
                 .field(&request.command.len())
                 .finish(),
             Self::OpenSftp(_) => formatter.write_str("OpenSftp"),
