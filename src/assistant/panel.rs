@@ -7,7 +7,7 @@ use std::sync::mpsc::TryRecvError;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
     button::{Button, ButtonVariants as _, DropdownButton},
     checkbox::Checkbox,
     h_flex,
@@ -22,7 +22,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::app::CatalogIcon;
-use crate::i18n::t;
+use crate::i18n::{join_list, t};
 use crate::settings::SettingsStore;
 use crate::terminal::{
     ExecDetailResult, RunFailure, RunHandle, RunProgress, RunTiming, TerminalEvent, TerminalRun,
@@ -42,6 +42,7 @@ use super::policy::{self, AuthorizationLevel, Classified, Decision, Policy, Risk
 use super::protocol::ToolTerminal;
 use super::schedule::{self, ResumePlan, Schedule, ScheduleAction, ScheduleStore, ScheduleTarget};
 use super::sessions::{SessionEvent, Sessions};
+use super::settings::ProviderProtocol;
 use super::tool_result::{
     call_line, denied_result, tool_card_parts, tool_error, tool_result_body, unknown_terminal,
     unsupported_result,
@@ -1460,19 +1461,39 @@ impl AssistantPanel {
         self.save_bindings(cx);
     }
 
+    /// A command runs, a card waits, or a question is being answered: the
+    /// next turn would have nothing to read yet, so the composer holds back
+    /// sending and switching models.
+    fn busy(&self) -> bool {
+        !self.execs.is_empty()
+            || !self.injects.is_empty()
+            || !self.waits.is_empty()
+            || !self.waiting.is_empty()
+            || !self.pending.is_empty()
+            || self.ask.is_some()
+            || self.classify.is_some()
+    }
+
+    /// Switch which configured provider answers. It takes effect on the
+    /// next turn; the conversation so far stays as it is.
+    fn set_protocol(&mut self, protocol: ProviderProtocol, cx: &mut Context<Self>) {
+        if self.stream.is_some() || self.busy() {
+            return;
+        }
+        if self.settings.read(cx).settings().assistant.protocol == protocol {
+            return;
+        }
+        self.settings.update(cx, |store, cx| {
+            store.update(|settings| settings.assistant.protocol = protocol, cx)
+        });
+        cx.notify();
+    }
+
     /// Ask the model. The panel keeps the conversation; the worker keeps
     /// the key. A question starts a new exchange, so the round count starts
     /// again.
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.stream.is_some()
-            || !self.execs.is_empty()
-            || !self.injects.is_empty()
-            || !self.waits.is_empty()
-            || !self.waiting.is_empty()
-            || self.classify.is_some()
-            || self.ask.is_some()
-            || !self.pending.is_empty()
-        {
+        if self.stream.is_some() || self.busy() {
             return;
         }
         let text = self.input.read(cx).value().trim().to_string();
@@ -3559,22 +3580,12 @@ impl AssistantPanel {
         let muted = cx.theme().muted_foreground;
         let streaming = self.stream.is_some();
         let injecting = !self.injects.is_empty();
-        // A command runs, or a card waits: a new question would have no
-        // turn to run in.
-        let busy = !self.execs.is_empty()
-            || injecting
-            || !self.waits.is_empty()
-            || !self.waiting.is_empty()
-            || !self.pending.is_empty()
-            || self.ask.is_some()
-            || self.classify.is_some();
+        let busy = self.busy();
         let empty = self.input.read(cx).value().trim().is_empty();
         v_flex()
             .id("assistant-composer")
             .gap_1()
             .p_2()
-            .border_t_1()
-            .border_color(border)
             .when(self.classify.is_some(), |composer| {
                 composer.child(
                     div()
@@ -3612,33 +3623,224 @@ impl AssistantPanel {
                         )),
                 )
             })
+            // One card holds the whole composer: the text, then the
+            // controls that decide who answers, what it may do, and where
+            // the question goes.
             .child(
-                Textarea::new(&self.input)
-                    .h(px(72.))
-                    .text_sm()
-                    .aria_label(t!("assistant.placeholder")),
+                v_flex()
+                    .id("assistant-composer-card")
+                    .gap_1()
+                    .p_2()
+                    .rounded(cx.theme().radius_lg)
+                    .border_1()
+                    .border_color(border)
+                    .bg(cx.theme().group_box)
+                    .child(
+                        Textarea::new(&self.input)
+                            .h(px(72.))
+                            .text_sm()
+                            .appearance(false)
+                            .bordered(false)
+                            .aria_label(t!("assistant.input.aria")),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .gap_1()
+                            .child(self.render_mode_menu(cx))
+                            .child(self.render_role_menu())
+                            .child(self.render_model_menu(streaming || busy, cx))
+                            .child(self.render_terminal_chip())
+                            .child(div().flex_1())
+                            .child(if streaming {
+                                Button::new("assistant-stop")
+                                    .small()
+                                    .icon(CatalogIcon::CircleStop)
+                                    .label(t!("assistant.action.stop"))
+                                    .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
+                            } else if injecting {
+                                Button::new("assistant-stop-inject")
+                                    .small()
+                                    .icon(CatalogIcon::CircleStop)
+                                    .label(t!("assistant.action.stop"))
+                                    .on_click(cx.listener(|this, _, _, cx| this.stop_inject(cx)))
+                            } else {
+                                Button::new("assistant-send")
+                                    .small()
+                                    .primary()
+                                    .icon(CatalogIcon::Send)
+                                    .label(t!("assistant.action.send"))
+                                    .disabled(empty || busy)
+                                    .on_click(
+                                        cx.listener(|this, _, window, cx| this.send(window, cx)),
+                                    )
+                            }),
+                    ),
             )
-            .child(h_flex().justify_end().gap_1().child(if streaming {
-                Button::new("assistant-stop")
-                    .small()
-                    .icon(CatalogIcon::CircleStop)
-                    .label(t!("assistant.action.stop"))
-                    .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
-            } else if injecting {
-                Button::new("assistant-stop-inject")
-                    .small()
-                    .icon(CatalogIcon::CircleStop)
-                    .label(t!("assistant.action.stop"))
-                    .on_click(cx.listener(|this, _, _, cx| this.stop_inject(cx)))
+    }
+
+    /// The authorization level in force, with both levels in its menu.
+    /// Turning full access on still goes through the confirmation card that
+    /// waits out its hold.
+    fn render_mode_menu(&self, cx: &mut Context<Self>) -> AnyElement {
+        let full = self.level == AuthorizationLevel::FullAccess;
+        let button = Button::new("assistant-mode")
+            .xsmall()
+            .ghost()
+            .icon(if full {
+                CatalogIcon::CircleAlert
             } else {
-                Button::new("assistant-send")
-                    .small()
-                    .primary()
-                    .icon(CatalogIcon::Send)
-                    .label(t!("assistant.action.send"))
-                    .disabled(empty || busy)
-                    .on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
-            }))
+                CatalogIcon::Lock
+            })
+            .label(if full {
+                t!("assistant.full_access.button")
+            } else {
+                t!("assistant.mode.restricted")
+            })
+            .tooltip(t!("assistant.mode.tooltip"));
+        let button = if full { button.danger() } else { button };
+        let panel = cx.entity();
+        DropdownButton::new("assistant-mode-menu")
+            .button(button)
+            .dropdown_menu(move |menu, _, _| {
+                let restricted = panel.clone();
+                let whole = panel.clone();
+                menu.item(
+                    PopupMenuItem::new(t!("assistant.mode.restricted"))
+                        .checked(!full)
+                        .on_click(move |_, _, cx| {
+                            restricted.update(cx, |panel, cx| panel.close_full_access(cx));
+                        }),
+                )
+                .item(
+                    PopupMenuItem::new(t!("assistant.full_access.button"))
+                        .checked(full)
+                        .on_click(move |_, _, cx| {
+                            whole.update(cx, |panel, cx| {
+                                if panel.level != AuthorizationLevel::FullAccess {
+                                    panel.toggle_full_access(cx);
+                                }
+                            });
+                        }),
+                )
+            })
+            .into_any_element()
+    }
+
+    /// The role the conversation uses. Roles beyond the default arrive with
+    /// the role library; until one is loaded the default assistant answers.
+    fn render_role_menu(&self) -> AnyElement {
+        DropdownButton::new("assistant-role-menu")
+            .button(
+                Button::new("assistant-role")
+                    .xsmall()
+                    .ghost()
+                    .icon(CatalogIcon::User)
+                    .label(t!("assistant.role.default"))
+                    .tooltip(t!("assistant.role.tooltip")),
+            )
+            .dropdown_menu(|menu, _, _| {
+                menu.item(PopupMenuItem::new(t!("assistant.role.default")).checked(true))
+            })
+            .into_any_element()
+    }
+
+    /// The configured models, with the current one checked. Switching takes
+    /// effect on the next turn; a running answer or a waiting card holds it
+    /// back.
+    fn render_model_menu(&self, locked: bool, cx: &mut Context<Self>) -> AnyElement {
+        let assistant = self.settings.read(cx).settings().assistant.clone();
+        let current = assistant.protocol;
+        let model = assistant.active().model.trim();
+        let label: SharedString = if model.is_empty() {
+            t!("assistant.model.none")
+        } else {
+            model.to_string().into()
+        };
+        let models: Vec<(ProviderProtocol, String)> = ProviderProtocol::ALL
+            .iter()
+            .filter_map(|protocol| {
+                let provider = assistant.provider(*protocol);
+                let model = provider.model.trim();
+                if provider.base_url.trim().is_empty() || model.is_empty() {
+                    None
+                } else {
+                    Some((*protocol, model.to_string()))
+                }
+            })
+            .collect();
+        let configured = !models.is_empty();
+        let panel = cx.entity();
+        DropdownButton::new("assistant-model-menu")
+            .button(
+                Button::new("assistant-model")
+                    .xsmall()
+                    .ghost()
+                    .icon(CatalogIcon::Cpu)
+                    .label(label)
+                    .tooltip(if locked {
+                        t!("assistant.model.locked")
+                    } else {
+                        t!("assistant.model.switch")
+                    })
+                    .disabled(locked),
+            )
+            .dropdown_menu(move |menu, _, _| {
+                let mut menu = menu;
+                if !configured {
+                    menu = menu.item(PopupMenuItem::new(t!("assistant.model.none")).disabled(true));
+                }
+                for (protocol, model) in &models {
+                    let protocol = *protocol;
+                    let label = format!("{model} · {}", protocol.label());
+                    let panel = panel.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new(label)
+                            .checked(protocol == current)
+                            .on_click(move |_, _, cx| {
+                                panel.update(cx, |panel, cx| panel.set_protocol(protocol, cx));
+                            }),
+                    );
+                }
+                let panel = panel.clone();
+                menu.separator().item(
+                    PopupMenuItem::new(t!("assistant.model.configure")).on_click(
+                        move |_, window, cx| {
+                            panel.update(cx, |panel, cx| panel.open_config(window, cx));
+                        },
+                    ),
+                )
+            })
+            .into_any_element()
+    }
+
+    /// The terminals this conversation is bound to, in one chip: the first
+    /// alias and how many others there are, all of them in the tooltip.
+    fn render_terminal_chip(&self) -> AnyElement {
+        let names: Vec<&str> = self
+            .bindings
+            .entries()
+            .iter()
+            .map(|entry| entry.alias.as_str())
+            .collect();
+        let label: SharedString = match names.first() {
+            None => t!("assistant.composer.terminal.none"),
+            Some(first) if names.len() == 1 => (*first).to_string().into(),
+            Some(first) => format!("{first} +{}", names.len() - 1).into(),
+        };
+        let tooltip: SharedString = if names.is_empty() {
+            t!("assistant.composer.terminal.none")
+        } else {
+            t!("assistant.composer.terminal.tip", names = join_list(&names)).into()
+        };
+        Button::new("assistant-composer-terminal")
+            .xsmall()
+            .ghost()
+            .icon(CatalogIcon::Terminal)
+            .label(label)
+            .tooltip(tooltip)
+            .into_any_element()
     }
 
     /// The card for the oldest call waiting for the user: what would run
@@ -3814,30 +4016,6 @@ impl Render for AssistantPanel {
                     .child(
                         h_flex()
                             .gap_1()
-                            .when(self.level == AuthorizationLevel::FullAccess, |bar| {
-                                bar.child(
-                                    Button::new("assistant-full-access-toggle")
-                                        .xsmall()
-                                        .ghost()
-                                        .danger()
-                                        .selected(true)
-                                        .label(t!("assistant.full_access.exit"))
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.toggle_full_access(cx)
-                                        })),
-                                )
-                            })
-                            .when(self.level != AuthorizationLevel::FullAccess, |bar| {
-                                bar.child(
-                                    Button::new("assistant-full-access-toggle")
-                                        .xsmall()
-                                        .ghost()
-                                        .label(t!("assistant.full_access.button"))
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.toggle_full_access(cx)
-                                        })),
-                                )
-                            })
                             .child(
                                 Button::new("assistant-report")
                                     .xsmall()

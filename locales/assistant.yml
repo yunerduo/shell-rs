@@ -84,6 +84,39 @@ assistant.empty_state:
 assistant.placeholder:
   zh-CN: 输入指令，Enter 发送，Shift+Enter 换行
   en: Type an instruction; Enter sends, Shift+Enter adds a line
+assistant.input.aria:
+  zh-CN: 指令输入
+  en: Instruction input
+assistant.mode.restricted:
+  zh-CN: 受限模式
+  en: Restricted
+assistant.mode.tooltip:
+  zh-CN: 授权模式：受限模式下逐条确认，完全访问不再逐条确认
+  en: "Authorization: restricted asks for each command, full access does not"
+assistant.role.default:
+  zh-CN: 默认助理
+  en: Default assistant
+assistant.role.tooltip:
+  zh-CN: 角色
+  en: Role
+assistant.model.none:
+  zh-CN: 未配置模型
+  en: No model configured
+assistant.model.switch:
+  zh-CN: 切换模型，只影响后续轮次
+  en: Switch models; applies to later turns only
+assistant.model.locked:
+  zh-CN: 正在生成或等待确认，暂时不能切换模型
+  en: Can't switch models while generating or waiting for approval
+assistant.model.configure:
+  zh-CN: 模型设置…
+  en: Model settings…
+assistant.composer.terminal.none:
+  zh-CN: 未绑定终端
+  en: No terminal bound
+assistant.composer.terminal.tip:
+  zh-CN: 已绑定：%{names}
+  en: "Bound to: %{names}"
 assistant.streaming:
   zh-CN: 正在生成…
   en: Generating…
