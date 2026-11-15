@@ -71,8 +71,10 @@ pub fn escaped(command: &str) -> String {
         .replace(END, "<END marker>")
 }
 
-/// Read one answer. Only one JSON object with a known verdict word and a
-/// reason counts; anything else is a failed call.
+/// Read one answer. Only one JSON object with exactly the guide's fields, a
+/// known verdict word and a reason counts; anything else is a failed call.
+/// An unknown field is a sign the model answered something else, so it is
+/// not read as a verdict.
 pub fn parse(answer: &str) -> Option<Classified> {
     let start = answer.find('{')?;
     let end = answer.rfind('}')?;
@@ -80,8 +82,20 @@ pub fn parse(answer: &str) -> Option<Classified> {
         return None;
     }
     let value: serde_json::Value = serde_json::from_str(&answer[start..=end]).ok()?;
-    let verdict = Classified::parse(value.get("verdict")?.as_str()?)?;
-    value.get("reason")?.as_str()?;
+    let object = value.as_object()?;
+    if object
+        .keys()
+        .any(|key| !matches!(key.as_str(), "verdict" | "reason" | "matches"))
+    {
+        return None;
+    }
+    let verdict = Classified::parse(object.get("verdict")?.as_str()?)?;
+    object.get("reason")?.as_str()?;
+    if let Some(matches) = object.get("matches")
+        && !matches.as_array()?.iter().all(serde_json::Value::is_string)
+    {
+        return None;
+    }
     Some(verdict)
 }
 
@@ -104,6 +118,7 @@ pub fn request(settings: &AssistantSettings, command: &str, shell: &str) -> Stre
         timeout: TIMEOUT,
         terminals: Vec::new(),
         scheduled: false,
+        headers: provider.headers.clone(),
     }
 }
 
@@ -210,6 +225,31 @@ mod tests {
         assert_eq!(parse(r#"{"verdict":"allow","reason":"x"}"#), None);
         assert_eq!(parse(r#"{"verdict":"safe"}"#), None, "no reason");
         assert_eq!(parse(r#"{"reason":"x"}"#), None, "no verdict");
+        assert_eq!(
+            parse(r#"{"verdict":"safe","reason":"x","confidence":0.9}"#),
+            None,
+            "a field the guide did not ask for is not a verdict"
+        );
+        assert_eq!(
+            parse(r#"{"verdict":"safe","reason":"x","run":"rm -rf /"}"#),
+            None,
+            "an answer that asks for something to run is not a verdict"
+        );
+        assert_eq!(
+            parse(r#"{"verdict":"safe","reason":"x","matches":"ls"}"#),
+            None,
+            "matches is a list"
+        );
+        assert_eq!(
+            parse(r#"{"verdict":"safe","reason":"x","matches":[1]}"#),
+            None,
+            "matches holds text"
+        );
+        assert_eq!(
+            parse(r#"{"verdict":"maybe","reason":"x"}"#),
+            None,
+            "the verdict word is one of three"
+        );
         assert_eq!(parse("{}"), None);
         assert_eq!(parse(""), None);
     }

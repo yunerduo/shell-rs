@@ -3,6 +3,8 @@
 
 use serde::Deserialize;
 
+use crate::i18n::t;
+
 /// Who said a thing in the conversation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
@@ -196,30 +198,82 @@ impl ChatMessage {
     }
 }
 
-/// The conversation exported as Markdown, for the copy button: the user's
-/// words are a quoted heading, the assistant's are already Markdown. Tool
-/// results are left out: they are the model's working notes.
-pub fn to_markdown(messages: &[ChatMessage], user_heading: &str) -> String {
-    let mut out = String::new();
+/// The conversation as one Markdown file: a title, the facts a reader
+/// needs, and one section per turn. A heading separates turns because some
+/// renderers read `---` under text as a heading underline. Tool results are
+/// left out: they are the model's working notes.
+pub fn export_markdown(
+    messages: &[ChatMessage],
+    user_heading: &str,
+    title: &str,
+    meta: &[(String, String)],
+) -> String {
+    let assistant_heading = t!("assistant.role.assistant");
+    let mut body = String::new();
     for message in messages {
         if message.text.trim().is_empty() || message.role == Role::Tool {
             continue;
         }
-        if !out.is_empty() {
-            out.push_str("\n\n---\n\n");
+        let heading: &str = match message.role {
+            Role::User => user_heading,
+            Role::Assistant | Role::System => &assistant_heading,
+            Role::Tool => continue,
+        };
+        if !body.is_empty() {
+            body.push_str("\n\n");
         }
-        match message.role {
-            Role::User => {
-                out.push_str("**");
-                out.push_str(user_heading);
-                out.push_str("**\n\n");
-                out.push_str(&message.text);
-            }
-            Role::Assistant | Role::System => out.push_str(&message.text),
-            Role::Tool => {}
-        }
+        body.push_str("## ");
+        body.push_str(heading);
+        body.push_str("\n\n");
+        body.push_str(&plain(&message.text));
     }
+    if body.is_empty() {
+        return String::new();
+    }
+    balance_fences(&mut body);
+
+    let mut out = String::new();
+    out.push_str("# ");
+    out.push_str(&plain(title.trim()));
+    out.push_str("\n\n");
+    let mut listed = false;
+    for (label, value) in meta {
+        let value = plain(value.trim());
+        if value.is_empty() {
+            continue;
+        }
+        out.push_str("- ");
+        out.push_str(label);
+        out.push_str(": ");
+        out.push_str(&value);
+        out.push('\n');
+        listed = true;
+    }
+    if listed {
+        out.push('\n');
+    }
+    out.push_str(&body);
     out
+}
+
+/// Control characters are not text a person meant to write; a tab and a
+/// newline are kept, and everything else that is not printable is dropped.
+fn plain(text: &str) -> String {
+    text.chars()
+        .filter(|character| *character == '\n' || *character == '\t' || !character.is_control())
+        .collect()
+}
+
+/// A code fence left open would swallow the rest of the file, so an odd
+/// count of them gets one closing line.
+fn balance_fences(text: &mut String) {
+    let fences = text
+        .lines()
+        .filter(|line| line.trim_start().starts_with("```"))
+        .count();
+    if fences % 2 == 1 {
+        text.push_str("\n```");
+    }
 }
 
 #[cfg(test)]
@@ -233,17 +287,52 @@ mod tests {
             ChatMessage::assistant("```\nls\n```"),
             ChatMessage::user("thanks"),
         ];
-        let markdown = to_markdown(&messages, "You");
+        let markdown = export_markdown(&messages, "You", "A talk", &[]);
         assert_eq!(
             markdown,
-            "**You**\n\nlist the files\n\n---\n\n```\nls\n```\n\n---\n\n**You**\n\nthanks"
+            format!(
+                "# A talk\n\n## You\n\nlist the files\n\n## {}\n\n```\nls\n```\n\n## You\n\nthanks",
+                t!("assistant.role.assistant")
+            )
         );
     }
 
     #[test]
     fn empty_turns_are_skipped() {
         let messages = vec![ChatMessage::user(""), ChatMessage::assistant("  ")];
-        assert_eq!(to_markdown(&messages, "You"), "");
+        assert_eq!(export_markdown(&messages, "You", "A talk", &[]), "");
+    }
+
+    #[test]
+    fn the_heading_carries_the_facts_a_reader_needs() {
+        let messages = vec![ChatMessage::user("check the disk")];
+        let meta = vec![
+            ("Time".to_string(), "2026-11-15 10:00:00".to_string()),
+            ("Model".to_string(), "gpt-4o-mini".to_string()),
+            ("Empty".to_string(), "  ".to_string()),
+        ];
+        let markdown = export_markdown(&messages, "You", "Disk check", &meta);
+        assert_eq!(
+            markdown,
+            "# Disk check\n\n- Time: 2026-11-15 10:00:00\n- Model: gpt-4o-mini\n\n## You\n\ncheck the disk"
+        );
+    }
+
+    #[test]
+    fn an_unclosed_code_fence_is_closed_at_the_end() {
+        let unclosed = export_markdown(&[ChatMessage::assistant("```\nls")], "You", "T", &[]);
+        assert!(unclosed.ends_with("```\nls\n```"), "{unclosed}");
+        let closed = export_markdown(&[ChatMessage::assistant("```\nls\n```")], "You", "T", &[]);
+        assert!(closed.ends_with("```\nls\n```"), "{closed}");
+    }
+
+    #[test]
+    fn control_characters_are_not_written_out() {
+        let messages = vec![ChatMessage::user("hi\u{7}ther\u{1b}e")];
+        assert!(
+            export_markdown(&messages, "You", "T", &[]).contains("hithere"),
+            "a bell and an escape do not belong in a report"
+        );
     }
 
     #[test]
@@ -262,8 +351,11 @@ mod tests {
             ChatMessage::assistant("The disk is fine."),
         ];
         assert_eq!(
-            to_markdown(&messages, "You"),
-            "**You**\n\ncheck the disk\n\n---\n\nThe disk is fine."
+            export_markdown(&messages, "You", "T", &[]),
+            format!(
+                "# T\n\n## You\n\ncheck the disk\n\n## {}\n\nThe disk is fine.",
+                t!("assistant.role.assistant")
+            )
         );
     }
 

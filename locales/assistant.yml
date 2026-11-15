@@ -285,6 +285,42 @@ assistant.settings.whitelist.hint:
 assistant.settings.whitelist.placeholder:
   zh-CN: 例如 df -h
   en: "For example df -h"
+assistant.session.new:
+  zh-CN: 新建会话
+  en: New conversation
+assistant.session.previous:
+  zh-CN: 上一个会话
+  en: Previous conversation
+assistant.session.next:
+  zh-CN: 下一个会话
+  en: Next conversation
+assistant.session.delete:
+  zh-CN: 删除当前会话
+  en: Delete this conversation
+assistant.session.untitled:
+  zh-CN: 新会话
+  en: New conversation
+assistant.session.busy:
+  zh-CN: 当前有命令在运行、等待确认或回答中，先结束再切换会话
+  en: A command is running, waiting for an answer, or the model is replying; finish that first
+assistant.settings.headers.title:
+  zh-CN: 自定义请求头
+  en: Extra request headers
+assistant.settings.headers.hint:
+  zh-CN: 追加在认证头之后；认证头、Content-Type 等协议自带的名称会被忽略，最多 8 条。
+  en: Added after the protocol's own headers; names it sets itself (the key's, Content-Type) are ignored. At most 8.
+assistant.settings.headers.name_placeholder:
+  zh-CN: 名称，例如 X-Tenant
+  en: "Name, for example X-Tenant"
+assistant.settings.headers.value_placeholder:
+  zh-CN: 值
+  en: Value
+assistant.settings.headers.invalid:
+  zh-CN: 这一条无法加入：名称只能用字母数字和少数符号，值不能为空或换行，也不能用协议自带的名称
+  en: This header cannot be added; the name must be a token, the value must be one line, and the protocol's own names are not allowed
+assistant.settings.headers.full:
+  zh-CN: 最多只能有 %{limit} 条请求头
+  en: At most %{limit} extra headers
 assistant.settings.list.add:
   zh-CN: 添加
   en: Add
@@ -506,6 +542,21 @@ assistant.action.cancel:
 assistant.action.report:
   zh-CN: 保存报告
   en: Save report
+assistant.report.title:
+  zh-CN: 会话记录
+  en: Conversation
+assistant.report.meta.time:
+  zh-CN: 时间
+  en: Time
+assistant.report.meta.protocol:
+  zh-CN: 协议
+  en: Protocol
+assistant.report.meta.model:
+  zh-CN: 模型
+  en: Model
+assistant.report.meta.terminals:
+  zh-CN: 绑定终端
+  en: Terminals
 assistant.report.saved:
   zh-CN: 报告已保存为 %{name}
   en: Report saved as %{name}

@@ -40,7 +40,8 @@ use super::pending::{self, PendingItem};
 use super::policy::{self, AuthorizationLevel, Classified, Decision, Policy, Risk, Verdict};
 use super::protocol::ToolTerminal;
 use super::schedule::{self, ResumePlan, Schedule, ScheduleAction, ScheduleStore, ScheduleTarget};
-use super::settings::ProviderProtocol;
+use super::sessions::{SessionEvent, Sessions};
+use super::settings::{HEADER_LIMIT, ProviderProtocol, RequestHeader, clean_header};
 use super::tool_result::{
     call_line, denied_result, tool_card_parts, tool_error, tool_result_body, unknown_terminal,
     unsupported_result,
@@ -259,10 +260,15 @@ pub struct AssistantPanel {
     input: Entity<TextareaState>,
     blacklist_input: Entity<InputState>,
     whitelist_input: Entity<InputState>,
+    /// The two boxes one extra request header is typed into.
+    header_name: Entity<InputState>,
+    header_value: Entity<InputState>,
     /// The classifier's model name, edited beside its switch.
     classifier_model: Entity<InputState>,
     bindings: Bindings,
     available: Vec<AssistantTerminal>,
+    /// The conversations kept between launches; `messages` is the open one.
+    sessions: Sessions,
     messages: Vec<ChatMessage>,
     stream: Option<StreamHandle>,
     /// The calls of this exchange not yet handled.
@@ -375,6 +381,16 @@ impl AssistantPanel {
                 .placeholder(t!("assistant.settings.whitelist.placeholder"))
                 .submit_on_enter(true)
         });
+        let header_name = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.headers.name_placeholder"))
+                .submit_on_enter(true)
+        });
+        let header_value = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.headers.value_placeholder"))
+                .submit_on_enter(true)
+        });
         let ask_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder(t!("assistant.ask.placeholder"))
@@ -440,6 +456,24 @@ impl AssistantPanel {
                     },
                 ),
                 cx.subscribe_in(
+                    &header_name,
+                    window,
+                    |this, _, event: &InputEvent, window, cx| {
+                        if matches!(event, InputEvent::PressEnter { shift: false, .. }) {
+                            this.add_header(window, cx);
+                        }
+                    },
+                ),
+                cx.subscribe_in(
+                    &header_value,
+                    window,
+                    |this, _, event: &InputEvent, window, cx| {
+                        if matches!(event, InputEvent::PressEnter { shift: false, .. }) {
+                            this.add_header(window, cx);
+                        }
+                    },
+                ),
+                cx.subscribe_in(
                     &schedule_command,
                     window,
                     |this, _, event: &InputEvent, window, cx| {
@@ -449,6 +483,11 @@ impl AssistantPanel {
                     },
                 ),
             ];
+        let sessions = Sessions::load(&crate::app::data_dir(), schedule::now_millis());
+        let messages = match sessions.active_id() {
+            Some(id) => sessions.messages(id),
+            None => Vec::new(),
+        };
         let mut panel = Self {
             settings,
             protocol,
@@ -458,10 +497,13 @@ impl AssistantPanel {
             input,
             blacklist_input,
             whitelist_input,
+            header_name,
+            header_value,
             classifier_model,
             bindings: Bindings::default(),
             available: Vec::new(),
-            messages: Vec::new(),
+            sessions,
+            messages,
             stream: None,
             queue: VecDeque::new(),
             pending: VecDeque::new(),
@@ -748,6 +790,7 @@ impl AssistantPanel {
                 title: terminal.title.clone(),
             }],
             scheduled: true,
+            headers: provider.headers.clone(),
         };
         self.scheduled_ai = Some(ScheduledAiRun {
             name: task.name.clone(),
@@ -958,6 +1001,7 @@ impl AssistantPanel {
                 title: run.target.title.clone(),
             }],
             scheduled: true,
+            headers: provider.headers.clone(),
         };
         run.stream = client::start(request);
         run.deadline = Instant::now() + timeout;
@@ -1678,7 +1722,8 @@ impl AssistantPanel {
             return;
         }
 
-        self.messages.push(ChatMessage::user(text));
+        self.messages.push(ChatMessage::user(text.clone()));
+        self.session_append(SessionEvent::User { text });
         self.queue.clear();
         self.pending.clear();
         self.rounds = 0;
@@ -1741,6 +1786,7 @@ impl AssistantPanel {
                 })
                 .collect(),
             scheduled: false,
+            headers: provider.headers.clone(),
         };
         self.stream = Some(client::start(request));
         self.begin_poll(cx);
@@ -1767,6 +1813,7 @@ impl AssistantPanel {
         };
         let mut finished = false;
         let mut changed = false;
+        let mut failure: Option<SharedString> = None;
         loop {
             match client::next_event(&stream.rx) {
                 Some(StreamEvent::Delta(text)) => {
@@ -1788,6 +1835,7 @@ impl AssistantPanel {
                 }
                 Some(StreamEvent::Failed(error)) => {
                     self.error = Some(error.message());
+                    failure = self.error.clone();
                     // A turn that failed asks for nothing: running calls it
                     // got out would only start a new turn on a broken one.
                     self.queue.clear();
@@ -1806,6 +1854,22 @@ impl AssistantPanel {
             if empty && self.error.is_none() && !self.stopped {
                 self.error = Some(t!("assistant.error.empty"));
             }
+            // The turn is over: its words and, if it failed, the reason go
+            // into the journal. An empty turn asked for tools only.
+            let answered = self
+                .messages
+                .last()
+                .filter(|message| message.role == chat::Role::Assistant)
+                .map(|message| message.text.clone())
+                .filter(|text| !text.trim().is_empty());
+            if let Some(text) = answered {
+                self.session_append(SessionEvent::Assistant { text });
+            }
+            if let Some(text) = failure {
+                self.session_append(SessionEvent::Error {
+                    text: text.to_string(),
+                });
+            }
             if !self.queue.is_empty() {
                 self.advance(cx);
             } else if self.pending.is_empty() && self.ask.is_none() && self.classify.is_none() {
@@ -1823,6 +1887,17 @@ impl AssistantPanel {
     fn stop(&mut self, cx: &mut Context<Self>) {
         if let Some(stream) = self.stream.take() {
             stream.cancel();
+            // What the model had said before the stop is still part of the
+            // conversation.
+            let answered = self
+                .messages
+                .last()
+                .filter(|message| message.role == chat::Role::Assistant)
+                .map(|message| message.text.clone())
+                .filter(|text| !text.trim().is_empty());
+            if let Some(text) = answered {
+                self.session_append(SessionEvent::Assistant { text });
+            }
         }
         self.stopped = true;
         self.exchange = false;
@@ -3010,8 +3085,180 @@ impl AssistantPanel {
         cx.notify();
     }
 
+    fn add_header(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let name = self.header_name.read(cx).value().to_string();
+        let value = self.header_value.read(cx).value().to_string();
+        let Some(header) = clean_header(&name, &value) else {
+            self.error = Some(t!("assistant.settings.headers.invalid"));
+            cx.notify();
+            return;
+        };
+        let mut full = false;
+        self.settings.update(cx, |store, cx| {
+            store.update(
+                |settings| {
+                    let provider = settings.assistant.active_mut();
+                    if provider.headers.len() >= HEADER_LIMIT {
+                        full = true;
+                        return;
+                    }
+                    if !provider
+                        .headers
+                        .iter()
+                        .any(|kept| kept.name.eq_ignore_ascii_case(&header.name))
+                    {
+                        provider.headers.push(header);
+                    }
+                },
+                cx,
+            )
+        });
+        if full {
+            self.error = Some(t!("assistant.settings.headers.full", limit = HEADER_LIMIT));
+            cx.notify();
+            return;
+        }
+        self.header_name
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.header_value
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.error = None;
+        cx.notify();
+    }
+
+    fn remove_header(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.settings.update(cx, |store, cx| {
+            store.update(
+                |settings| {
+                    let provider = settings.assistant.active_mut();
+                    if index < provider.headers.len() {
+                        provider.headers.remove(index);
+                    }
+                },
+                cx,
+            )
+        });
+        cx.notify();
+    }
+
+    /// Add one line to the open session's journal. A failure is not worth a
+    /// card: the conversation on screen is still there.
+    fn session_append(&mut self, event: SessionEvent) {
+        let now = schedule::now_millis();
+        let Some(id) = self.sessions.active_id().map(str::to_string) else {
+            return;
+        };
+        let _ = self.sessions.append(&id, &event, now);
+    }
+
+    /// Whether a conversation is mid-flight: a turn, a command, a wait, a
+    /// card or a question. Switching then would split the task in two.
+    fn session_busy(&self) -> bool {
+        self.exchange
+            || self.stream.is_some()
+            || !self.execs.is_empty()
+            || !self.injects.is_empty()
+            || !self.waits.is_empty()
+            || !self.waiting.is_empty()
+            || !self.pending.is_empty()
+            || !self.backgrounds.is_empty()
+            || self.classify.is_some()
+            || self.ask.is_some()
+    }
+
+    /// Show the open session's words. Everything that belonged to the last
+    /// exchange's screen is dropped; nothing is replayed or re-run.
+    fn load_session(&mut self, cx: &mut Context<Self>) {
+        self.messages = match self.sessions.active_id() {
+            Some(id) => self.sessions.messages(id),
+            None => Vec::new(),
+        };
+        self.queue.clear();
+        self.pending.clear();
+        self.waiting.clear();
+        self.waits.clear();
+        self.ask = None;
+        self.classify = None;
+        self.exchange = false;
+        self.stopped = false;
+        self.rounds = 0;
+        self.error = None;
+        self.notice = None;
+        cx.notify();
+    }
+
+    fn switch_session(&mut self, forward: bool, cx: &mut Context<Self>) {
+        if self.session_busy() {
+            self.notice = Some(t!("assistant.session.busy"));
+            cx.notify();
+            return;
+        }
+        if self.sessions.cycle(forward) {
+            self.load_session(cx);
+        }
+    }
+
+    fn new_session(&mut self, cx: &mut Context<Self>) {
+        if self.session_busy() {
+            self.notice = Some(t!("assistant.session.busy"));
+            cx.notify();
+            return;
+        }
+        self.sessions.create(schedule::now_millis());
+        self.load_session(cx);
+    }
+
+    fn delete_session(&mut self, cx: &mut Context<Self>) {
+        if self.session_busy() {
+            self.notice = Some(t!("assistant.session.busy"));
+            cx.notify();
+            return;
+        }
+        let Some(id) = self.sessions.active_id().map(str::to_string) else {
+            return;
+        };
+        self.sessions.delete(&id, schedule::now_millis());
+        self.load_session(cx);
+    }
+
+    /// The conversation as a report: a title from the session, the facts a
+    /// reader needs, then the turns.
+    fn export_text(&self, cx: &mut Context<Self>) -> String {
+        let assistant = self.settings.read(cx).settings().assistant.clone();
+        let provider = assistant.active();
+        let title = self
+            .sessions
+            .active()
+            .map(|session| session.title.clone())
+            .filter(|title| !title.is_empty())
+            .unwrap_or_else(|| t!("assistant.report.title").to_string());
+        let terminals = self
+            .bindings
+            .entries()
+            .iter()
+            .map(|entry| entry.alias.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let meta = vec![
+            (
+                t!("assistant.report.meta.time").to_string(),
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            ),
+            (
+                t!("assistant.report.meta.protocol").to_string(),
+                self.protocol.label().to_string(),
+            ),
+            (
+                t!("assistant.report.meta.model").to_string(),
+                provider.model.clone(),
+            ),
+            (t!("assistant.report.meta.terminals").to_string(), terminals),
+        ];
+        chat::export_markdown(&self.messages, &t!("assistant.role.user"), &title, &meta)
+    }
+
     fn copy_markdown(&mut self, cx: &mut Context<Self>) {
-        let markdown = chat::to_markdown(&self.messages, &t!("assistant.role.user"));
+        let markdown = self.export_text(cx);
         if markdown.is_empty() {
             return;
         }
@@ -3023,7 +3270,7 @@ impl AssistantPanel {
     /// Write the conversation to a Markdown file beside the audit trail, so
     /// a report can be handed to someone without the window.
     fn save_report(&mut self, cx: &mut Context<Self>) {
-        let markdown = chat::to_markdown(&self.messages, &t!("assistant.role.user"));
+        let markdown = self.export_text(cx);
         if markdown.is_empty() {
             return;
         }
@@ -3037,10 +3284,9 @@ impl AssistantPanel {
             cx.notify();
             return;
         }
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_secs())
-            .unwrap_or_default();
+        // Milliseconds, so two reports in one second do not overwrite each
+        // other.
+        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S-%3f");
         let name = format!("assistant-{stamp}.md");
         match std::fs::write(dir.join(&name), markdown) {
             Ok(()) => self.notice = Some(t!("assistant.report.saved", name = name)),
@@ -3181,6 +3427,7 @@ impl AssistantPanel {
             .child(Input::new(&self.base_url).id("assistant-base-url").small())
             .child(Input::new(&self.model).id("assistant-model").small())
             .child(Input::new(&self.api_key).id("assistant-api-key").small())
+            .child(self.render_headers(&assistant.active().headers, cx))
             .child(
                 h_flex()
                     .justify_between()
@@ -3485,6 +3732,157 @@ impl AssistantPanel {
             .gap_1()
             .child(div().text_xs().child(t!("assistant.pending.title")))
             .child(list)
+    }
+
+    /// The open conversation, and the ways to move between them.
+    fn render_sessions(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
+        let border = cx.theme().border;
+        let title: SharedString = match self.sessions.active() {
+            Some(session) if !session.title.is_empty() => session.title.clone().into(),
+            Some(_) | None => t!("assistant.session.untitled"),
+        };
+        let total = self.sessions.sessions().len();
+        h_flex()
+            .id("assistant-sessions")
+            .items_center()
+            .gap_1()
+            .px_2()
+            .py_1()
+            .border_b_1()
+            .border_color(border)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(title),
+            )
+            .child(
+                Button::new("assistant-session-prev")
+                    .xsmall()
+                    .ghost()
+                    .icon(CatalogIcon::ArrowLeftToLine)
+                    .tooltip(t!("assistant.session.previous"))
+                    .disabled(total < 2)
+                    .on_click(cx.listener(|this, _, _, cx| this.switch_session(false, cx))),
+            )
+            .child(
+                Button::new("assistant-session-next")
+                    .xsmall()
+                    .ghost()
+                    .icon(CatalogIcon::ArrowRightToLine)
+                    .tooltip(t!("assistant.session.next"))
+                    .disabled(total < 2)
+                    .on_click(cx.listener(|this, _, _, cx| this.switch_session(true, cx))),
+            )
+            .child(
+                Button::new("assistant-session-new")
+                    .xsmall()
+                    .ghost()
+                    .icon(CatalogIcon::CopyPlus)
+                    .tooltip(t!("assistant.session.new"))
+                    .on_click(cx.listener(|this, _, _, cx| this.new_session(cx))),
+            )
+            .child(
+                Button::new("assistant-session-delete")
+                    .xsmall()
+                    .ghost()
+                    .icon(CatalogIcon::Trash)
+                    .tooltip(t!("assistant.session.delete"))
+                    .on_click(cx.listener(|this, _, _, cx| this.delete_session(cx))),
+            )
+    }
+
+    /// The extra request headers, typed as a name and a value. A name the
+    /// protocol sets itself cannot be added: it would be ignored on the wire.
+    fn render_headers(
+        &self,
+        headers: &[RequestHeader],
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
+        let mono = cx.theme().mono_font_family.clone();
+        let mut rows = v_flex().gap_1();
+        if headers.is_empty() {
+            rows = rows.child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(t!("assistant.settings.list.empty")),
+            );
+        }
+        for (index, header) in headers.iter().enumerate() {
+            rows = rows.child(
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .font_family(mono.clone())
+                            .text_xs()
+                            .child(format!("{}: {}", header.name, header.value)),
+                    )
+                    .child(
+                        Button::new(("assistant-header-remove", index))
+                            .xsmall()
+                            .ghost()
+                            .icon(CatalogIcon::Trash)
+                            .tooltip(t!("assistant.settings.list.remove"))
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.remove_header(index, cx)),
+                            ),
+                    ),
+            );
+        }
+        v_flex()
+            .id("assistant-headers")
+            .gap_1()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(t!("assistant.settings.headers.title")),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(t!("assistant.settings.headers.hint")),
+            )
+            .child(
+                h_flex()
+                    .gap_1()
+                    .items_center()
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            Input::new(&self.header_name)
+                                .id("assistant-header-name")
+                                .small(),
+                        ),
+                    )
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            Input::new(&self.header_value)
+                                .id("assistant-header-value")
+                                .small(),
+                        ),
+                    )
+                    .child(
+                        Button::new("assistant-header-add")
+                            .xsmall()
+                            .label(t!("assistant.settings.list.add"))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.add_header(window, cx)),
+                            ),
+                    ),
+            )
+            .child(rows)
     }
 
     /// One of the two command lists, with its entry box and a remove button
@@ -4140,6 +4538,7 @@ impl Render for AssistantPanel {
                     ),
             )
             .child(self.render_terminals(cx))
+            .child(self.render_sessions(cx))
             .when_some(self.full_access_card, |panel, since| {
                 panel.child(self.render_full_access_dialog(since, cx))
             })

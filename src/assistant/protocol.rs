@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use crate::i18n::t;
 
 use super::chat::{ChatMessage, Role};
-use super::settings::ProviderProtocol;
+use super::settings::{ProviderProtocol, RequestHeader};
 
 /// How much of a provider's message is shown: enough to act on, short
 /// enough that a page of HTML cannot fill the panel.
@@ -191,6 +191,11 @@ pub fn request_spec(
         })
         .collect();
 
+    let tools = vec![
+        run_command_tool(terminals),
+        wait_for_output_tool(terminals),
+        ask_user_tool(),
+    ];
     let body = match protocol {
         ProviderProtocol::OpenAi => {
             let mut wire = Vec::with_capacity(history.len() + 1);
@@ -201,11 +206,7 @@ pub fn request_spec(
             json!({
                 "model": model,
                 "messages": wire,
-                "tools": [
-                    run_command_tool(terminals),
-                    wait_for_output_tool(terminals),
-                    ask_user_tool()
-                ],
+                "tools": tools,
                 "stream": true,
                 "max_tokens": max_tokens,
             })
@@ -213,21 +214,13 @@ pub fn request_spec(
         ProviderProtocol::Anthropic => {
             let wire: Vec<Value> = history
                 .iter()
-                .map(|message| {
-                    json!({
-                        "role": match message.role {
-                            Role::User | Role::Tool => "user",
-                            Role::Assistant => "assistant",
-                            Role::System => "user",
-                        },
-                        "content": message.text,
-                    })
-                })
+                .map(|message| anthropic_message(message))
                 .collect();
             json!({
                 "model": model,
-                "system": PLAIN_SYSTEM_PROMPT,
+                "system": tool_prompt(terminals),
                 "messages": wire,
+                "tools": anthropic_tools(&tools),
                 "stream": true,
                 "max_tokens": max_tokens,
             })
@@ -292,9 +285,8 @@ pub fn plain_request_spec(
     RequestSpec { url, headers, body }
 }
 
-/// Build the request for a scheduled task. OpenAI gets the read-only screen
-/// and host tools plus a proposal tool that cannot run anything; Anthropic
-/// has no tool flow yet, so it answers from the prompt alone.
+/// Build the request for a scheduled task. Both protocols get the read-only
+/// screen and host tools plus a proposal tool that cannot run anything.
 pub fn scheduled_request_spec(
     protocol: ProviderProtocol,
     base_url: &str,
@@ -304,9 +296,6 @@ pub fn scheduled_request_spec(
     max_tokens: u32,
     terminals: &[ToolTerminal],
 ) -> RequestSpec {
-    if protocol == ProviderProtocol::Anthropic {
-        return plain_request_spec(protocol, base_url, model, key, messages, max_tokens);
-    }
     let url = endpoint(protocol, base_url);
     let mut system = String::from(SCHEDULED_SYSTEM_PROMPT);
     if terminals.is_empty() {
@@ -321,31 +310,64 @@ pub fn scheduled_request_spec(
         system.push_str(&terminal.title);
         system.push(')');
     }
-    let mut wire = Vec::with_capacity(messages.len() + 1);
-    wire.push(json!({"role": "system", "content": system}));
-    for message in messages {
-        if message.role != Role::System
-            && (message.text.trim().is_empty() && message.tool_calls.is_empty())
+    let history: Vec<&ChatMessage> = messages
+        .iter()
+        .filter(|message| {
+            message.role != Role::System
+                && (!message.text.trim().is_empty() || !message.tool_calls.is_empty())
+        })
+        .collect();
+    let tools = vec![
+        read_terminal_tool(),
+        host_facts_tool(),
+        propose_command_tool(terminals),
+    ];
+    let body = match protocol {
+        ProviderProtocol::OpenAi => {
+            let mut wire = Vec::with_capacity(history.len() + 1);
+            wire.push(json!({"role": "system", "content": system}));
+            for message in &history {
+                wire.push(openai_message(message));
+            }
+            json!({
+                "model": model,
+                "messages": wire,
+                "tools": tools,
+                "stream": true,
+                "max_tokens": max_tokens,
+            })
+        }
+        ProviderProtocol::Anthropic => {
+            let wire: Vec<Value> = history
+                .iter()
+                .map(|message| anthropic_message(message))
+                .collect();
+            json!({
+                "model": model,
+                "system": system,
+                "messages": wire,
+                "tools": anthropic_tools(&tools),
+                "stream": true,
+                "max_tokens": max_tokens,
+            })
+        }
+    };
+    let headers = auth_headers(protocol, key);
+    RequestSpec { url, headers, body }
+}
+
+/// Add the user's headers after the protocol's own. A name the protocol
+/// already set keeps its value, and a repeat keeps the first one.
+pub fn append_headers(headers: &mut Vec<(String, String)>, extra: &[RequestHeader]) {
+    for header in extra {
+        if headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case(&header.name))
         {
             continue;
         }
-        if message.role != Role::System {
-            wire.push(openai_message(message));
-        }
+        headers.push((header.name.clone(), header.value.clone()));
     }
-    let body = json!({
-        "model": model,
-        "messages": wire,
-        "tools": [
-            read_terminal_tool(),
-            host_facts_tool(),
-            propose_command_tool(terminals)
-        ],
-        "stream": true,
-        "max_tokens": max_tokens,
-    });
-    let headers = auth_headers(protocol, key);
-    RequestSpec { url, headers, body }
 }
 
 /// The one header that carries the key, per protocol.
@@ -415,6 +437,66 @@ fn openai_message(message: &ChatMessage) -> Value {
                 Role::User => "user",
                 Role::Assistant => "assistant",
                 Role::System | Role::Tool => "user",
+            },
+            "content": message.text,
+        }),
+    }
+}
+
+/// The same tools in Anthropic's shape: the schema is not nested under
+/// `function`, and it is called `input_schema`.
+fn anthropic_tools(tools: &[Value]) -> Vec<Value> {
+    tools
+        .iter()
+        .map(|tool| {
+            let function = &tool["function"];
+            json!({
+                "name": function["name"],
+                "description": function["description"],
+                "input_schema": function["parameters"],
+            })
+        })
+        .collect()
+}
+
+/// One message in Anthropic's shape. A tool answer arrives as a `user`
+/// message carrying a `tool_result` block; an assistant turn that asked
+/// for tools carries text and `tool_use` blocks, whose input is the parsed
+/// arguments (an empty object when they do not parse).
+fn anthropic_message(message: &ChatMessage) -> Value {
+    match message.role {
+        Role::Tool => json!({
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": message.tool_call_id.as_deref().unwrap_or_default(),
+                "content": message.text,
+            }],
+        }),
+        Role::Assistant if !message.tool_calls.is_empty() => {
+            let mut blocks = Vec::with_capacity(message.tool_calls.len() + 1);
+            if !message.text.trim().is_empty() {
+                blocks.push(json!({"type": "text", "text": message.text}));
+            }
+            for call in &message.tool_calls {
+                let input = serde_json::from_str::<Value>(&call.arguments)
+                    .ok()
+                    .filter(Value::is_object)
+                    .unwrap_or_else(|| json!({}));
+                blocks.push(json!({
+                    "type": "tool_use",
+                    "id": call.id,
+                    "name": call.name,
+                    "input": input,
+                }));
+            }
+            json!({"role": "assistant", "content": blocks})
+        }
+        Role::User | Role::Assistant | Role::System => json!({
+            "role": if message.role == Role::Assistant {
+                "assistant"
+            } else {
+                "user"
             },
             "content": message.text,
         }),
@@ -677,10 +759,39 @@ pub fn parse_event(protocol: ProviderProtocol, data: &str) -> Result<ParsedEvent
             Ok(ParsedEvent::Ignore)
         }
         ProviderProtocol::Anthropic => match value.get("type").and_then(Value::as_str) {
+            Some("content_block_start")
+                if value.pointer("/content_block/type").and_then(Value::as_str)
+                    == Some("tool_use") =>
+            {
+                Ok(ParsedEvent::ToolCalls(vec![ToolCallDelta {
+                    index: index_of(&value),
+                    id: value
+                        .pointer("/content_block/id")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    name: value
+                        .pointer("/content_block/name")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    arguments: String::new(),
+                }]))
+            }
             Some("content_block_delta") => {
-                match value.pointer("/delta/text").and_then(Value::as_str) {
-                    Some(text) => Ok(ParsedEvent::Text(text.to_string())),
-                    None => Ok(ParsedEvent::Ignore),
+                match value.pointer("/delta/type").and_then(Value::as_str) {
+                    Some("input_json_delta") => Ok(ParsedEvent::ToolCalls(vec![ToolCallDelta {
+                        index: index_of(&value),
+                        id: None,
+                        name: None,
+                        arguments: value
+                            .pointer("/delta/partial_json")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                    }])),
+                    _ => match value.pointer("/delta/text").and_then(Value::as_str) {
+                        Some(text) => Ok(ParsedEvent::Text(text.to_string())),
+                        None => Ok(ParsedEvent::Ignore),
+                    },
                 }
             }
             Some("message_stop") => Ok(ParsedEvent::Done),
@@ -691,6 +802,11 @@ pub fn parse_event(protocol: ProviderProtocol, data: &str) -> Result<ParsedEvent
             _ => Ok(ParsedEvent::Ignore),
         },
     }
+}
+
+/// The block a chunk belongs to. A provider that omits it means the first.
+fn index_of(value: &Value) -> usize {
+    value.get("index").and_then(Value::as_u64).unwrap_or(0) as usize
 }
 
 /// The provider's own words for a refusal, from either protocol's shape.
@@ -846,7 +962,11 @@ mod tests {
     }
 
     #[test]
-    fn anthropic_gets_no_tools_in_p1() {
+    fn anthropic_gets_the_same_tools_in_its_own_shape() {
+        let terminals = vec![ToolTerminal {
+            alias: "web".into(),
+            title: "My Host".into(),
+        }];
         let spec = request_spec(
             Anthropic,
             "https://api.anthropic.com",
@@ -854,15 +974,21 @@ mod tests {
             "secret",
             &[ChatMessage::user("hello")],
             64,
-            &[],
+            &terminals,
         );
-        assert!(spec.body.get("tools").is_none());
-        assert!(
-            spec.body["system"]
-                .as_str()
-                .unwrap()
-                .contains("cannot run commands")
+        let tools = spec.body["tools"].as_array().expect("tools");
+        assert_eq!(tools.len(), 3);
+        assert_eq!(tools[0]["name"], "run_command");
+        assert_eq!(
+            tools[0]["input_schema"]["properties"]["terminal"]["enum"],
+            json!(["web"])
         );
+        assert!(tools[0].get("function").is_none());
+        assert_eq!(tools[1]["name"], "wait_for_output");
+        assert_eq!(tools[2]["name"], "ask_user");
+        let system = spec.body["system"].as_str().unwrap();
+        assert!(system.contains("run_command"), "{system}");
+        assert!(system.contains("web (My Host)"), "{system}");
     }
 
     #[test]
@@ -898,6 +1024,121 @@ mod tests {
     }
 
     #[test]
+    fn a_tool_turn_and_its_result_go_back_in_the_anthropic_shape() {
+        let call = ToolCall {
+            id: "toolu-1".into(),
+            name: "run_command".into(),
+            arguments: r#"{"terminal":"web","command":"df -h"}"#.into(),
+        };
+        let messages = vec![
+            ChatMessage::user("check the disk"),
+            ChatMessage::assistant_calls("let me look", vec![call]),
+            ChatMessage::tool_result("toolu-1", r#"{"status":"ok"}"#),
+        ];
+        let spec = request_spec(
+            Anthropic,
+            "https://api.anthropic.com",
+            "m",
+            "k",
+            &messages,
+            64,
+            &[],
+        );
+        let wire = spec.body["messages"].as_array().unwrap();
+        assert_eq!(wire.len(), 3);
+        assert_eq!(wire[1]["role"], "assistant");
+        assert_eq!(wire[1]["content"][0]["type"], "text");
+        assert_eq!(wire[1]["content"][0]["text"], "let me look");
+        assert_eq!(wire[1]["content"][1]["type"], "tool_use");
+        assert_eq!(wire[1]["content"][1]["id"], "toolu-1");
+        assert_eq!(wire[1]["content"][1]["name"], "run_command");
+        assert_eq!(
+            wire[1]["content"][1]["input"],
+            json!({"terminal": "web", "command": "df -h"})
+        );
+        assert_eq!(wire[2]["role"], "user");
+        assert_eq!(wire[2]["content"][0]["type"], "tool_result");
+        assert_eq!(wire[2]["content"][0]["tool_use_id"], "toolu-1");
+        assert_eq!(wire[2]["content"][0]["content"], r#"{"status":"ok"}"#);
+    }
+
+    #[test]
+    fn anthropic_arguments_that_do_not_parse_become_an_empty_input() {
+        let call = ToolCall {
+            id: "toolu-2".into(),
+            name: "ask_user".into(),
+            arguments: "not json".into(),
+        };
+        let spec = request_spec(
+            Anthropic,
+            "https://api.anthropic.com",
+            "m",
+            "k",
+            &[ChatMessage::assistant_calls("", vec![call])],
+            8,
+            &[],
+        );
+        assert_eq!(
+            spec.body["messages"][0]["content"][0]["input"],
+            json!({}),
+            "an assistant turn with only a call still says something"
+        );
+        assert_eq!(spec.body["messages"][0]["content"][0]["name"], "ask_user");
+    }
+
+    #[test]
+    fn anthropic_tool_chunks_are_started_and_then_fed_fragments() {
+        assert_eq!(
+            parse_event(
+                Anthropic,
+                r#"{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu-1","name":"run_command","input":{}}}"#
+            )
+            .unwrap(),
+            ParsedEvent::ToolCalls(vec![ToolCallDelta {
+                index: 1,
+                id: Some("toolu-1".into()),
+                name: Some("run_command".into()),
+                arguments: String::new(),
+            }])
+        );
+        assert_eq!(
+            parse_event(
+                Anthropic,
+                r#"{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"terminal\":"}}"#
+            )
+            .unwrap(),
+            ParsedEvent::ToolCalls(vec![ToolCallDelta {
+                index: 1,
+                id: None,
+                name: None,
+                arguments: "{\"terminal\":".into(),
+            }])
+        );
+        assert_eq!(
+            parse_event(
+                Anthropic,
+                r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#
+            )
+            .unwrap(),
+            ParsedEvent::Ignore,
+            "a text block's words arrive as deltas, not in the start"
+        );
+        assert_eq!(
+            parse_event(
+                Anthropic,
+                r#"{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"web\"}"}}"#
+            )
+            .unwrap(),
+            ParsedEvent::ToolCalls(vec![ToolCallDelta {
+                index: 1,
+                id: None,
+                name: None,
+                arguments: "\"web\"}".into(),
+            }])
+        );
+    }
+
+    #[test]
     fn an_empty_assistant_turn_that_only_asked_for_a_tool_is_kept() {
         let call = ToolCall {
             id: "c".into(),
@@ -927,6 +1168,60 @@ mod tests {
         assert_eq!(spec.body["messages"][0]["role"], "user");
         let names: Vec<&str> = spec.headers.iter().map(|(name, _)| name.as_str()).collect();
         assert_eq!(names, ["x-api-key", "anthropic-version"]);
+    }
+
+    #[test]
+    fn extra_headers_follow_the_auth_headers_and_never_replace_them() {
+        let mut spec = request_spec(
+            OpenAi,
+            "http://x/v1",
+            "m",
+            "k",
+            &[ChatMessage::user("hi")],
+            8,
+            &[],
+        );
+        append_headers(
+            &mut spec.headers,
+            &[
+                RequestHeader {
+                    name: "authorization".into(),
+                    value: "Bearer mine".into(),
+                },
+                RequestHeader {
+                    name: "X-Tenant".into(),
+                    value: "acme".into(),
+                },
+                RequestHeader {
+                    name: "x-tenant".into(),
+                    value: "second".into(),
+                },
+            ],
+        );
+        let names: Vec<&str> = spec.headers.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, ["Authorization", "X-Tenant"]);
+        assert!(spec.headers[0].1.contains('k'));
+        assert_eq!(spec.headers[1].1, "acme");
+    }
+
+    #[test]
+    fn both_protocols_read_a_text_delta_the_same_way() {
+        assert_eq!(
+            parse_event(
+                OpenAi,
+                r#"{"choices":[{"delta":{"content":"the disk is"}}]}"#
+            )
+            .unwrap(),
+            ParsedEvent::Text("the disk is".into())
+        );
+        assert_eq!(
+            parse_event(
+                Anthropic,
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"the disk is"}}"#
+            )
+            .unwrap(),
+            ParsedEvent::Text("the disk is".into())
+        );
     }
 
     #[test]
@@ -1095,7 +1390,7 @@ mod tests {
     }
 
     #[test]
-    fn an_anthropic_scheduled_request_stays_plain_text() {
+    fn an_anthropic_scheduled_request_offers_the_read_only_tools() {
         let spec = scheduled_request_spec(
             Anthropic,
             "https://api.anthropic.com",
@@ -1103,9 +1398,27 @@ mod tests {
             "sk-test-key",
             &[ChatMessage::user("look")],
             256,
-            &[],
+            &[ToolTerminal {
+                alias: "web".into(),
+                title: "web-1".into(),
+            }],
         );
-        assert!(spec.body.get("tools").is_none());
+        let names: Vec<&str> = spec.body["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["read_terminal", "host_facts", "propose_command"]
+        );
+        assert!(
+            spec.body["system"]
+                .as_str()
+                .expect("system")
+                .contains("web (web-1)")
+        );
         assert!(spec.body["messages"][0]["content"].is_string());
     }
 }

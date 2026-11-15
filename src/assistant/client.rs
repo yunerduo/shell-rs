@@ -14,7 +14,7 @@ use super::chat::{ChatMessage, ToolCall};
 use super::protocol::{
     self, ChatError, ParsedEvent, SseChunk, SseDecoder, ToolCallDelta, ToolTerminal,
 };
-use super::settings::{ProviderProtocol, account};
+use super::settings::{ProviderProtocol, RequestHeader, account};
 
 /// Everything one answer needs. The key is not here: only the name of the
 /// keychain entry holding it.
@@ -32,6 +32,9 @@ pub struct StreamRequest {
     /// This answer belongs to a scheduled task: the tools are the read-only
     /// ones and a proposal that cannot run.
     pub scheduled: bool,
+    /// Headers the provider's settings add; a name the protocol already
+    /// sets keeps the protocol's value.
+    pub headers: Vec<RequestHeader>,
 }
 
 /// What the worker reports. `Delta` is a fragment of the answer as it
@@ -112,7 +115,7 @@ pub(super) fn run_with_key(
     tx: &mpsc::Sender<StreamEvent>,
     cancel: &AtomicBool,
 ) -> Result<(), ChatError> {
-    let spec = if request.scheduled {
+    let mut spec = if request.scheduled {
         protocol::scheduled_request_spec(
             request.protocol,
             &request.base_url,
@@ -133,6 +136,7 @@ pub(super) fn run_with_key(
             &request.terminals,
         )
     };
+    protocol::append_headers(&mut spec.headers, &request.headers);
 
     let client = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(10))
@@ -355,6 +359,7 @@ mod tests {
             timeout: Duration::from_secs(60),
             terminals: Vec::new(),
             scheduled: false,
+            headers: Vec::new(),
         };
         let (tx, rx) = mpsc::channel();
         let cancel = AtomicBool::new(false);

@@ -68,6 +68,15 @@ pub fn account(keychain_id: &str) -> String {
     format!("assistant:{keychain_id}")
 }
 
+/// One extra HTTP header. Most services need none; a gateway may want a
+/// tenant or an organization header. A header the protocol sets itself
+/// (the key's, the content type, ...) is never replaced by one of these.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestHeader {
+    pub name: String,
+    pub value: String,
+}
+
 /// One provider's connection. No field holds the key.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -79,6 +88,8 @@ pub struct AssistantProvider {
     pub keychain_id: String,
     /// The most tokens an answer may take.
     pub max_tokens: u32,
+    /// Headers added after the protocol's own.
+    pub headers: Vec<RequestHeader>,
 }
 
 impl Default for AssistantProvider {
@@ -88,6 +99,7 @@ impl Default for AssistantProvider {
             model: DEFAULT_OPENAI_MODEL.to_string(),
             keychain_id: "assistant-openai".to_string(),
             max_tokens: 2048,
+            headers: Vec::new(),
         }
     }
 }
@@ -99,6 +111,7 @@ impl AssistantProvider {
             model: protocol.default_model().to_string(),
             keychain_id: protocol.default_keychain_id().to_string(),
             max_tokens: 2048,
+            headers: Vec::new(),
         }
     }
 
@@ -122,7 +135,91 @@ impl AssistantProvider {
             self.keychain_id = protocol.default_keychain_id().to_string();
         }
         self.max_tokens = self.max_tokens.clamp(1, 8192);
+        self.headers = clean_headers(&self.headers);
     }
+}
+
+/// The most headers one provider may add, and the longest value.
+pub const HEADER_LIMIT: usize = 8;
+const HEADER_VALUE_LIMIT: usize = 1024;
+
+/// Headers the protocol writes itself. A user entry with one of these names
+/// is dropped rather than allowed to break the call or replace the key.
+const RESERVED_HEADERS: [&str; 7] = [
+    "authorization",
+    "x-api-key",
+    "anthropic-version",
+    "content-type",
+    "content-length",
+    "host",
+    "accept",
+];
+
+/// One header from what the user typed, or `None` when it could not be
+/// sent as it stands.
+pub fn clean_header(name: &str, value: &str) -> Option<RequestHeader> {
+    clean_headers(&[RequestHeader {
+        name: name.to_string(),
+        value: value.to_string(),
+    }])
+    .into_iter()
+    .next()
+}
+
+/// Keep the headers that are well formed: a token name, a value without a
+/// line break, no reserved name, no repeat, up to the limit.
+fn clean_headers(headers: &[RequestHeader]) -> Vec<RequestHeader> {
+    let mut kept: Vec<RequestHeader> = Vec::new();
+    for header in headers {
+        let name = header.name.trim().to_string();
+        if name.is_empty() || !name.bytes().all(is_token_char) {
+            continue;
+        }
+        let lower = name.to_ascii_lowercase();
+        if RESERVED_HEADERS.contains(&lower.as_str()) {
+            continue;
+        }
+        if header.value.contains(['\r', '\n']) {
+            continue;
+        }
+        let value = header.value.trim().to_string();
+        if value.is_empty() || value.chars().count() > HEADER_VALUE_LIMIT {
+            continue;
+        }
+        if kept
+            .iter()
+            .any(|kept| kept.name.eq_ignore_ascii_case(&name))
+        {
+            continue;
+        }
+        kept.push(RequestHeader { name, value });
+        if kept.len() == HEADER_LIMIT {
+            break;
+        }
+    }
+    kept
+}
+
+/// The characters an HTTP header name may hold.
+fn is_token_char(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'!' | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'\''
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'.'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'|'
+                | b'~'
+        )
 }
 
 /// `settings.json`'s `assistant` section. One provider of each protocol is
@@ -260,12 +357,14 @@ mod tests {
                 model: "  ".into(),
                 keychain_id: " my key ".into(),
                 max_tokens: 0,
+                headers: Vec::new(),
             },
             anthropic: AssistantProvider {
                 base_url: "".into(),
                 model: "".into(),
                 keychain_id: "".into(),
                 max_tokens: 99_999,
+                headers: Vec::new(),
             },
             timeout_seconds: 1,
             user_blacklist: vec![
@@ -304,6 +403,52 @@ mod tests {
         assert_eq!(settings.account(), "assistant:assistant-anthropic");
         settings.protocol = ProviderProtocol::OpenAi;
         assert_eq!(settings.account(), "assistant:work");
+    }
+
+    #[test]
+    fn headers_keep_their_shape_and_lose_reserved_names() {
+        let header = |name: &str, value: &str| RequestHeader {
+            name: name.into(),
+            value: value.into(),
+        };
+        let mut settings = AssistantSettings::default();
+        settings.openai.headers = vec![
+            header(" X-Tenant ", " acme "),
+            header("Authorization", "Bearer stolen"),
+            header("x-api-key", "stolen"),
+            header("content-type", "text/plain"),
+            header("Bad Name", "v"),
+            header("X-Break", "a\r\nInjected: yes"),
+            header("x-empty", "   "),
+            header("x-long", &"v".repeat(1025)),
+            header("x-tenant", "second"),
+            header("X-Trace", "1"),
+            header("X-More", "2"),
+            header("X-Six", "3"),
+            header("X-Seven", "4"),
+            header("X-Eight", "5"),
+            header("X-Nine", "6"),
+        ];
+        settings.normalize();
+        let kept: Vec<(&str, &str)> = settings
+            .openai
+            .headers
+            .iter()
+            .map(|header| (header.name.as_str(), header.value.as_str()))
+            .collect();
+        assert_eq!(
+            kept,
+            vec![
+                ("X-Tenant", "acme"),
+                ("X-Trace", "1"),
+                ("X-More", "2"),
+                ("X-Six", "3"),
+                ("X-Seven", "4"),
+                ("X-Eight", "5"),
+                ("X-Nine", "6"),
+            ],
+            "reserved, malformed, empty, long and repeated entries are dropped, up to eight"
+        );
     }
 
     #[test]
