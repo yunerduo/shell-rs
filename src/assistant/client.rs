@@ -60,6 +60,15 @@ pub struct StreamRequest {
     /// The proxy in force, if any. None leaves the system's own proxy in
     /// charge, as before.
     pub proxy: Option<ProxySetting>,
+    /// From the model profile; `None` leaves the service's default.
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    /// Sequences that end the answer.
+    pub stop: Vec<String>,
+    /// A JSON object merged into the request body.
+    pub extra: String,
+    /// Appended to the system prompt for this model.
+    pub instruction: String,
 }
 
 /// What the worker reports. `Delta` is a fragment of the answer as it
@@ -162,6 +171,17 @@ pub(super) fn run_with_key(
         )
     };
     protocol::append_headers(&mut spec.headers, &request.headers);
+    protocol::apply_tuning(
+        &mut spec.body,
+        request.protocol,
+        &protocol::Tuning {
+            temperature: request.temperature,
+            top_p: request.top_p,
+            stop: &request.stop,
+            extra: &request.extra,
+            instruction: &request.instruction,
+        },
+    );
 
     let client = build_client(request)?;
 
@@ -575,6 +595,11 @@ mod tests {
             scheduled: false,
             headers: Vec::new(),
             proxy: None,
+            temperature: None,
+            top_p: None,
+            stop: Vec::new(),
+            extra: String::new(),
+            instruction: String::new(),
         };
         let (tx, rx) = mpsc::channel();
         let cancel = AtomicBool::new(false);

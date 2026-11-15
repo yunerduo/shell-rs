@@ -30,8 +30,8 @@ use super::pending::{self, PendingItem};
 use super::policy;
 use super::schedule::Schedule;
 use super::settings::{
-    HEADER_LIMIT, ProviderProtocol, ProxyChoice, ProxyConfig, ProxyKind, RequestHeader,
-    clean_header, proxy_account,
+    HEADER_LIMIT, MODEL_LIMIT, ModelProfile, ProviderProtocol, ProxyChoice, ProxyConfig, ProxyKind,
+    RequestHeader, clean_header, proxy_account,
 };
 
 /// The dialog is wide enough for a form's label and control on one line, and
@@ -44,6 +44,7 @@ const DIALOG_MARGIN: f32 = 32.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ConfigTab {
     Model,
+    Models,
     Proxy,
     Headers,
     Rules,
@@ -52,8 +53,9 @@ enum ConfigTab {
 }
 
 impl ConfigTab {
-    const ALL: [ConfigTab; 6] = [
+    const ALL: [ConfigTab; 7] = [
         ConfigTab::Model,
+        ConfigTab::Models,
         ConfigTab::Proxy,
         ConfigTab::Headers,
         ConfigTab::Rules,
@@ -64,17 +66,19 @@ impl ConfigTab {
     fn index(self) -> usize {
         match self {
             ConfigTab::Model => 0,
-            ConfigTab::Proxy => 1,
-            ConfigTab::Headers => 2,
-            ConfigTab::Rules => 3,
-            ConfigTab::Classifier => 4,
-            ConfigTab::Schedules => 5,
+            ConfigTab::Models => 1,
+            ConfigTab::Proxy => 2,
+            ConfigTab::Headers => 3,
+            ConfigTab::Rules => 4,
+            ConfigTab::Classifier => 5,
+            ConfigTab::Schedules => 6,
         }
     }
 
     fn label(self) -> SharedString {
         match self {
             ConfigTab::Model => t!("assistant.config.tab.model"),
+            ConfigTab::Models => t!("assistant.config.tab.models"),
             ConfigTab::Proxy => t!("assistant.config.tab.proxy"),
             ConfigTab::Headers => t!("assistant.config.tab.headers"),
             ConfigTab::Rules => t!("assistant.config.tab.rules"),
@@ -125,6 +129,58 @@ enum ProxyCheck {
     Failed(SharedString),
 }
 
+/// A number for a field: blank when it means the service's default.
+fn empty_if_zero(value: u32) -> String {
+    if value == 0 {
+        String::new()
+    } else {
+        value.to_string()
+    }
+}
+
+/// A float for a field, without a trailing `.0`.
+fn float_text(value: Option<f32>) -> String {
+    match value {
+        Some(value) if value.fract() == 0.0 => format!("{}", value as u32),
+        Some(value) => format!("{value}"),
+        None => String::new(),
+    }
+}
+
+/// The parameters a model sends, as one line under its name.
+fn model_params_line(profile: &ModelProfile) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if profile.max_tokens > 0 {
+        parts.push(format!("max_tokens {}", profile.max_tokens));
+    }
+    if let Some(value) = profile.temperature {
+        parts.push(format!("temperature {value}"));
+    }
+    if let Some(value) = profile.top_p {
+        parts.push(format!("top_p {value}"));
+    }
+    if !profile.stop.is_empty() {
+        parts.push(
+            t!(
+                "assistant.settings.models.stop_summary",
+                count = profile.stop.len()
+            )
+            .to_string(),
+        );
+    }
+    if !profile.instruction.is_empty() {
+        parts.push(t!("assistant.settings.models.instruction_summary").to_string());
+    }
+    if !profile.extra.is_empty() {
+        parts.push(t!("assistant.settings.models.extra_summary").to_string());
+    }
+    if parts.is_empty() {
+        t!("assistant.settings.models.no_params").to_string()
+    } else {
+        parts.join(" · ")
+    }
+}
+
 /// The body of the assistant's settings dialog.
 pub struct AssistantConfigDialog {
     settings: Entity<SettingsStore>,
@@ -142,6 +198,18 @@ pub struct AssistantConfigDialog {
     header_name: Entity<InputState>,
     header_value: Entity<InputState>,
     classifier_model: Entity<InputState>,
+    /// The models tab: the profile being written, or the id of the one being
+    /// edited, and the fields of the form.
+    model_protocol: ProviderProtocol,
+    editing_model: Option<String>,
+    model_label: Entity<InputState>,
+    model_id: Entity<InputState>,
+    model_max_tokens: Entity<InputState>,
+    model_temperature: Entity<InputState>,
+    model_top_p: Entity<InputState>,
+    model_stop: Entity<InputState>,
+    model_instruction: Entity<InputState>,
+    model_extra: Entity<InputState>,
     schedule_command: Entity<InputState>,
     schedule_interval: Entity<InputState>,
     /// The proxy tab: which scope it edits, whether the default is on, and
@@ -209,6 +277,37 @@ impl AssistantConfigDialog {
             InputState::new(window, cx)
                 .placeholder(t!("assistant.settings.classifier.model_placeholder"))
                 .default_value(assistant.classifier_model.clone())
+        });
+        let model_label = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.models.label.placeholder"))
+        });
+        let model_id = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t!("assistant.settings.models.id.placeholder"))
+        });
+        let model_max_tokens = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.models.max_tokens.placeholder"))
+        });
+        let model_temperature = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.models.temperature.placeholder"))
+        });
+        let model_top_p = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.models.top_p.placeholder"))
+        });
+        let model_stop = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.models.stop.placeholder"))
+        });
+        let model_instruction = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.models.instruction.placeholder"))
+        });
+        let model_extra = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.models.extra.placeholder"))
         });
         let schedule_command = cx.new(|cx| {
             InputState::new(window, cx)
@@ -303,6 +402,16 @@ impl AssistantConfigDialog {
             header_name,
             header_value,
             classifier_model,
+            model_protocol: protocol,
+            editing_model: None,
+            model_label,
+            model_id,
+            model_max_tokens,
+            model_temperature,
+            model_top_p,
+            model_stop,
+            model_instruction,
+            model_extra,
             schedule_command,
             schedule_interval,
             proxy_scope: ProxyScope::Default,
@@ -409,6 +518,195 @@ impl AssistantConfigDialog {
             .ok();
         })
         .detach();
+    }
+
+    /// The fields of the models tab as a profile, cleaned the way the
+    /// settings file is.
+    fn model_from_fields(&self, cx: &mut Context<Self>) -> Result<ModelProfile, SharedString> {
+        let number = |text: String| -> Result<Option<f32>, SharedString> {
+            let text = text.trim().to_string();
+            if text.is_empty() {
+                return Ok(None);
+            }
+            text.parse::<f32>()
+                .map(Some)
+                .map_err(|_| t!("assistant.settings.models.number_invalid"))
+        };
+        let max_tokens = {
+            let text = self.model_max_tokens.read(cx).value().trim().to_string();
+            if text.is_empty() {
+                0
+            } else {
+                text.parse::<u32>()
+                    .map_err(|_| t!("assistant.settings.models.number_invalid"))?
+            }
+        };
+        let stop = self
+            .model_stop
+            .read(cx)
+            .value()
+            .split([',', '\u{FF0C}'])
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let mut profile = ModelProfile {
+            id: String::new(),
+            label: self.model_label.read(cx).value().to_string(),
+            protocol: self.model_protocol,
+            model: self.model_id.read(cx).value().to_string(),
+            instruction: self.model_instruction.read(cx).value().to_string(),
+            max_tokens,
+            temperature: number(self.model_temperature.read(cx).value().to_string())?,
+            top_p: number(self.model_top_p.read(cx).value().to_string())?,
+            stop,
+            extra: self.model_extra.read(cx).value().to_string(),
+        };
+        profile.normalize();
+        if profile.model.is_empty() {
+            return Err(t!("assistant.settings.models.require_id"));
+        }
+        if profile
+            .temperature
+            .is_some_and(|value| !(0.0..=2.0).contains(&value))
+        {
+            return Err(t!("assistant.settings.models.temperature.invalid"));
+        }
+        if profile
+            .top_p
+            .is_some_and(|value| !(0.0..=1.0).contains(&value))
+        {
+            return Err(t!("assistant.settings.models.top_p.invalid"));
+        }
+        Ok(profile)
+    }
+
+    fn save_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut profile = match self.model_from_fields(cx) {
+            Ok(profile) => profile,
+            Err(message) => {
+                self.fail(message, cx);
+                return;
+            }
+        };
+        let editing = self.editing_model.clone();
+        let settings = self.settings.read(cx).settings().assistant.clone();
+        if settings
+            .models
+            .iter()
+            .any(|other| other.id == profile.id && Some(&other.id) != editing.as_ref())
+        {
+            self.fail(t!("assistant.settings.models.duplicate"), cx);
+            return;
+        }
+        if editing.is_none() && settings.models.len() >= MODEL_LIMIT {
+            self.fail(t!("assistant.settings.models.limit"), cx);
+            return;
+        }
+        // The id is derived from protocol and model, so an edit may move it.
+        profile.id = ModelProfile::id_of(profile.protocol, &profile.model);
+        let new_id = profile.id.clone();
+        let was_active = editing
+            .as_ref()
+            .is_some_and(|old| settings.active_model == *old);
+        self.settings.update(cx, |store, cx| {
+            store.update(
+                |settings| {
+                    match &editing {
+                        Some(old) => {
+                            if let Some(slot) =
+                                settings.assistant.models.iter_mut().find(|m| &m.id == old)
+                            {
+                                *slot = profile;
+                            }
+                        }
+                        None => settings.assistant.models.push(profile),
+                    }
+                    if was_active {
+                        settings.assistant.active_model = new_id.clone();
+                    }
+                },
+                cx,
+            )
+        });
+        self.clear_model_form(window, cx);
+        self.succeed(t!("assistant.settings.models.saved"), cx);
+    }
+
+    fn edit_model(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(profile) = self
+            .settings
+            .read(cx)
+            .settings()
+            .assistant
+            .model_profile(id)
+            .cloned()
+        else {
+            return;
+        };
+        self.editing_model = Some(profile.id.clone());
+        self.model_protocol = profile.protocol;
+        let values = [
+            (&self.model_label, profile.label),
+            (&self.model_id, profile.model),
+            (&self.model_max_tokens, empty_if_zero(profile.max_tokens)),
+            (&self.model_temperature, float_text(profile.temperature)),
+            (&self.model_top_p, float_text(profile.top_p)),
+            (&self.model_stop, profile.stop.join(", ")),
+            (&self.model_instruction, profile.instruction),
+            (&self.model_extra, profile.extra),
+        ];
+        for (input, value) in values {
+            input.update(cx, |input, cx| input.set_value(value, window, cx));
+        }
+        self.error = None;
+        self.notice = None;
+        cx.notify();
+    }
+
+    fn remove_model(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings.update(cx, |store, cx| {
+            store.update(
+                |settings| {
+                    settings.assistant.models.retain(|profile| profile.id != id);
+                    if settings.assistant.active_model == id {
+                        settings.assistant.active_model.clear();
+                    }
+                },
+                cx,
+            )
+        });
+        if self.editing_model.as_deref() == Some(id) {
+            self.clear_model_form(window, cx);
+        }
+        self.succeed(t!("assistant.settings.models.removed"), cx);
+    }
+
+    fn activate_model(&mut self, id: String, cx: &mut Context<Self>) {
+        self.settings.update(cx, |store, cx| {
+            store.update(|settings| settings.assistant.active_model = id, cx)
+        });
+        self.error = None;
+        self.notice = None;
+        cx.notify();
+    }
+
+    fn clear_model_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editing_model = None;
+        self.model_protocol = self.protocol;
+        for input in [
+            &self.model_label,
+            &self.model_id,
+            &self.model_max_tokens,
+            &self.model_temperature,
+            &self.model_top_p,
+            &self.model_stop,
+            &self.model_instruction,
+            &self.model_extra,
+        ] {
+            input.update(cx, |input, cx| input.set_value("", window, cx));
+        }
+        cx.notify();
     }
 
     /// Whether the scope's proxy has a password in the keychain.
@@ -913,6 +1211,219 @@ impl AssistantConfigDialog {
                     .child(Input::new(&self.api_key).id("assistant-config-api-key")),
             )
             .footer(footer)
+            .into_any_element()
+    }
+
+    /// 模型: the models that can be picked in a conversation, and the
+    /// parameters each sends. The provider tab says where they are sent and
+    /// with which key.
+    fn render_models(&self, cx: &mut Context<Self>) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let success = cx.theme().success;
+        let border = cx.theme().border;
+        let assistant = self.settings.read(cx).settings().assistant.clone();
+        let editing = self.editing_model.is_some();
+        let protocols = SegmentedControl::new("assistant-config-model-protocol")
+            .selected_index(
+                ProviderProtocol::ALL
+                    .iter()
+                    .position(|protocol| *protocol == self.model_protocol),
+            )
+            .on_change(cx.listener(|this, index: &usize, _, cx| {
+                if let Some(protocol) = ProviderProtocol::ALL.get(*index).copied() {
+                    this.model_protocol = protocol;
+                    cx.notify();
+                }
+            }))
+            .segments(ProviderProtocol::ALL.map(|protocol| Segment::new(protocol.label())));
+        let footer = h_flex()
+            .items_center()
+            .gap_2()
+            .child(
+                Button::new("assistant-config-model-save")
+                    .small()
+                    .primary()
+                    .label(if editing {
+                        t!("assistant.settings.models.save")
+                    } else {
+                        t!("assistant.settings.models.add")
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| this.save_model(window, cx))),
+            )
+            .when(editing, |row| {
+                row.child(
+                    Button::new("assistant-config-model-cancel")
+                        .small()
+                        .label(t!("common.cancel"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.clear_model_form(window, cx);
+                        })),
+                )
+            });
+        let form = Form::new()
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.protocol"))
+                    .child(protocols),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.id"))
+                    .description(t!("assistant.settings.models.id.hint"))
+                    .child(Input::new(&self.model_id).id("assistant-config-model-id")),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.label"))
+                    .description(t!("assistant.settings.models.label.hint"))
+                    .child(Input::new(&self.model_label).id("assistant-config-model-label")),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.max_tokens"))
+                    .child(
+                        Input::new(&self.model_max_tokens).id("assistant-config-model-max-tokens"),
+                    ),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.temperature"))
+                    .child(
+                        Input::new(&self.model_temperature)
+                            .id("assistant-config-model-temperature"),
+                    ),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.top_p"))
+                    .child(Input::new(&self.model_top_p).id("assistant-config-model-top-p")),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.stop"))
+                    .child(Input::new(&self.model_stop).id("assistant-config-model-stop")),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.instruction"))
+                    .description(t!("assistant.settings.models.instruction.hint"))
+                    .child(
+                        Input::new(&self.model_instruction)
+                            .id("assistant-config-model-instruction"),
+                    ),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.extra"))
+                    .description(t!("assistant.settings.models.extra.hint"))
+                    .child(Input::new(&self.model_extra).id("assistant-config-model-extra")),
+            )
+            .footer(footer)
+            .into_any_element();
+        let active = assistant.active_model.clone();
+        let mut list = v_flex().w_full().gap_1();
+        if assistant.models.is_empty() {
+            list = list.child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(t!("assistant.settings.models.empty")),
+            );
+        }
+        for (index, profile) in assistant.models.iter().enumerate() {
+            let id = profile.id.clone();
+            let is_active = active == profile.id;
+            let params = model_params_line(profile);
+            list = list.child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .py_2()
+                    .border_t_1()
+                    .border_color(border)
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_0p5()
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div().text_sm().child(profile.display_name().to_string()),
+                                    )
+                                    .child(div().text_xs().text_color(muted).child(format!(
+                                        "{} · {}",
+                                        profile.model,
+                                        profile.protocol.label()
+                                    )))
+                                    .when(is_active, |row| {
+                                        row.child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(success)
+                                                .child(t!("assistant.settings.models.active")),
+                                        )
+                                    }),
+                            )
+                            .child(div().text_xs().text_color(muted).child(params)),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .when(!is_active, |row| {
+                                let id = id.clone();
+                                row.child(
+                                    Button::new(format!("assistant-config-model-use-{index}"))
+                                        .xsmall()
+                                        .ghost()
+                                        .icon(CatalogIcon::CircleCheck)
+                                        .label(t!("assistant.settings.models.set_active"))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.activate_model(id.clone(), cx);
+                                        })),
+                                )
+                            })
+                            .child({
+                                let edit = id.clone();
+                                Button::new(format!("assistant-config-model-edit-{index}"))
+                                    .xsmall()
+                                    .ghost()
+                                    .icon(CatalogIcon::Pencil)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.edit_model(&edit, window, cx);
+                                    }))
+                            })
+                            .child(
+                                Button::new(format!("assistant-config-model-remove-{index}"))
+                                    .xsmall()
+                                    .ghost()
+                                    .icon(CatalogIcon::Trash)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.remove_model(&id, window, cx);
+                                    })),
+                            ),
+                    ),
+            );
+        }
+        v_flex()
+            .gap_4()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(t!("assistant.settings.models.hint")),
+            )
+            .child(form)
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(div().text_sm().child(t!("assistant.settings.models.list"))),
+            )
+            .child(list)
             .into_any_element()
     }
 
@@ -1576,6 +2087,7 @@ impl Render for AssistantConfigDialog {
             .child(tabs)
             .child(match self.tab {
                 ConfigTab::Model => self.render_model(cx),
+                ConfigTab::Models => self.render_models(cx),
                 ConfigTab::Proxy => self.render_proxy(cx),
                 ConfigTab::Headers => self.render_headers(cx),
                 ConfigTab::Rules => self.render_rules(cx),

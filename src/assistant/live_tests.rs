@@ -61,6 +61,11 @@ fn ask_with(terminals: Vec<ToolTerminal>, prompt: &str) -> Vec<ToolCall> {
         scheduled: false,
         headers: Vec::new(),
         proxy: None,
+        temperature: None,
+        top_p: None,
+        stop: Vec::new(),
+        extra: String::new(),
+        instruction: String::new(),
     };
     let (tx, rx) = mpsc::channel();
     let cancel = AtomicBool::new(false);

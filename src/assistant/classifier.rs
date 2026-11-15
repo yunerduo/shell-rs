@@ -102,24 +102,31 @@ pub fn parse(answer: &str) -> Option<Classified> {
 /// The request for one command. No tools are sent: the classifier can only
 /// answer, never ask for anything to run.
 pub fn request(settings: &AssistantSettings, command: &str, shell: &str) -> StreamRequest {
-    let provider = settings.active();
+    let selection = settings.selection();
     let model = if settings.classifier_model.trim().is_empty() {
-        provider.model.clone()
+        selection.model.clone()
     } else {
         settings.classifier_model.clone()
     };
     StreamRequest {
-        protocol: settings.protocol,
-        base_url: provider.base_url.clone(),
+        protocol: selection.protocol,
+        base_url: selection.base_url.clone(),
         model,
-        keychain_id: provider.keychain_id.clone(),
+        keychain_id: selection.keychain_id.clone(),
         messages: vec![ChatMessage::user(prompt(command, shell))],
         max_tokens: MAX_TOKENS,
         timeout: TIMEOUT,
         terminals: Vec::new(),
         scheduled: false,
-        headers: provider.headers.clone(),
-        proxy: settings.proxy_route(settings.protocol).map(Into::into),
+        headers: selection.headers.clone(),
+        proxy: settings.proxy_route(selection.protocol).map(Into::into),
+        // The judgment stays the same whatever the model's own tuning: the
+        // question has one right answer.
+        temperature: None,
+        top_p: None,
+        stop: Vec::new(),
+        extra: String::new(),
+        instruction: String::new(),
     }
 }
 

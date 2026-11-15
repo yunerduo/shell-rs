@@ -370,6 +370,83 @@ pub fn append_headers(headers: &mut Vec<(String, String)>, extra: &[RequestHeade
     }
 }
 
+/// The parameters a model profile adds to a request. Empty or `None` fields
+/// leave the service's own defaults alone.
+pub struct Tuning<'a> {
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub stop: &'a [String],
+    pub extra: &'a str,
+    /// Appended to the system prompt, after a blank line.
+    pub instruction: &'a str,
+}
+
+/// Fields the profile may not override: they carry the conversation, the
+/// tools and the protocol itself.
+const UNTUNABLE: [&str; 10] = [
+    "model",
+    "messages",
+    "system",
+    "tools",
+    "stream",
+    "max_tokens",
+    "temperature",
+    "top_p",
+    "stop",
+    "stop_sequences",
+];
+
+/// Write the model profile's parameters into a body `request_spec` or
+/// `scheduled_request_spec` built. Unknown extra fields are merged as they
+/// are; the fields above keep the values the conversation wrote.
+pub fn apply_tuning(body: &mut Value, protocol: ProviderProtocol, tuning: &Tuning<'_>) {
+    let Some(object) = body.as_object_mut() else {
+        return;
+    };
+    if let Some(temperature) = tuning.temperature {
+        object.insert("temperature".to_string(), json!(temperature));
+    }
+    if let Some(top_p) = tuning.top_p {
+        object.insert("top_p".to_string(), json!(top_p));
+    }
+    if !tuning.stop.is_empty() {
+        let key = match protocol {
+            ProviderProtocol::OpenAi => "stop",
+            ProviderProtocol::Anthropic => "stop_sequences",
+        };
+        object.insert(key.to_string(), json!(tuning.stop));
+    }
+    let instruction = tuning.instruction.trim();
+    if !instruction.is_empty() {
+        match protocol {
+            ProviderProtocol::OpenAi => {
+                if let Some(messages) = object.get_mut("messages").and_then(|m| m.as_array_mut())
+                    && let Some(system) = messages.first_mut().and_then(|m| m.as_object_mut())
+                    && system.get("role").and_then(|role| role.as_str()) == Some("system")
+                    && let Some(content) = system.get("content").and_then(|c| c.as_str())
+                {
+                    let content = format!("{content}\n\n{instruction}");
+                    system.insert("content".to_string(), json!(content));
+                }
+            }
+            ProviderProtocol::Anthropic => {
+                if let Some(system) = object.get("system").and_then(|s| s.as_str()) {
+                    let system = format!("{system}\n\n{instruction}");
+                    object.insert("system".to_string(), json!(system));
+                }
+            }
+        }
+    }
+    if let Ok(Value::Object(extra)) = serde_json::from_str::<Value>(tuning.extra.trim()) {
+        for (key, value) in extra {
+            if UNTUNABLE.contains(&key.as_str()) {
+                continue;
+            }
+            object.insert(key, value);
+        }
+    }
+}
+
 /// The one header that carries the key, per protocol.
 fn auth_headers(protocol: ProviderProtocol, key: &str) -> Vec<(String, String)> {
     match protocol {
@@ -1207,6 +1284,51 @@ mod tests {
         assert_eq!(names, ["Authorization", "X-Tenant"]);
         assert!(spec.headers[0].1.contains('k'));
         assert_eq!(spec.headers[1].1, "acme");
+    }
+
+    #[test]
+    fn a_model_profile_adds_parameters_but_not_the_conversation() {
+        for (protocol, stop_key) in [(OpenAi, "stop"), (Anthropic, "stop_sequences")] {
+            let mut spec = request_spec(
+                protocol,
+                "http://127.0.0.1:18045/v1",
+                "m",
+                "k",
+                &[ChatMessage::user("hello")],
+                256,
+                &[],
+            );
+            let stop = vec!["END".to_string()];
+            apply_tuning(
+                &mut spec.body,
+                protocol,
+                &Tuning {
+                    temperature: Some(0.2),
+                    top_p: Some(0.9),
+                    stop: &stop,
+                    extra: r#"{"reasoning_effort": "high", "model": "other"}"#,
+                    instruction: "Keep it short.",
+                },
+            );
+            let number = |value: &Value| value.as_f64().expect("a number");
+            assert!((number(&spec.body["temperature"]) - 0.2).abs() < 1e-6);
+            assert!((number(&spec.body["top_p"]) - 0.9).abs() < 1e-6);
+            assert_eq!(spec.body[stop_key], json!(["END"]));
+            assert_eq!(spec.body["reasoning_effort"], "high");
+            assert_eq!(spec.body["model"], "m", "the profile cannot swap the model");
+            assert_eq!(spec.body["max_tokens"], 256);
+            match protocol {
+                OpenAi => {
+                    let system = spec.body["messages"][0]["content"].as_str().unwrap();
+                    assert!(system.ends_with("Keep it short."), "{system}");
+                    assert_eq!(spec.body["messages"][1]["content"], "hello");
+                }
+                Anthropic => {
+                    let system = spec.body["system"].as_str().unwrap();
+                    assert!(system.ends_with("Keep it short."), "{system}");
+                }
+            }
+        }
     }
 
     #[test]

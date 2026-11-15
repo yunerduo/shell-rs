@@ -410,14 +410,158 @@ fn is_token_char(byte: u8) -> bool {
         )
 }
 
+/// One model the conversation may pick. The provider it names says where the
+/// request goes and which key signs it; the profile says what to ask for and
+/// how.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModelProfile {
+    /// `protocol:model`, what `active_model` stores.
+    pub id: String,
+    /// What the model menu calls it; the model's name when blank.
+    pub label: String,
+    pub protocol: ProviderProtocol,
+    /// The model name the service knows.
+    pub model: String,
+    /// Appended to the system prompt for this model only.
+    pub instruction: String,
+    /// The most tokens an answer may take; 0 means the provider's.
+    pub max_tokens: u32,
+    /// `None` leaves the service's default.
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    /// Sequences that end an answer.
+    pub stop: Vec<String>,
+    /// A JSON object merged into the request body, after the fields above.
+    pub extra: String,
+}
+
+/// The most models someone may configure, and the most stop sequences one
+/// model may name.
+pub const MODEL_LIMIT: usize = 20;
+const STOP_LIMIT: usize = 8;
+const STOP_LENGTH_LIMIT: usize = 64;
+const INSTRUCTION_LIMIT: usize = 2000;
+const EXTRA_LIMIT: usize = 2000;
+
+impl Default for ModelProfile {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            label: String::new(),
+            protocol: ProviderProtocol::OpenAi,
+            model: String::new(),
+            instruction: String::new(),
+            max_tokens: 0,
+            temperature: None,
+            top_p: None,
+            stop: Vec::new(),
+            extra: String::new(),
+        }
+    }
+}
+
+impl ModelProfile {
+    /// The id a profile of `protocol` and `model` carries.
+    pub fn id_of(protocol: ProviderProtocol, model: &str) -> String {
+        format!("{}:{}", protocol.key(), model.trim())
+    }
+
+    /// What the menu shows.
+    pub fn display_name(&self) -> &str {
+        if self.label.trim().is_empty() {
+            &self.model
+        } else {
+            &self.label
+        }
+    }
+
+    /// Trim what can be trimmed, drop what cannot be sent, and put the
+    /// numbers back in range.
+    pub fn normalize(&mut self) {
+        self.model = self.model.trim().chars().take(128).collect();
+        self.label = self.label.trim().chars().take(64).collect();
+        self.instruction = self
+            .instruction
+            .trim()
+            .chars()
+            .take(INSTRUCTION_LIMIT)
+            .collect();
+        self.extra = clean_extra(&self.extra);
+        self.max_tokens = self.max_tokens.clamp(0, 8192);
+        self.temperature = self.temperature.filter(|value| (0.0..=2.0).contains(value));
+        self.top_p = self.top_p.filter(|value| (0.0..=1.0).contains(value));
+        self.stop = clean_stop(&self.stop);
+        self.id = Self::id_of(self.protocol, &self.model);
+    }
+}
+
+/// `stop` without blank entries, line breaks, repeats or entries too long to
+/// send, up to [`STOP_LIMIT`].
+fn clean_stop(entries: &[String]) -> Vec<String> {
+    let mut kept: Vec<String> = Vec::new();
+    for entry in entries {
+        let entry = entry.trim();
+        if entry.is_empty()
+            || entry.contains(['\r', '\n'])
+            || entry.chars().count() > STOP_LENGTH_LIMIT
+        {
+            continue;
+        }
+        if kept.iter().any(|kept| kept == entry) {
+            continue;
+        }
+        kept.push(entry.to_string());
+        if kept.len() == STOP_LIMIT {
+            break;
+        }
+    }
+    kept
+}
+
+/// The extra body fields when they parse as a JSON object, trimmed; empty
+/// otherwise. Anything else would be sent as a broken body.
+fn clean_extra(extra: &str) -> String {
+    let extra = extra.trim();
+    if extra.chars().count() > EXTRA_LIMIT {
+        return String::new();
+    }
+    match serde_json::from_str::<serde_json::Value>(extra) {
+        Ok(value) if value.is_object() => extra.to_string(),
+        _ => String::new(),
+    }
+}
+
+/// What the next request uses: the picked model when there is one, the
+/// provider's own model otherwise.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModelSelection {
+    pub protocol: ProviderProtocol,
+    pub base_url: String,
+    pub model: String,
+    pub keychain_id: String,
+    pub max_tokens: u32,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub stop: Vec<String>,
+    pub extra: String,
+    pub instruction: String,
+    pub headers: Vec<RequestHeader>,
+}
+
 /// `settings.json`'s `assistant` section. One provider of each protocol is
-/// configured; `protocol` picks the one that talks.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// configured; `protocol` picks the one that talks unless a model profile
+/// does.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AssistantSettings {
     pub protocol: ProviderProtocol,
     pub openai: AssistantProvider,
     pub anthropic: AssistantProvider,
+    /// The models the person configured; the menu lists them.
+    pub models: Vec<ModelProfile>,
+    /// The id of the model picked; empty means the provider's own.
+    pub active_model: String,
     /// How long one answer may take, streaming included.
     pub timeout_seconds: u64,
     /// Commands refused whatever the level. Entries may use `*` in an
@@ -447,6 +591,8 @@ impl Default for AssistantSettings {
             protocol: ProviderProtocol::OpenAi,
             openai: AssistantProvider::for_protocol(ProviderProtocol::OpenAi),
             anthropic: AssistantProvider::for_protocol(ProviderProtocol::Anthropic),
+            models: Vec::new(),
+            active_model: String::new(),
             timeout_seconds: 120,
             user_blacklist: Vec::new(),
             user_whitelist: Vec::new(),
@@ -481,9 +627,65 @@ impl AssistantSettings {
         self.provider_mut(self.protocol)
     }
 
+    /// The configured model with `id`, if there is one.
+    pub fn model_profile(&self, id: &str) -> Option<&ModelProfile> {
+        self.models.iter().find(|profile| profile.id == id)
+    }
+
+    /// The model the conversation picked.
+    pub fn active_profile(&self) -> Option<&ModelProfile> {
+        if self.active_model.is_empty() {
+            return None;
+        }
+        self.model_profile(&self.active_model)
+    }
+
+    /// Everything the next request needs, from the picked model when there
+    /// is one and from the active provider otherwise.
+    pub fn selection(&self) -> ModelSelection {
+        match self.active_profile() {
+            Some(profile) => {
+                let provider = self.provider(profile.protocol);
+                ModelSelection {
+                    protocol: profile.protocol,
+                    base_url: provider.base_url.clone(),
+                    model: profile.model.clone(),
+                    keychain_id: provider.keychain_id.clone(),
+                    max_tokens: if profile.max_tokens == 0 {
+                        provider.max_tokens
+                    } else {
+                        profile.max_tokens
+                    },
+                    temperature: profile.temperature,
+                    top_p: profile.top_p,
+                    stop: profile.stop.clone(),
+                    extra: profile.extra.clone(),
+                    instruction: profile.instruction.clone(),
+                    headers: provider.headers.clone(),
+                }
+            }
+            None => {
+                let provider = self.active();
+                ModelSelection {
+                    protocol: self.protocol,
+                    base_url: provider.base_url.clone(),
+                    model: provider.model.clone(),
+                    keychain_id: provider.keychain_id.clone(),
+                    max_tokens: provider.max_tokens,
+                    temperature: None,
+                    top_p: None,
+                    stop: Vec::new(),
+                    extra: String::new(),
+                    instruction: String::new(),
+                    headers: provider.headers.clone(),
+                }
+            }
+        }
+    }
+
     /// The account the active provider's key lives under.
     pub fn account(&self) -> String {
-        account(&self.active().keychain_id)
+        account(&self.selection().keychain_id)
     }
 
     /// The proxy one provider's requests go through, if any. A provider with
@@ -514,6 +716,29 @@ impl AssistantSettings {
     pub fn normalize(&mut self) {
         self.openai.normalize(ProviderProtocol::OpenAi);
         self.anthropic.normalize(ProviderProtocol::Anthropic);
+        for profile in &mut self.models {
+            profile.normalize();
+        }
+        // A model the service would refuse, and the same model twice, are
+        // not worth keeping.
+        let mut kept: Vec<ModelProfile> = Vec::new();
+        for profile in self.models.drain(..) {
+            if profile.model.is_empty() {
+                continue;
+            }
+            if kept.iter().any(|other| other.id == profile.id) {
+                continue;
+            }
+            kept.push(profile);
+            if kept.len() == MODEL_LIMIT {
+                break;
+            }
+        }
+        self.models = kept;
+        self.active_model = self.active_model.trim().to_string();
+        if self.model_profile(&self.active_model).is_none() {
+            self.active_model.clear();
+        }
         self.timeout_seconds = self.timeout_seconds.clamp(10, 600);
         self.user_blacklist = clean_list(
             &self.user_blacklist,
@@ -609,6 +834,81 @@ mod tests {
         assert_eq!(settings.user_blacklist, vec!["systemctl stop *"]);
         assert_eq!(settings.user_whitelist, vec!["df -h"]);
         assert_eq!(settings.classifier_model, "small-model");
+    }
+
+    #[test]
+    fn a_picked_model_brings_its_protocol_and_parameters() {
+        let mut settings = AssistantSettings {
+            models: vec![ModelProfile {
+                label: " 长上下文 ".into(),
+                protocol: ProviderProtocol::Anthropic,
+                model: " claude-sonnet-4-5 ".into(),
+                instruction: " 回答尽量简短 ".into(),
+                max_tokens: 0,
+                temperature: Some(0.3),
+                top_p: Some(1.5),
+                stop: vec!["\n\n".into(), "END".into(), "END".into()],
+                extra: r#" {"reasoning_effort": "high"} "#.into(),
+                ..ModelProfile::default()
+            }],
+            active_model: "anthropic:claude-sonnet-4-5".into(),
+            ..AssistantSettings::default()
+        };
+        settings.normalize();
+        let profile = settings.active_profile().expect("the picked model");
+        assert_eq!(profile.id, "anthropic:claude-sonnet-4-5");
+        assert_eq!(profile.label, "长上下文");
+        assert_eq!(profile.stop, vec!["END"]);
+        assert_eq!(profile.top_p, None, "out of range");
+        assert_eq!(profile.extra, r#"{"reasoning_effort": "high"}"#);
+
+        let selection = settings.selection();
+        assert_eq!(selection.protocol, ProviderProtocol::Anthropic);
+        assert_eq!(selection.base_url, DEFAULT_ANTHROPIC_BASE_URL);
+        assert_eq!(selection.model, "claude-sonnet-4-5");
+        assert_eq!(selection.max_tokens, settings.anthropic.max_tokens);
+        assert_eq!(selection.temperature, Some(0.3));
+        assert_eq!(selection.instruction, "回答尽量简短");
+        assert_eq!(settings.account(), "assistant:assistant-anthropic");
+    }
+
+    #[test]
+    fn models_without_a_name_or_with_the_same_name_are_dropped() {
+        let mut settings = AssistantSettings {
+            models: vec![
+                ModelProfile {
+                    protocol: ProviderProtocol::OpenAi,
+                    model: "  ".into(),
+                    ..ModelProfile::default()
+                },
+                ModelProfile {
+                    protocol: ProviderProtocol::OpenAi,
+                    model: "gpt-4.1".into(),
+                    ..ModelProfile::default()
+                },
+                ModelProfile {
+                    protocol: ProviderProtocol::OpenAi,
+                    model: "gpt-4.1".into(),
+                    label: "again".into(),
+                    ..ModelProfile::default()
+                },
+                ModelProfile {
+                    protocol: ProviderProtocol::Anthropic,
+                    model: "claude-sonnet-4-5".into(),
+                    ..ModelProfile::default()
+                },
+            ],
+            active_model: "openai:gone".into(),
+            ..AssistantSettings::default()
+        };
+        settings.normalize();
+        assert_eq!(settings.models.len(), 2);
+        assert_eq!(settings.models[0].model, "gpt-4.1");
+        assert_eq!(settings.models[1].model, "claude-sonnet-4-5");
+        assert_eq!(settings.active_model, "", "nothing matched, so the default");
+        let selection = settings.selection();
+        assert_eq!(selection.protocol, ProviderProtocol::OpenAi);
+        assert_eq!(selection.model, DEFAULT_OPENAI_MODEL);
     }
 
     #[test]

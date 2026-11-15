@@ -42,7 +42,6 @@ use super::policy::{self, AuthorizationLevel, Classified, Decision, Policy, Risk
 use super::protocol::ToolTerminal;
 use super::schedule::{self, ResumePlan, Schedule, ScheduleAction, ScheduleStore, ScheduleTarget};
 use super::sessions::{SessionEvent, Sessions};
-use super::settings::ProviderProtocol;
 use super::tool_result::{
     call_line, denied_result, tool_card_parts, tool_error, tool_result_body, unknown_terminal,
     unsupported_result,
@@ -643,8 +642,8 @@ impl AssistantPanel {
         cx: &mut Context<Self>,
     ) {
         let assistant = self.settings.read(cx).settings().assistant.clone();
-        let provider = assistant.active().clone();
-        if provider.base_url.trim().is_empty() || provider.model.trim().is_empty() {
+        let selection = assistant.selection();
+        if selection.base_url.trim().is_empty() || selection.model.trim().is_empty() {
             let decision =
                 policy::decide(prompt, AuthorizationLevel::Restricted, &Policy::default());
             self.record_raw(
@@ -660,20 +659,25 @@ impl AssistantPanel {
         let timeout =
             Duration::from_secs(assistant.timeout_seconds.clamp(10, SCHEDULE_TIMEOUT_MAX));
         let request = StreamRequest {
-            protocol: assistant.protocol,
-            base_url: provider.base_url,
-            model: provider.model,
-            keychain_id: provider.keychain_id,
+            protocol: selection.protocol,
+            base_url: selection.base_url,
+            model: selection.model,
+            keychain_id: selection.keychain_id,
             messages: vec![ChatMessage::user(prompt.to_string())],
-            max_tokens: provider.max_tokens,
+            max_tokens: selection.max_tokens,
             timeout,
             terminals: vec![ToolTerminal {
                 alias: terminal.alias.clone(),
                 title: terminal.title.clone(),
             }],
             scheduled: true,
-            headers: provider.headers.clone(),
-            proxy: assistant.proxy_route(assistant.protocol).map(Into::into),
+            headers: selection.headers,
+            proxy: assistant.proxy_route(selection.protocol).map(Into::into),
+            temperature: selection.temperature,
+            top_p: selection.top_p,
+            stop: selection.stop,
+            extra: selection.extra,
+            instruction: selection.instruction,
         };
         self.scheduled_ai = Some(ScheduledAiRun {
             name: task.name.clone(),
@@ -868,24 +872,29 @@ impl AssistantPanel {
     /// Start the next turn of a scheduled answer with what the tools said.
     fn start_ai_round(&mut self, mut run: ScheduledAiRun, cx: &mut Context<Self>) {
         let assistant = self.settings.read(cx).settings().assistant.clone();
-        let provider = assistant.active().clone();
+        let selection = assistant.selection();
         let timeout =
             Duration::from_secs(assistant.timeout_seconds.clamp(10, SCHEDULE_TIMEOUT_MAX));
         let request = StreamRequest {
-            protocol: assistant.protocol,
-            base_url: provider.base_url,
-            model: provider.model,
-            keychain_id: provider.keychain_id,
+            protocol: selection.protocol,
+            base_url: selection.base_url,
+            model: selection.model,
+            keychain_id: selection.keychain_id,
             messages: run.messages.clone(),
-            max_tokens: provider.max_tokens,
+            max_tokens: selection.max_tokens,
             timeout,
             terminals: vec![ToolTerminal {
                 alias: run.alias.clone(),
                 title: run.target.title.clone(),
             }],
             scheduled: true,
-            headers: provider.headers.clone(),
-            proxy: assistant.proxy_route(assistant.protocol).map(Into::into),
+            headers: selection.headers,
+            proxy: assistant.proxy_route(selection.protocol).map(Into::into),
+            temperature: selection.temperature,
+            top_p: selection.top_p,
+            stop: selection.stop,
+            extra: selection.extra,
+            instruction: selection.instruction,
         };
         run.stream = client::start(request);
         run.deadline = Instant::now() + timeout;
@@ -1474,17 +1483,18 @@ impl AssistantPanel {
             || self.classify.is_some()
     }
 
-    /// Switch which configured provider answers. It takes effect on the
-    /// next turn; the conversation so far stays as it is.
-    fn set_protocol(&mut self, protocol: ProviderProtocol, cx: &mut Context<Self>) {
+    /// Switch which model answers: one of the configured profiles, or the
+    /// empty id for the active provider's own. It takes effect on the next
+    /// turn; the conversation so far stays as it is.
+    fn set_model(&mut self, id: String, cx: &mut Context<Self>) {
         if self.stream.is_some() || self.busy() {
             return;
         }
-        if self.settings.read(cx).settings().assistant.protocol == protocol {
+        if self.settings.read(cx).settings().assistant.active_model == id {
             return;
         }
         self.settings.update(cx, |store, cx| {
-            store.update(|settings| settings.assistant.protocol = protocol, cx)
+            store.update(|settings| settings.assistant.active_model = id, cx)
         });
         cx.notify();
     }
@@ -1506,8 +1516,8 @@ impl AssistantPanel {
             return;
         }
         let assistant = self.settings.read(cx).settings().assistant;
-        let provider = assistant.active().clone();
-        if provider.base_url.trim().is_empty() || provider.model.trim().is_empty() {
+        let selection = assistant.selection();
+        if selection.base_url.trim().is_empty() || selection.model.trim().is_empty() {
             self.error = Some(t!("assistant.error.no_provider"));
             self.open_config(window, cx);
             cx.notify();
@@ -1552,20 +1562,20 @@ impl AssistantPanel {
             return;
         }
         let assistant = self.settings.read(cx).settings().assistant.clone();
-        let provider = assistant.active().clone();
-        if provider.base_url.trim().is_empty() || provider.model.trim().is_empty() {
+        let selection = assistant.selection();
+        if selection.base_url.trim().is_empty() || selection.model.trim().is_empty() {
             self.error = Some(t!("assistant.error.no_provider"));
             return;
         }
         self.rounds += 1;
         self.messages.push(ChatMessage::assistant(String::new()));
         let request = StreamRequest {
-            protocol: assistant.protocol,
-            base_url: provider.base_url,
-            model: provider.model,
-            keychain_id: provider.keychain_id,
+            protocol: selection.protocol,
+            base_url: selection.base_url,
+            model: selection.model,
+            keychain_id: selection.keychain_id,
             messages: self.messages[..self.messages.len() - 1].to_vec(),
-            max_tokens: provider.max_tokens,
+            max_tokens: selection.max_tokens,
             timeout: Duration::from_secs(assistant.timeout_seconds),
             terminals: self
                 .bindings
@@ -1577,8 +1587,13 @@ impl AssistantPanel {
                 })
                 .collect(),
             scheduled: false,
-            headers: provider.headers.clone(),
-            proxy: assistant.proxy_route(assistant.protocol).map(Into::into),
+            headers: selection.headers,
+            proxy: assistant.proxy_route(selection.protocol).map(Into::into),
+            temperature: selection.temperature,
+            top_p: selection.top_p,
+            stop: selection.stop,
+            extra: selection.extra,
+            instruction: selection.instruction,
         };
         self.stream = Some(client::start(request));
         self.begin_poll(cx);
@@ -3751,27 +3766,24 @@ impl AssistantPanel {
     /// back.
     fn render_model_menu(&self, locked: bool, cx: &mut Context<Self>) -> AnyElement {
         let assistant = self.settings.read(cx).settings().assistant.clone();
-        let current = assistant.protocol;
-        let model = assistant.active().model.trim();
-        let label: SharedString = if model.is_empty() {
-            t!("assistant.model.none")
-        } else {
-            model.to_string().into()
+        let active = assistant.active_profile();
+        let provider_model = assistant.active().model.trim();
+        let label: SharedString = match (active, provider_model) {
+            (Some(profile), _) => profile.display_name().to_string().into(),
+            (None, "") => t!("assistant.model.none"),
+            (None, model) => model.to_string().into(),
         };
-        let models: Vec<(ProviderProtocol, String)> = ProviderProtocol::ALL
-            .iter()
-            .filter_map(|protocol| {
-                let provider = assistant.provider(*protocol);
-                let model = provider.model.trim();
-                if provider.base_url.trim().is_empty() || model.is_empty() {
-                    None
-                } else {
-                    Some((*protocol, model.to_string()))
-                }
-            })
-            .collect();
-        let configured = !models.is_empty();
+        let profiles = assistant.models.clone();
+        let configured = !profiles.is_empty();
         let panel = cx.entity();
+        let panel_for_default = panel.clone();
+        let panel_for_configure = panel.clone();
+        let default_label: SharedString = if provider_model.is_empty() {
+            t!("assistant.model.default_none")
+        } else {
+            t!("assistant.model.default", model = provider_model)
+        };
+        let default_checked = assistant.active_model.is_empty();
         DropdownButton::new("assistant-model-menu")
             .button(
                 Button::new("assistant-model")
@@ -3791,19 +3803,28 @@ impl AssistantPanel {
                 if !configured {
                     menu = menu.item(PopupMenuItem::new(t!("assistant.model.none")).disabled(true));
                 }
-                for (protocol, model) in &models {
-                    let protocol = *protocol;
-                    let label = format!("{model} · {}", protocol.label());
+                for profile in &profiles {
+                    let id = profile.id.clone();
+                    let label =
+                        format!("{} · {}", profile.display_name(), profile.protocol.label());
+                    let checked = assistant.active_model == id;
                     let panel = panel.clone();
-                    menu = menu.item(
-                        PopupMenuItem::new(label)
-                            .checked(protocol == current)
-                            .on_click(move |_, _, cx| {
-                                panel.update(cx, |panel, cx| panel.set_protocol(protocol, cx));
-                            }),
-                    );
+                    menu = menu.item(PopupMenuItem::new(label).checked(checked).on_click(
+                        move |_, _, cx| {
+                            let id = id.clone();
+                            panel.update(cx, |panel, cx| panel.set_model(id, cx));
+                        },
+                    ));
                 }
-                let panel = panel.clone();
+                let panel = panel_for_default.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(default_label.clone())
+                        .checked(default_checked)
+                        .on_click(move |_, _, cx| {
+                            panel.update(cx, |panel, cx| panel.set_model(String::new(), cx));
+                        }),
+                );
+                let panel = panel_for_configure.clone();
                 menu.separator().item(
                     PopupMenuItem::new(t!("assistant.model.configure")).on_click(
                         move |_, window, cx| {
@@ -3832,7 +3853,7 @@ impl AssistantPanel {
         let tooltip: SharedString = if names.is_empty() {
             t!("assistant.composer.terminal.none")
         } else {
-            t!("assistant.composer.terminal.tip", names = join_list(&names)).into()
+            t!("assistant.composer.terminal.tip", names = join_list(&names))
         };
         Button::new("assistant-composer-terminal")
             .xsmall()

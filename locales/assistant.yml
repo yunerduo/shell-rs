@@ -18,6 +18,9 @@ assistant.config.title:
 assistant.config.tab.model:
   zh-CN: 模型与协议
   en: Model
+assistant.config.tab.models:
+  zh-CN: 模型列表
+  en: Models
 assistant.config.tab.proxy:
   zh-CN: 代理
   en: Proxy
@@ -111,6 +114,12 @@ assistant.model.locked:
 assistant.model.configure:
   zh-CN: 模型设置…
   en: Model settings…
+assistant.model.default:
+  zh-CN: 供应商默认：%{model}
+  en: "Provider default: %{model}"
+assistant.model.default_none:
+  zh-CN: 供应商默认（尚未填写模型）
+  en: Provider default (no model yet)
 assistant.composer.terminal.none:
   zh-CN: 未绑定终端
   en: No terminal bound
@@ -363,6 +372,126 @@ assistant.settings.key_kept:
 assistant.settings.key_failed:
   zh-CN: 保存 Key 失败：%{error}
   en: "The key could not be saved: %{error}"
+assistant.settings.models.hint:
+  zh-CN: 这里配置的模型会出现在聊天输入框的模型菜单里，点选即切换。接口地址、Key 与代理沿用上面的供应商设置。
+  en: The models configured here are listed in the composer's model menu and switch with a click. Address, key and proxy come from the provider above.
+assistant.settings.models.protocol:
+  zh-CN: 协议
+  en: Protocol
+assistant.settings.models.id:
+  zh-CN: 模型 ID
+  en: Model ID
+assistant.settings.models.id.hint:
+  zh-CN: 服务商文档里的模型名，例如 gpt-4.1 或 claude-sonnet-4-5。
+  en: The model name from the provider's documentation, such as gpt-4.1 or claude-sonnet-4-5.
+assistant.settings.models.id.placeholder:
+  zh-CN: 例如 gpt-4.1
+  en: "For example gpt-4.1"
+assistant.settings.models.label:
+  zh-CN: 显示名称
+  en: Display name
+assistant.settings.models.label.hint:
+  zh-CN: 菜单里显示的名字，留空则用模型 ID。
+  en: The name the menu shows; the model ID when blank.
+assistant.settings.models.label.placeholder:
+  zh-CN: 可留空
+  en: Optional
+assistant.settings.models.max_tokens:
+  zh-CN: 最大输出 tokens
+  en: Max output tokens
+assistant.settings.models.max_tokens.placeholder:
+  zh-CN: 留空用服务商默认
+  en: Blank for the provider's default
+assistant.settings.models.temperature:
+  zh-CN: 温度（0–2）
+  en: Temperature (0–2)
+assistant.settings.models.temperature.placeholder:
+  zh-CN: 留空用服务商默认
+  en: Blank for the provider's default
+assistant.settings.models.temperature.invalid:
+  zh-CN: 温度需要在 0 到 2 之间
+  en: Temperature must be between 0 and 2
+assistant.settings.models.top_p:
+  zh-CN: top_p（0–1）
+  en: top_p (0–1)
+assistant.settings.models.top_p.placeholder:
+  zh-CN: 留空用服务商默认
+  en: Blank for the provider's default
+assistant.settings.models.top_p.invalid:
+  zh-CN: top_p 需要在 0 到 1 之间
+  en: top_p must be between 0 and 1
+assistant.settings.models.stop:
+  zh-CN: 停止序列
+  en: Stop sequences
+assistant.settings.models.stop.placeholder:
+  zh-CN: 用逗号分隔，最多 8 条
+  en: Comma separated, up to 8
+assistant.settings.models.stop_summary:
+  zh-CN: "%{count} 条停止序列"
+  en: "%{count} stop sequences"
+assistant.settings.models.instruction:
+  zh-CN: 高级指令
+  en: Extra instruction
+assistant.settings.models.instruction.hint:
+  zh-CN: 只追加到这个模型的系统提示词后面，不会改动对话内容。
+  en: Appended to this model's system prompt only; the conversation itself is unchanged.
+assistant.settings.models.instruction.placeholder:
+  zh-CN: 例如：回答尽量简短
+  en: "For example: keep answers short"
+assistant.settings.models.instruction_summary:
+  zh-CN: 追加指令
+  en: extra instruction
+assistant.settings.models.extra:
+  zh-CN: 高级参数（JSON）
+  en: Extra parameters (JSON)
+assistant.settings.models.extra.hint:
+  zh-CN: '需要对象，例如 {"reasoning_effort": "high"}。messages、tools、model 等字段不会被覆盖。'
+  en: 'An object, for example {"reasoning_effort": "high"}. model, messages, tools and similar fields are never overridden.'
+assistant.settings.models.extra.placeholder:
+  zh-CN: 可留空
+  en: Optional
+assistant.settings.models.extra_summary:
+  zh-CN: 附加参数
+  en: extra parameters
+assistant.settings.models.no_params:
+  zh-CN: 全部使用服务商默认
+  en: Provider defaults
+assistant.settings.models.add:
+  zh-CN: 添加模型
+  en: Add model
+assistant.settings.models.save:
+  zh-CN: 保存修改
+  en: Save changes
+assistant.settings.models.list:
+  zh-CN: 已配置的模型
+  en: Configured models
+assistant.settings.models.empty:
+  zh-CN: 还没有配置模型；聊天使用供应商默认模型。
+  en: No model is configured yet; chats use the provider's own model.
+assistant.settings.models.active:
+  zh-CN: 当前
+  en: In use
+assistant.settings.models.set_active:
+  zh-CN: 设为当前
+  en: Use
+assistant.settings.models.require_id:
+  zh-CN: 模型 ID 不能为空
+  en: The model ID is required
+assistant.settings.models.number_invalid:
+  zh-CN: 需要填写数字
+  en: Enter a number
+assistant.settings.models.limit:
+  zh-CN: 最多配置 20 个模型
+  en: Up to 20 models
+assistant.settings.models.duplicate:
+  zh-CN: 同一个协议下已经有这个模型了
+  en: This model is already configured for the protocol
+assistant.settings.models.saved:
+  zh-CN: 模型已保存
+  en: The model was saved
+assistant.settings.models.removed:
+  zh-CN: 模型已删除
+  en: The model was removed
 assistant.settings.proxy.title:
   zh-CN: 网络代理
   en: Network proxy
