@@ -196,8 +196,8 @@ fn live_a_second_terminal_waits_for_the_first() {
             },
         ],
         "我已在 web 上启动了 `python3 -m http.server 8000`，它还在启动中。\
-         请先用 wait_for_output 等 web 上出现 `Serving HTTP`，再用 curl 在 db 上\
-         请求 http://127.0.0.1:8000/ 验证。每个调用都只用别名指代终端。",
+         请先用 wait_for_output 等 web 上出现 `Serving HTTP`，然后再告诉我下一步。\
+         每个调用都只用别名指代终端。",
     );
     let wait = calls
         .iter()
@@ -208,10 +208,28 @@ fn live_a_second_terminal_waits_for_the_first() {
     println!("wait={wait_args:?}");
     assert_eq!(wait_args.terminal, "web");
     assert!(wait_args.usable(), "{wait_args:?}");
+}
+
+#[test]
+#[ignore = "needs a model endpoint; see the module docs"]
+fn live_the_command_goes_to_the_terminal_it_names() {
+    let calls = ask_with(
+        vec![
+            ToolTerminal {
+                alias: "web".into(),
+                title: "Web".into(),
+            },
+            ToolTerminal {
+                alias: "db".into(),
+                title: "Database".into(),
+            },
+        ],
+        "在 db 上用 curl 访问 http://127.0.0.1:8000/，只看返回的状态码，不要动 web。",
+    );
     let command = calls
         .iter()
         .find(|call| call.name == "run_command")
-        .unwrap_or_else(|| panic!("the model asked for no follow-up command: {calls:?}"));
+        .unwrap_or_else(|| panic!("the model asked for no command: {calls:?}"));
     let command_args: RunCommandArgs =
         serde_json::from_str(&command.arguments).unwrap_or_else(|error| {
             panic!(

@@ -270,6 +270,10 @@ pub struct AssistantPanel {
     classifier_cache: Vec<(String, Classified)>,
     /// Model turns used by this exchange.
     rounds: u32,
+    /// A question is being answered: more turns may follow. It ends when
+    /// the answer has no calls left or the user stops it, so an unrelated
+    /// event cannot start a turn of its own.
+    exchange: bool,
     /// The answer was stopped by the user; an empty answer is not an error
     /// then.
     stopped: bool,
@@ -409,6 +413,7 @@ impl AssistantPanel {
             classifier_calls: 0,
             classifier_cache: Vec::new(),
             rounds: 0,
+            exchange: false,
             stopped: false,
             error: None,
             notice: None,
@@ -790,6 +795,7 @@ impl AssistantPanel {
         self.error = None;
         self.notice = None;
         self.stopped = false;
+        self.exchange = true;
 
         self.request_round(cx);
         cx.notify();
@@ -799,7 +805,8 @@ impl AssistantPanel {
     /// running or a card is waiting: the answer would have no result to
     /// read yet.
     fn request_round(&mut self, cx: &mut Context<Self>) {
-        if self.stream.is_some()
+        if !self.exchange
+            || self.stream.is_some()
             || !self.execs.is_empty()
             || !self.injects.is_empty()
             || !self.waits.is_empty()
@@ -891,6 +898,7 @@ impl AssistantPanel {
                     // A turn that failed asks for nothing: running calls it
                     // got out would only start a new turn on a broken one.
                     self.queue.clear();
+                    self.exchange = false;
                     finished = true;
                     break;
                 }
@@ -907,6 +915,10 @@ impl AssistantPanel {
             }
             if !self.queue.is_empty() {
                 self.advance(cx);
+            } else if self.pending.is_empty() && self.ask.is_none() && self.classify.is_none() {
+                // Nothing is left to run or ask: the answer is the whole
+                // answer, and no later event continues the exchange.
+                self.exchange = false;
             }
             cx.notify();
         } else if changed {
@@ -920,6 +932,7 @@ impl AssistantPanel {
             stream.cancel();
         }
         self.stopped = true;
+        self.exchange = false;
         self.notice = Some(t!("assistant.error.cancelled"));
         cx.notify();
     }
@@ -1733,6 +1746,7 @@ impl AssistantPanel {
         self.full_access_card = None;
         // The exchange ends here: no turn continues after a stop.
         self.stopped = true;
+        self.exchange = false;
         self.notice = Some(t!("assistant.full_access.emergency_done"));
         cx.notify();
     }
