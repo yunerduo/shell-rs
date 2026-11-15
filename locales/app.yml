@@ -4,6 +4,11 @@ app.database_unavailable:
   zh-CN: 无法打开本地数据库，本次运行的改动不会被保存：%{error}
   en: "Couldn’t open the local database, so changes last only until Agree ShellAS quits: %{error}"
 
+# What the Windows shutdown screen says the session is waiting for.
+app.shutdown.blocked:
+  zh-CN: "%{app} 正在等待确认退出"
+  en: "%{app} is waiting for you to confirm quitting"
+
 app.tray.show:
   zh-CN: 显示窗口
   en: Show window

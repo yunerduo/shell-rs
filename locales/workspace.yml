@@ -280,6 +280,28 @@ workspace.unsaved.discard_and_close:
   zh-CN: 放弃修改并关闭
   en: Discard changes and close
 
+# What a quit would stop: terminals still connected and uploads still
+# running. `names` lists the hosts, up to five of them.
+workspace.quit.terminals.one:
+  en: "1 terminal is still connected: %{names}."
+workspace.quit.terminals.other:
+  zh-CN: 有 %{count} 个终端连接：%{names}。
+  en: "%{count} terminals are still connected: %{names}."
+workspace.quit.uploads.one:
+  en: "1 upload is still running: %{names}."
+workspace.quit.uploads.other:
+  zh-CN: 有 %{count} 个上传正在进行：%{names}。
+  en: "%{count} uploads are still running: %{names}."
+workspace.quit.more:
+  zh-CN: "%{listed}等 %{count} 台主机"
+  en: "%{listed} and %{count} hosts in all"
+workspace.quit.consequence:
+  zh-CN: 退出会断开这些连接，正在进行的上传会停止，未完成的保留续传记录。
+  en: Quitting disconnects them and stops the uploads, and what is not done keeps its resume records.
+workspace.quit.still_quit:
+  zh-CN: 仍然退出
+  en: Quit anyway
+
 # Terminal notices: the tab first, so a notice says which terminal it is
 # from.
 workspace.notice.titled:

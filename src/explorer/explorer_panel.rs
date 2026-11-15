@@ -442,6 +442,17 @@ impl ExplorerPanel {
     pub fn is_transferring(&self) -> bool {
         self.queue.unfinished_count() > 0
     }
+    /// Uploads handed to the engine and not done: what a quit would stop.
+    pub fn running_uploads(&self) -> usize {
+        self.queue
+            .entries()
+            .iter()
+            .filter(|entry| {
+                entry.state() == QueueState::Active
+                    && entry.job().direction() == TransferDirection::Upload
+            })
+            .count()
+    }
     /// A stopped batch holds the head, waiting for 继续.
     fn head_stopped(&self) -> bool {
         self.queue

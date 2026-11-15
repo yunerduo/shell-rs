@@ -10,6 +10,7 @@ mod paths;
 mod quit;
 mod rendering;
 mod shortcuts;
+mod shutdown;
 mod system_hotkey;
 #[cfg(windows)]
 mod tray;
@@ -31,6 +32,10 @@ pub use rendering::{SOFTWARE_FRAME_INTERVAL, frame_due, note_renderer, software_
 pub use shortcuts::{
     Refusal, SHORTCUTS, Shortcut, ShortcutGroup, ShortcutOverrides, apply_shortcuts, check,
     fixed_bindings, key_caps, key_text, listen_for_system_hotkey,
+};
+pub use shutdown::{
+    install_system_shutdown_guard, release_shutdown_block, set_connections_in_use,
+    system_shutdown_requested, take_system_shutdown_request,
 };
 pub use system_hotkey::{system_hotkey_available, take_system_hotkey_press};
 #[cfg(windows)]

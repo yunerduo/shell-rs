@@ -247,23 +247,35 @@ impl Workspace {
         self.unsaved_files(&ids, cx)
     }
 
-    /// The quit guard: with changes not saved, ask before quitting and hold
-    /// the quit back (true) until the user agrees; then, with something not
-    /// synced yet, hold it back for a last round.
+    /// The quit guard: with changes not saved, or connections and uploads
+    /// still running, ask before quitting and hold the quit back (true)
+    /// until the user agrees; then, with something not synced yet, hold it
+    /// back for a last round.
     pub(super) fn ask_before_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let unsaved = self.all_unsaved_files(cx);
-        if unsaved.is_empty() {
+        let in_use = self.in_use(cx);
+        if unsaved.is_empty() && in_use.is_empty() {
             return self.sync_before_quit(cx);
         }
         // A hidden window (closed on macOS) would ask where nobody sees it.
         crate::app::bring_forward(window, cx);
+        let mut description = Vec::new();
+        if !unsaved.is_empty() {
+            description
+                .push(t!("workspace.unsaved.quit", files = describe_files(&unsaved)).to_string());
+        }
+        if let Some(in_use) = super::quit::describe_in_use(&in_use) {
+            description.push(in_use);
+        }
+        let verb = if in_use.is_empty() {
+            t!("workspace.unsaved.discard_and_quit")
+        } else {
+            t!("workspace.quit.still_quit")
+        };
         confirm_danger(
             t!("workspace.unsaved.quit_title"),
-            Some(t!(
-                "workspace.unsaved.quit",
-                files = describe_files(&unsaved)
-            )),
-            t!("workspace.unsaved.discard_and_quit"),
+            Some(description.join(" ").into()),
+            verb,
             Rc::new(|_, cx| cx.quit()),
             window,
             cx,

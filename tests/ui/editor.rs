@@ -4,10 +4,12 @@
 
 use crate::support::*;
 use shellrs::app::{
-    CloseActiveTab, CloseEditor, CloseExplorer, ExplorerAction, ExplorerCommand, Quit,
+    CloseActiveTab, CloseEditor, CloseExplorer, CloseTerminal, ExplorerAction, ExplorerCommand,
+    Quit,
 };
 use shellrs::editor::EditorId;
 use shellrs::explorer::{IMAGE_LIMIT, NewEntryKind, PaneOperation};
+use shellrs::terminal::RemoteTerminalId;
 
 const REMOTE_FILE: &str = "/home/tester/文件 甲.txt";
 const OTHER_REMOTE_FILE: &str = "/home/tester/文件 乙.txt";
@@ -495,6 +497,14 @@ async fn quitting_with_unsaved_changes_asks_first(cx: &mut TestAppContext) {
     let (handle, workspace, _) = open_server(cx, &[(REMOTE_FILE, b"text\n")]).await;
     open_file(cx, handle, "remote-pane", "文件 甲.txt");
     wait_for_editor(cx, handle, FIRST).await;
+
+    // The fixture opens web-01 and staging-api already: close them, so this
+    // is about the unsaved file alone, not about a connection still in use.
+    for id in [INITIAL_WEB_TERMINAL, INITIAL_STAGING_TERMINAL] {
+        in_frame(cx, handle, |window, cx| {
+            window.dispatch_action(Box::new(CloseTerminal(RemoteTerminalId(id))), cx)
+        });
+    }
 
     // Nothing unsaved: nothing asked.
     cx.update(|cx| cx.dispatch_action(&Quit));

@@ -72,6 +72,10 @@ fn main() {
                     #[cfg(windows)]
                     shellrs::app::listen_for_tray(window, cx);
                     shellrs::app::hide_when_closed(window, cx);
+                    // Windows asks the window before it ends the session;
+                    // with connections in use it must be able to say no.
+                    #[cfg(windows)]
+                    shellrs::app::install_system_shutdown_guard(window);
                     // Drawn by the processor (a virtual machine without 3D),
                     // ShellRS draws fewer frames.
                     shellrs::app::note_renderer(window, cx);
@@ -106,6 +110,13 @@ fn main() {
                                     shellrs::workspace::Workspace::new_with_cli_server(
                                         store, settings, server, window, cx,
                                     )
+                                });
+                                // Windows asks the window before it ends the
+                                // session; this workspace gives the answer.
+                                // Only the app installs it: tests never do.
+                                #[cfg(windows)]
+                                workspace.update(cx, |_, cx| {
+                                    shellrs::workspace::watch_system_shutdown(window, cx)
                                 });
                                 let settings_problem =
                                     settings_problem.map(|problem| problem.message());

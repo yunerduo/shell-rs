@@ -19,7 +19,11 @@ mod imports;
 mod links;
 mod notices;
 mod projects;
+mod quit;
 mod recent_hosts;
+
+#[cfg(windows)]
+pub use quit::watch_system_shutdown;
 mod sidebar;
 mod sidebar_widths;
 mod snippets;

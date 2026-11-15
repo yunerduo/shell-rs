@@ -3176,6 +3176,10 @@ fn new_local_terminal_panel(
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Every change of a connection or an upload leads here, so this is
+        // where the system-shutdown hook learns whether a quit must ask;
+        // nothing has to poll the panels for it.
+        crate::app::set_connections_in_use(!self.in_use(cx).is_empty());
         let status = match self.active_tab {
             // A terminal tells its own connection, to the host as it took it.
             Some(CenterTab::Terminal(id)) => match self.terminals.get(&id) {
