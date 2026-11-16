@@ -31,10 +31,11 @@ permissions:
 
 jobs:
   macos:
-    # macos-15 这个 arm64 镜像的容量不足，2026-11-16 两次排队 15 分钟后被
-    # GitHub 取消（annotation：The job was not acquired by Runner）。
-    # macos-latest 同样是 arm64，但当天能正常分配到机器。
-    runs-on: macos-latest
+    # 2026-11-16：macOS arm64 托管机器容量不足，macos-15 与 macos-latest 上的
+    # 任务都在排队 15 分钟后被 GitHub 取消（annotation：The job was not
+    # acquired by Runner of type hosted）。改用 Intel 机器，两个架构都靠交叉
+    # 编译产出，等 arm64 容量恢复后可以换回 macos-latest。
+    runs-on: macos-15-intel
     strategy:
       fail-fast: false
       matrix:
