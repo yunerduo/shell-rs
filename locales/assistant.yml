@@ -21,6 +21,9 @@ assistant.config.tab.model:
 assistant.config.tab.models:
   zh-CN: 模型列表
   en: Models
+assistant.config.tab.roles:
+  zh-CN: 角色与技能
+  en: Roles
 assistant.config.tab.proxy:
   zh-CN: 代理
   en: Proxy
@@ -85,8 +88,8 @@ assistant.empty_state:
   zh-CN: 绑定终端后可以开始对话。
   en: Bind a terminal to start talking.
 assistant.placeholder:
-  zh-CN: 输入指令，Enter 发送，Shift+Enter 换行
-  en: Type an instruction; Enter sends, Shift+Enter adds a line
+  zh-CN: 输入指令，@ 载入角色，Enter 发送，Shift+Enter 换行
+  en: Type an instruction; @ loads a role; Enter sends, Shift+Enter adds a line
 assistant.input.aria:
   zh-CN: 指令输入
   en: Instruction input
@@ -100,8 +103,14 @@ assistant.role.default:
   zh-CN: 默认助理
   en: Default assistant
 assistant.role.tooltip:
-  zh-CN: 角色
-  en: Role
+  zh-CN: 角色：可在设置里创建，聊天中用 @ 名字临时载入
+  en: Roles can be created in the settings and loaded with @name in a message
+assistant.role.loaded_tip:
+  zh-CN: 本对话的角色：%{names}
+  en: "Roles in this conversation: %{names}"
+assistant.role.manage:
+  zh-CN: 角色与技能设置…
+  en: Role and skill settings…
 assistant.model.none:
   zh-CN: 未配置模型
   en: No model configured
@@ -492,6 +501,216 @@ assistant.settings.models.saved:
 assistant.settings.models.removed:
   zh-CN: 模型已删除
   en: The model was removed
+assistant.builtin.role.ops.name:
+  zh-CN: 运维工程师
+  en: Operations engineer
+assistant.builtin.role.ops.description:
+  zh-CN: 先摸清现状再动手，说明影响与回退方式。
+  en: Establish the current state first, name the impact and the rollback.
+assistant.builtin.role.tuner.name:
+  zh-CN: 系统优化工程师
+  en: System performance engineer
+assistant.builtin.role.tuner.description:
+  zh-CN: 先测量后调整，每次改动都复测对比。
+  en: Measure before tuning, and measure again after every change.
+assistant.builtin.skill.logs.name:
+  zh-CN: 日志排查
+  en: Log diagnosis
+assistant.builtin.skill.logs.description:
+  zh-CN: 先定位日志文件与时间范围，按级别过滤后再读，引用关键行。
+  en: Find the log file and time range first, filter by level, then quote the decisive lines.
+assistant.builtin.skill.resources.name:
+  zh-CN: 资源巡检
+  en: Resource check
+assistant.builtin.skill.resources.description:
+  zh-CN: 一次读完 CPU、内存、磁盘与占用最高的进程，指出异常。
+  en: Read CPU, memory, disk and the busiest processes in one pass, and point out what is abnormal.
+assistant.builtin.pack.name:
+  zh-CN: Linux 运维
+  en: Linux operations
+assistant.builtin.pack.description:
+  zh-CN: 运维与性能两个角色，加上日志排查和资源巡检两个技能。
+  en: The operations and performance roles, plus log diagnosis and resource check skills.
+assistant.settings.roles.title:
+  zh-CN: 角色
+  en: Roles
+assistant.settings.roles.hint:
+  zh-CN: 聊天窗口的角色菜单可以载入角色，消息里 @ 名字只对那一条生效。内置角色不能修改，可以导出后改成自己的。
+  en: The composer's role menu loads a role for the conversation; @name in a message applies to that message only. Built-in roles cannot be edited, but they can be exported as a starting point.
+assistant.settings.roles.builtin:
+  zh-CN: 内置
+  en: Built-in
+assistant.settings.roles.empty:
+  zh-CN: 还没有自建角色。
+  en: No roles of your own yet.
+assistant.settings.roles.name:
+  zh-CN: 名称
+  en: Name
+assistant.settings.roles.name.placeholder:
+  zh-CN: 例如：数据库管理员
+  en: "For example: database administrator"
+assistant.settings.roles.avatar:
+  zh-CN: 头像
+  en: Avatar
+assistant.settings.roles.avatar.hint:
+  zh-CN: 一个 emoji 或字符，留空则用名称第一个字。
+  en: One emoji or character; blank uses the name's first character.
+assistant.settings.roles.avatar.placeholder:
+  zh-CN: 可留空
+  en: Optional
+assistant.settings.roles.description:
+  zh-CN: 简述
+  en: Description
+assistant.settings.roles.description.placeholder:
+  zh-CN: 一句话说明这个角色擅长什么
+  en: One line on what this role is good at
+assistant.settings.roles.instruction:
+  zh-CN: 角色指令
+  en: Role instruction
+assistant.settings.roles.instruction.hint:
+  zh-CN: 载入这个角色后追加到系统提示词末尾，说明它的立场、方法与边界。
+  en: Appended to the end of the system prompt while the role is loaded; state its stance, method and limits.
+assistant.settings.roles.instruction.placeholder:
+  zh-CN: 例如：先看监控再下结论，改动前说明回退方式
+  en: "For example: check the metrics before concluding, and name the rollback before changing anything"
+assistant.settings.roles.add:
+  zh-CN: 新建角色
+  en: Add role
+assistant.settings.roles.save:
+  zh-CN: 保存角色
+  en: Save role
+assistant.settings.roles.require_name:
+  zh-CN: 角色名称不能为空
+  en: The role needs a name
+assistant.settings.roles.require_instruction:
+  zh-CN: 角色指令不能为空
+  en: The role needs an instruction
+assistant.settings.roles.limit:
+  zh-CN: 最多创建 %{limit} 个角色
+  en: "Up to %{limit} roles"
+assistant.settings.roles.saved:
+  zh-CN: 角色已保存
+  en: The role was saved
+assistant.settings.roles.removed:
+  zh-CN: 角色已删除
+  en: The role was removed
+assistant.settings.roles.imported:
+  zh-CN: 角色已导入
+  en: The role was imported
+assistant.settings.roles.builtin_locked:
+  zh-CN: 内置角色不能覆盖
+  en: A built-in role cannot be replaced
+assistant.settings.skills.title:
+  zh-CN: 技能
+  en: Skills
+assistant.settings.skills.hint:
+  zh-CN: 启用的技能会写进每次请求的系统提示词，和角色一起生效。
+  en: Enabled skills go into the system prompt of every request, alongside the roles.
+assistant.settings.skills.empty:
+  zh-CN: 还没有添加技能。
+  en: No skills added yet.
+assistant.settings.skills.suggested:
+  zh-CN: 建议
+  en: Suggested
+assistant.settings.skills.name:
+  zh-CN: 名称
+  en: Name
+assistant.settings.skills.name.placeholder:
+  zh-CN: 例如：慢查询
+  en: "For example: slow queries"
+assistant.settings.skills.description:
+  zh-CN: 简述
+  en: Description
+assistant.settings.skills.description.placeholder:
+  zh-CN: 一句话说明它解决什么问题
+  en: One line on the problem it solves
+assistant.settings.skills.instruction:
+  zh-CN: 技能指令
+  en: Skill instruction
+assistant.settings.skills.instruction.hint:
+  zh-CN: 启用期间追加到系统提示词末尾的具体做法。
+  en: The concrete guidance appended to the system prompt while it is on.
+assistant.settings.skills.instruction.placeholder:
+  zh-CN: 例如：先看执行计划，再比较索引
+  en: "For example: read the plan first, then compare the indexes"
+assistant.settings.skills.add_new:
+  zh-CN: 新建技能
+  en: Add skill
+assistant.settings.skills.save:
+  zh-CN: 保存技能
+  en: Save skill
+assistant.settings.skills.add:
+  zh-CN: 添加
+  en: Add
+assistant.settings.skills.require_name:
+  zh-CN: 技能名称不能为空
+  en: The skill needs a name
+assistant.settings.skills.require_instruction:
+  zh-CN: 技能指令不能为空
+  en: The skill needs an instruction
+assistant.settings.skills.limit:
+  zh-CN: 最多添加 %{limit} 个技能
+  en: "Up to %{limit} skills"
+assistant.settings.skills.saved:
+  zh-CN: 技能已保存
+  en: The skill was saved
+assistant.settings.skills.removed:
+  zh-CN: 技能已删除
+  en: The skill was removed
+assistant.settings.skills.added:
+  zh-CN: 技能已添加并启用
+  en: The skill was added and enabled
+assistant.settings.skills.imported:
+  zh-CN: 技能已导入
+  en: The skill was imported
+assistant.settings.packs.title:
+  zh-CN: 领域包
+  en: Domain packs
+assistant.settings.packs.hint:
+  zh-CN: 领域包把一组角色和技能打成一个 JSON 文件。导入后，包里的角色可以直接载入，技能随包启用；删除包会一并收回。
+  en: A domain pack bundles roles and skills in one JSON file. Once imported, its roles can be loaded and its skills are in force; removing the pack takes both back.
+assistant.settings.packs.empty:
+  zh-CN: 还没有导入领域包。
+  en: No domain pack imported yet.
+assistant.settings.packs.counts:
+  zh-CN: "%{roles} 个角色 · %{skills} 个技能"
+  en: "%{roles} roles · %{skills} skills"
+assistant.settings.packs.add:
+  zh-CN: 导入到我的领域包
+  en: Add to my packs
+assistant.settings.packs.require_name:
+  zh-CN: 领域包名称不能为空
+  en: The pack needs a name
+assistant.settings.packs.limit:
+  zh-CN: 最多导入 %{limit} 个领域包
+  en: "Up to %{limit} domain packs"
+assistant.settings.packs.added:
+  zh-CN: 领域包已导入
+  en: The domain pack was imported
+assistant.settings.packs.removed:
+  zh-CN: 领域包已删除
+  en: The domain pack was removed
+assistant.settings.bundle.import:
+  zh-CN: 导入…
+  en: Import…
+assistant.settings.bundle.export:
+  zh-CN: 导出
+  en: Export
+assistant.settings.bundle.import_prompt:
+  zh-CN: 选择角色、技能或领域包文件
+  en: Pick a role, skill or domain pack file
+assistant.settings.bundle.import_failed:
+  zh-CN: 导入失败：%{error}
+  en: "The import failed: %{error}"
+assistant.settings.bundle.export_failed:
+  zh-CN: 导出失败：%{error}
+  en: "The export failed: %{error}"
+assistant.settings.bundle.exported:
+  zh-CN: 已导出
+  en: Exported
+assistant.settings.bundle.incomplete:
+  zh-CN: 文件缺少名称或指令
+  en: The file has no name or no instruction
 assistant.settings.proxy.title:
   zh-CN: 网络代理
   en: Network proxy

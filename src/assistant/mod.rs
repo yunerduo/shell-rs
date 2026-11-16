@@ -14,6 +14,7 @@ pub mod panel;
 pub mod pending;
 pub mod policy;
 pub mod protocol;
+pub mod roles;
 pub mod schedule;
 pub mod sessions;
 pub mod settings;

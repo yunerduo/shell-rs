@@ -244,6 +244,11 @@ pub struct AssistantPanel {
     settings: Entity<SettingsStore>,
     input: Entity<TextareaState>,
     bindings: Bindings,
+    /// The roles loaded into this conversation, by id.
+    roles: Vec<String>,
+    /// What the platform prompt adds for those roles and the skills on:
+    /// rebuilt from the library whenever a turn is sent.
+    conversation_note: String,
     /// Whether the aliases still waiting for a terminal are listed. A
     /// restart that placed none of them would otherwise open on a wall of
     /// warnings; the count says as much in one line.
@@ -365,6 +370,8 @@ impl AssistantPanel {
             settings,
             input,
             bindings: Bindings::default(),
+            roles: Vec::new(),
+            conversation_note: String::new(),
             available: Vec::new(),
             sessions,
             messages,
@@ -1499,6 +1506,30 @@ impl AssistantPanel {
         cx.notify();
     }
 
+    /// Load the role into this conversation, or take it out. The note the
+    /// next request adds is rebuilt from the library, so a role deleted in
+    /// the settings falls away here too.
+    fn toggle_role(&mut self, id: String, cx: &mut Context<Self>) {
+        if let Some(index) = self.roles.iter().position(|role| *role == id) {
+            self.roles.remove(index);
+        } else {
+            self.roles.push(id);
+        }
+        let assistant = self.settings.read(cx).settings().assistant.clone();
+        let library = super::roles::library(&assistant);
+        self.roles
+            .retain(|id| super::roles::role(&library, id).is_some());
+        self.conversation_note = super::roles::instructions(&library, &self.roles);
+        cx.notify();
+    }
+
+    /// Drop every role; the default assistant answers again.
+    fn clear_roles(&mut self, cx: &mut Context<Self>) {
+        self.roles.clear();
+        self.conversation_note.clear();
+        cx.notify();
+    }
+
     /// Ask the model. The panel keeps the conversation; the worker keeps
     /// the key. A question starts a new exchange, so the round count starts
     /// again.
@@ -1515,7 +1546,7 @@ impl AssistantPanel {
             cx.notify();
             return;
         }
-        let assistant = self.settings.read(cx).settings().assistant;
+        let assistant = self.settings.read(cx).settings().assistant.clone();
         let selection = assistant.selection();
         if selection.base_url.trim().is_empty() || selection.model.trim().is_empty() {
             self.error = Some(t!("assistant.error.no_provider"));
@@ -1523,6 +1554,16 @@ impl AssistantPanel {
             cx.notify();
             return;
         }
+        // A role can be loaded from the menu or mentioned right here with
+        // `@name`; both apply to this conversation. Mentions do not stick.
+        let library = super::roles::library(&assistant);
+        let mut loaded = self.roles.clone();
+        for id in super::roles::mentioned_roles(&text, &library.roles) {
+            if !loaded.contains(&id) {
+                loaded.push(id);
+            }
+        }
+        self.conversation_note = super::roles::instructions(&library, &loaded);
 
         self.messages.push(ChatMessage::user(text.clone()));
         self.session_append(SessionEvent::User { text });
@@ -1569,6 +1610,18 @@ impl AssistantPanel {
         }
         self.rounds += 1;
         self.messages.push(ChatMessage::assistant(String::new()));
+        // The model's own instruction first, then what the roles and the
+        // enabled skills add: the roles are the last word on style.
+        let mut instruction = selection.instruction.trim().to_string();
+        let note = self.conversation_note.trim();
+        if !note.is_empty() {
+            if instruction.is_empty() {
+                instruction = note.to_string();
+            } else {
+                instruction.push_str("\n\n");
+                instruction.push_str(note);
+            }
+        }
         let request = StreamRequest {
             protocol: selection.protocol,
             base_url: selection.base_url,
@@ -1593,7 +1646,7 @@ impl AssistantPanel {
             top_p: selection.top_p,
             stop: selection.stop,
             extra: selection.extra,
-            instruction: selection.instruction,
+            instruction,
         };
         self.stream = Some(client::start(request));
         self.begin_poll(cx);
@@ -3664,7 +3717,7 @@ impl AssistantPanel {
                             .items_center()
                             .gap_1()
                             .child(self.render_mode_menu(cx))
-                            .child(self.render_role_menu())
+                            .child(self.render_role_menu(cx))
                             .child(self.render_model_menu(streaming || busy, cx))
                             .child(self.render_terminal_chip())
                             .child(div().flex_1())
@@ -3743,20 +3796,70 @@ impl AssistantPanel {
             .into_any_element()
     }
 
-    /// The role the conversation uses. Roles beyond the default arrive with
-    /// the role library; until one is loaded the default assistant answers.
-    fn render_role_menu(&self) -> AnyElement {
+    /// The roles this conversation answers as: the default assistant, or the
+    /// roles loaded from the menu. A role can also be mentioned with `@name`
+    /// in the message, which applies to that message only.
+    fn render_role_menu(&self, cx: &mut Context<Self>) -> AnyElement {
+        let assistant = self.settings.read(cx).settings().assistant.clone();
+        let library = super::roles::library(&assistant);
+        let loaded = self.roles.clone();
+        let names: Vec<&str> = loaded
+            .iter()
+            .filter_map(|id| super::roles::role(&library, id))
+            .map(|role| role.name.as_str())
+            .collect();
+        let label: SharedString = match names.first() {
+            None => t!("assistant.role.default"),
+            Some(first) if names.len() == 1 => (*first).to_string().into(),
+            Some(first) => format!("{first} +{}", names.len() - 1).into(),
+        };
+        let tooltip: SharedString = if names.is_empty() {
+            t!("assistant.role.tooltip")
+        } else {
+            t!("assistant.role.loaded_tip", names = join_list(&names))
+        };
+        let panel = cx.entity();
+        let panel_for_default = panel.clone();
+        let panel_for_configure = panel.clone();
         DropdownButton::new("assistant-role-menu")
             .button(
                 Button::new("assistant-role")
                     .xsmall()
                     .ghost()
                     .icon(CatalogIcon::User)
-                    .label(t!("assistant.role.default"))
-                    .tooltip(t!("assistant.role.tooltip")),
+                    .label(label)
+                    .tooltip(tooltip),
             )
-            .dropdown_menu(|menu, _, _| {
-                menu.item(PopupMenuItem::new(t!("assistant.role.default")).checked(true))
+            .dropdown_menu(move |menu, _, _| {
+                let mut menu = menu;
+                let empty = loaded.is_empty();
+                let clear = panel_for_default.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(t!("assistant.role.default"))
+                        .checked(empty)
+                        .on_click(move |_, _, cx| {
+                            clear.update(cx, |panel, cx| panel.clear_roles(cx));
+                        }),
+                );
+                for role in &library.roles {
+                    let id = role.id.clone();
+                    let checked = loaded.contains(&id);
+                    let label = format!("{} {}", role.initial(), role.name);
+                    let panel = panel.clone();
+                    menu = menu.item(PopupMenuItem::new(label).checked(checked).on_click(
+                        move |_, _, cx| {
+                            let id = id.clone();
+                            panel.update(cx, |panel, cx| panel.toggle_role(id, cx));
+                        },
+                    ));
+                }
+                let configure = panel_for_configure.clone();
+                menu.separator()
+                    .item(PopupMenuItem::new(t!("assistant.role.manage")).on_click(
+                        move |_, window, cx| {
+                            configure.update(cx, |panel, cx| panel.open_config(window, cx));
+                        },
+                    ))
             })
             .into_any_element()
     }

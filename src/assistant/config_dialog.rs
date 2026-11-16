@@ -10,7 +10,7 @@ use gpui_kit::component::{
     dialog::{DialogClose, DialogFooter},
     form::{Field, Form},
     h_flex,
-    input::{Input, InputEvent, InputState},
+    input::{Input, InputEvent, InputState, Textarea, TextareaState},
     tab::{Tab, TabBar},
     v_flex,
 };
@@ -28,6 +28,7 @@ use super::client;
 use super::panel::AssistantPanel;
 use super::pending::{self, PendingItem};
 use super::policy;
+use super::roles::{self, Bundle, DomainPack, Role, Skill};
 use super::schedule::Schedule;
 use super::settings::{
     HEADER_LIMIT, MODEL_LIMIT, ModelProfile, ProviderProtocol, ProxyChoice, ProxyConfig, ProxyKind,
@@ -45,6 +46,7 @@ const DIALOG_MARGIN: f32 = 32.0;
 enum ConfigTab {
     Model,
     Models,
+    Roles,
     Proxy,
     Headers,
     Rules,
@@ -53,9 +55,10 @@ enum ConfigTab {
 }
 
 impl ConfigTab {
-    const ALL: [ConfigTab; 7] = [
+    const ALL: [ConfigTab; 8] = [
         ConfigTab::Model,
         ConfigTab::Models,
+        ConfigTab::Roles,
         ConfigTab::Proxy,
         ConfigTab::Headers,
         ConfigTab::Rules,
@@ -67,11 +70,12 @@ impl ConfigTab {
         match self {
             ConfigTab::Model => 0,
             ConfigTab::Models => 1,
-            ConfigTab::Proxy => 2,
-            ConfigTab::Headers => 3,
-            ConfigTab::Rules => 4,
-            ConfigTab::Classifier => 5,
-            ConfigTab::Schedules => 6,
+            ConfigTab::Roles => 2,
+            ConfigTab::Proxy => 3,
+            ConfigTab::Headers => 4,
+            ConfigTab::Rules => 5,
+            ConfigTab::Classifier => 6,
+            ConfigTab::Schedules => 7,
         }
     }
 
@@ -79,6 +83,7 @@ impl ConfigTab {
         match self {
             ConfigTab::Model => t!("assistant.config.tab.model"),
             ConfigTab::Models => t!("assistant.config.tab.models"),
+            ConfigTab::Roles => t!("assistant.config.tab.roles"),
             ConfigTab::Proxy => t!("assistant.config.tab.proxy"),
             ConfigTab::Headers => t!("assistant.config.tab.headers"),
             ConfigTab::Rules => t!("assistant.config.tab.rules"),
@@ -210,6 +215,17 @@ pub struct AssistantConfigDialog {
     model_stop: Entity<InputState>,
     model_instruction: Entity<InputState>,
     model_extra: Entity<InputState>,
+    /// The roles and skills tab: the role being written (or edited), and
+    /// the fields of both forms.
+    editing_role: Option<String>,
+    role_name: Entity<InputState>,
+    role_avatar: Entity<InputState>,
+    role_description: Entity<InputState>,
+    role_instruction: Entity<TextareaState>,
+    editing_skill: Option<String>,
+    skill_name: Entity<InputState>,
+    skill_description: Entity<InputState>,
+    skill_instruction: Entity<TextareaState>,
     schedule_command: Entity<InputState>,
     schedule_interval: Entity<InputState>,
     /// The proxy tab: which scope it edits, whether the default is on, and
@@ -308,6 +324,35 @@ impl AssistantConfigDialog {
         let model_extra = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder(t!("assistant.settings.models.extra.placeholder"))
+        });
+        let role_name = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t!("assistant.settings.roles.name.placeholder"))
+        });
+        let role_avatar = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.roles.avatar.placeholder"))
+        });
+        let role_description = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.roles.description.placeholder"))
+        });
+        let role_instruction = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .auto_grow(4, 8)
+                .placeholder(t!("assistant.settings.roles.instruction.placeholder"))
+        });
+        let skill_name = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.skills.name.placeholder"))
+        });
+        let skill_description = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.skills.description.placeholder"))
+        });
+        let skill_instruction = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .auto_grow(4, 8)
+                .placeholder(t!("assistant.settings.skills.instruction.placeholder"))
         });
         let schedule_command = cx.new(|cx| {
             InputState::new(window, cx)
@@ -412,6 +457,15 @@ impl AssistantConfigDialog {
             model_stop,
             model_instruction,
             model_extra,
+            editing_role: None,
+            role_name,
+            role_avatar,
+            role_description,
+            role_instruction,
+            editing_skill: None,
+            skill_name,
+            skill_description,
+            skill_instruction,
             schedule_command,
             schedule_interval,
             proxy_scope: ProxyScope::Default,
@@ -707,6 +761,453 @@ impl AssistantConfigDialog {
             input.update(cx, |input, cx| input.set_value("", window, cx));
         }
         cx.notify();
+    }
+
+    /// The role form's fields as a role, cleaned the way the settings file
+    /// is. An edit keeps the id it was opened with, so a rename does not
+    /// detach the role from a conversation that loaded it.
+    fn role_from_fields(&self, cx: &mut Context<Self>) -> Result<Role, SharedString> {
+        let mut role = Role {
+            name: self.role_name.read(cx).value().to_string(),
+            avatar: self.role_avatar.read(cx).value().to_string(),
+            description: self.role_description.read(cx).value().to_string(),
+            instruction: self.role_instruction.read(cx).value().to_string(),
+            ..Role::default()
+        };
+        role.normalize();
+        if role.name.is_empty() {
+            return Err(t!("assistant.settings.roles.require_name"));
+        }
+        if role.instruction.is_empty() {
+            return Err(t!("assistant.settings.roles.require_instruction"));
+        }
+        if let Some(id) = &self.editing_role {
+            role.id = id.clone();
+        }
+        Ok(role)
+    }
+
+    fn save_role(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let role = match self.role_from_fields(cx) {
+            Ok(role) => role,
+            Err(error) => {
+                self.fail(error, cx);
+                return;
+            }
+        };
+        let mut roles = self.settings.read(cx).settings().assistant.roles.clone();
+        match roles.iter().position(|other| other.id == role.id) {
+            Some(index) => roles[index] = role,
+            None if roles.len() >= roles::ROLES_LIMIT => {
+                self.fail(
+                    t!("assistant.settings.roles.limit", limit = roles::ROLES_LIMIT),
+                    cx,
+                );
+                return;
+            }
+            None => roles.push(role),
+        }
+        self.settings.update(cx, |store, cx| {
+            store.update(|settings| settings.assistant.roles = roles, cx)
+        });
+        self.clear_role_form(window, cx);
+        self.succeed(t!("assistant.settings.roles.saved"), cx);
+    }
+
+    fn edit_role(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(role) = self
+            .settings
+            .read(cx)
+            .settings()
+            .assistant
+            .roles
+            .iter()
+            .find(|role| role.id == id)
+            .cloned()
+        else {
+            return;
+        };
+        self.editing_role = Some(role.id.clone());
+        for (input, value) in [
+            (&self.role_name, role.name),
+            (&self.role_avatar, role.avatar),
+            (&self.role_description, role.description),
+        ] {
+            input.update(cx, |input, cx| input.set_value(value, window, cx));
+        }
+        self.role_instruction.update(cx, |input, cx| {
+            input.set_value(role.instruction, window, cx)
+        });
+        self.error = None;
+        self.notice = None;
+        cx.notify();
+    }
+
+    fn remove_role(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings.update(cx, |store, cx| {
+            store.update(
+                |settings| settings.assistant.roles.retain(|role| role.id != id),
+                cx,
+            )
+        });
+        if self.editing_role.as_deref() == Some(id) {
+            self.clear_role_form(window, cx);
+        }
+        self.succeed(t!("assistant.settings.roles.removed"), cx);
+    }
+
+    fn clear_role_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editing_role = None;
+        for input in [&self.role_name, &self.role_avatar, &self.role_description] {
+            input.update(cx, |input, cx| input.set_value("", window, cx));
+        }
+        self.role_instruction
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        cx.notify();
+    }
+
+    /// The skill form's fields as a skill; `enabled` comes from the form's
+    /// own switch when it is not a new one.
+    fn skill_from_fields(&self, cx: &mut Context<Self>) -> Result<Skill, SharedString> {
+        let mut skill = Skill {
+            name: self.skill_name.read(cx).value().to_string(),
+            description: self.skill_description.read(cx).value().to_string(),
+            instruction: self.skill_instruction.read(cx).value().to_string(),
+            enabled: true,
+            ..Skill::default()
+        };
+        skill.normalize();
+        if skill.name.is_empty() {
+            return Err(t!("assistant.settings.skills.require_name"));
+        }
+        if skill.instruction.is_empty() {
+            return Err(t!("assistant.settings.skills.require_instruction"));
+        }
+        if let Some(id) = &self.editing_skill {
+            skill.id = id.clone();
+            if let Some(existing) = self
+                .settings
+                .read(cx)
+                .settings()
+                .assistant
+                .skills
+                .iter()
+                .find(|other| &other.id == id)
+            {
+                skill.enabled = existing.enabled;
+            }
+        }
+        Ok(skill)
+    }
+
+    fn save_skill(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let skill = match self.skill_from_fields(cx) {
+            Ok(skill) => skill,
+            Err(error) => {
+                self.fail(error, cx);
+                return;
+            }
+        };
+        let mut skills = self.settings.read(cx).settings().assistant.skills.clone();
+        match skills.iter().position(|other| other.id == skill.id) {
+            Some(index) => skills[index] = skill,
+            None if skills.len() >= roles::SKILLS_LIMIT => {
+                self.fail(
+                    t!(
+                        "assistant.settings.skills.limit",
+                        limit = roles::SKILLS_LIMIT
+                    ),
+                    cx,
+                );
+                return;
+            }
+            None => skills.push(skill),
+        }
+        self.settings.update(cx, |store, cx| {
+            store.update(|settings| settings.assistant.skills = skills, cx)
+        });
+        self.clear_skill_form(window, cx);
+        self.succeed(t!("assistant.settings.skills.saved"), cx);
+    }
+
+    fn edit_skill(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(skill) = self
+            .settings
+            .read(cx)
+            .settings()
+            .assistant
+            .skills
+            .iter()
+            .find(|skill| skill.id == id)
+            .cloned()
+        else {
+            return;
+        };
+        self.editing_skill = Some(skill.id.clone());
+        for (input, value) in [
+            (&self.skill_name, skill.name),
+            (&self.skill_description, skill.description),
+        ] {
+            input.update(cx, |input, cx| input.set_value(value, window, cx));
+        }
+        self.skill_instruction.update(cx, |input, cx| {
+            input.set_value(skill.instruction, window, cx)
+        });
+        self.error = None;
+        self.notice = None;
+        cx.notify();
+    }
+
+    fn remove_skill(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings.update(cx, |store, cx| {
+            store.update(
+                |settings| settings.assistant.skills.retain(|skill| skill.id != id),
+                cx,
+            )
+        });
+        if self.editing_skill.as_deref() == Some(id) {
+            self.clear_skill_form(window, cx);
+        }
+        self.succeed(t!("assistant.settings.skills.removed"), cx);
+    }
+
+    fn clear_skill_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editing_skill = None;
+        for input in [&self.skill_name, &self.skill_description] {
+            input.update(cx, |input, cx| input.set_value("", window, cx));
+        }
+        self.skill_instruction
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        cx.notify();
+    }
+
+    fn toggle_skill(&mut self, id: &str, enabled: bool, cx: &mut Context<Self>) {
+        self.settings.update(cx, |store, cx| {
+            store.update(
+                |settings| {
+                    if let Some(skill) = settings
+                        .assistant
+                        .skills
+                        .iter_mut()
+                        .find(|skill| skill.id == id)
+                    {
+                        skill.enabled = enabled;
+                    }
+                },
+                cx,
+            )
+        });
+        cx.notify();
+    }
+
+    /// Take one of the suggested skills into the settings, on.
+    fn add_builtin_skill(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(skill) = roles::builtin_skills()
+            .into_iter()
+            .find(|skill| skill.id == id)
+        else {
+            return;
+        };
+        let mut skills = self.settings.read(cx).settings().assistant.skills.clone();
+        match skills.iter().position(|other| other.id == skill.id) {
+            Some(index) => skills[index].enabled = true,
+            None if skills.len() >= roles::SKILLS_LIMIT => {
+                self.fail(
+                    t!(
+                        "assistant.settings.skills.limit",
+                        limit = roles::SKILLS_LIMIT
+                    ),
+                    cx,
+                );
+                return;
+            }
+            None => skills.push(Skill {
+                builtin: false,
+                enabled: true,
+                ..skill
+            }),
+        }
+        self.settings.update(cx, |store, cx| {
+            store.update(|settings| settings.assistant.skills = skills, cx)
+        });
+        self.succeed(t!("assistant.settings.skills.added"), cx);
+    }
+
+    /// Add a whole pack to the settings, replacing one with the same id.
+    fn store_pack(&mut self, mut pack: DomainPack, cx: &mut Context<Self>) {
+        pack.normalize();
+        if pack.name.is_empty() {
+            self.fail(t!("assistant.settings.packs.require_name"), cx);
+            return;
+        }
+        let mut packs = self.settings.read(cx).settings().assistant.packs.clone();
+        match packs.iter().position(|other| other.id == pack.id) {
+            Some(index) => packs[index] = pack,
+            None if packs.len() >= roles::PACKS_LIMIT => {
+                self.fail(
+                    t!("assistant.settings.packs.limit", limit = roles::PACKS_LIMIT),
+                    cx,
+                );
+                return;
+            }
+            None => packs.push(pack),
+        }
+        self.settings.update(cx, |store, cx| {
+            store.update(|settings| settings.assistant.packs = packs, cx)
+        });
+        self.succeed(t!("assistant.settings.packs.added"), cx);
+    }
+
+    /// Take a built-in pack into the settings with its skills on, since a
+    /// pack is added to be used.
+    fn add_builtin_pack(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(mut pack) = roles::builtin_packs().get(index).cloned() else {
+            return;
+        };
+        pack.builtin = false;
+        for role in &mut pack.roles {
+            role.builtin = false;
+        }
+        for skill in &mut pack.skills {
+            skill.builtin = false;
+            skill.enabled = true;
+        }
+        self.store_pack(pack, cx);
+    }
+
+    fn remove_pack(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.settings.update(cx, |store, cx| {
+            store.update(
+                |settings| settings.assistant.packs.retain(|pack| pack.id != id),
+                cx,
+            )
+        });
+        self.succeed(t!("assistant.settings.packs.removed"), cx);
+    }
+
+    /// Read a role, a skill or a pack from a JSON file the user picks.
+    fn import_bundle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(t!("assistant.settings.bundle.import_prompt")),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = receiver.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            let read = cx
+                .background_spawn(async move { std::fs::read_to_string(path) })
+                .await;
+            let _ = this.update_in(cx, |this, _, cx| {
+                let parsed = read
+                    .map_err(|error| error.to_string())
+                    .and_then(|json| Bundle::parse(&json).map_err(|error| error.to_string()));
+                match parsed {
+                    Ok(bundle) => this.apply_bundle(bundle, cx),
+                    Err(error) => this.fail(
+                        t!("assistant.settings.bundle.import_failed", error = error),
+                        cx,
+                    ),
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn apply_bundle(&mut self, bundle: Bundle, cx: &mut Context<Self>) {
+        match bundle {
+            Bundle::Role(mut role) => {
+                if role.id.starts_with("builtin:") {
+                    self.fail(t!("assistant.settings.roles.builtin_locked"), cx);
+                    return;
+                }
+                role.normalize();
+                if role.name.is_empty() || role.instruction.is_empty() {
+                    self.fail(t!("assistant.settings.bundle.incomplete"), cx);
+                    return;
+                }
+                let mut roles = self.settings.read(cx).settings().assistant.roles.clone();
+                match roles.iter().position(|other| other.id == role.id) {
+                    Some(index) => roles[index] = role,
+                    None if roles.len() >= roles::ROLES_LIMIT => {
+                        self.fail(
+                            t!("assistant.settings.roles.limit", limit = roles::ROLES_LIMIT),
+                            cx,
+                        );
+                        return;
+                    }
+                    None => roles.push(role),
+                }
+                self.settings.update(cx, |store, cx| {
+                    store.update(|settings| settings.assistant.roles = roles, cx)
+                });
+                self.succeed(t!("assistant.settings.roles.imported"), cx);
+            }
+            Bundle::Skill(mut skill) => {
+                skill.normalize();
+                if skill.name.is_empty() || skill.instruction.is_empty() {
+                    self.fail(t!("assistant.settings.bundle.incomplete"), cx);
+                    return;
+                }
+                let mut skills = self.settings.read(cx).settings().assistant.skills.clone();
+                match skills.iter().position(|other| other.id == skill.id) {
+                    Some(index) => skills[index] = skill,
+                    None if skills.len() >= roles::SKILLS_LIMIT => {
+                        self.fail(
+                            t!(
+                                "assistant.settings.skills.limit",
+                                limit = roles::SKILLS_LIMIT
+                            ),
+                            cx,
+                        );
+                        return;
+                    }
+                    None => skills.push(skill),
+                }
+                self.settings.update(cx, |store, cx| {
+                    store.update(|settings| settings.assistant.skills = skills, cx)
+                });
+                self.succeed(t!("assistant.settings.skills.imported"), cx);
+            }
+            Bundle::Pack(pack) => self.store_pack(pack, cx),
+        }
+    }
+
+    /// Write a role, a skill or a pack to the file the user picks.
+    fn export_bundle(
+        &mut self,
+        bundle: Bundle,
+        file_name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let dir = crate::app::data_dir();
+        let receiver = cx.prompt_for_new_path(&dir, Some(file_name));
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(path))) = receiver.await else {
+                return;
+            };
+            let json = bundle.to_json();
+            let written = cx
+                .background_spawn(async move { std::fs::write(path, json) })
+                .await;
+            let _ = this.update_in(cx, |this, _, cx| match written {
+                Ok(()) => this.succeed(t!("assistant.settings.bundle.exported"), cx),
+                Err(error) => this.fail(
+                    t!(
+                        "assistant.settings.bundle.export_failed",
+                        error = error.to_string()
+                    ),
+                    cx,
+                ),
+            });
+        })
+        .detach();
     }
 
     /// Whether the scope's proxy has a password in the keychain.
@@ -1427,6 +1928,603 @@ impl AssistantConfigDialog {
             .into_any_element()
     }
 
+    /// 角色与技能: the roles a conversation can answer as, the skills it can
+    /// be told to follow, and the packs that bring both. Built-in items are
+    /// shown but cannot be edited; they can be exported to start from.
+    fn render_roles(&self, cx: &mut Context<Self>) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let border = cx.theme().border;
+        let assistant = self.settings.read(cx).settings().assistant.clone();
+        let editing_role = self.editing_role.is_some();
+        let editing_skill = self.editing_skill.is_some();
+
+        let role_footer = h_flex()
+            .items_center()
+            .gap_2()
+            .child(
+                Button::new("assistant-config-role-save")
+                    .small()
+                    .primary()
+                    .label(if editing_role {
+                        t!("assistant.settings.roles.save")
+                    } else {
+                        t!("assistant.settings.roles.add")
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| this.save_role(window, cx))),
+            )
+            .when(editing_role, |row| {
+                row.child(
+                    Button::new("assistant-config-role-cancel")
+                        .small()
+                        .label(t!("common.cancel"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.clear_role_form(window, cx);
+                        })),
+                )
+            });
+        let role_form = Form::new()
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.roles.name"))
+                    .child(Input::new(&self.role_name).id("assistant-config-role-name")),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.roles.avatar"))
+                    .description(t!("assistant.settings.roles.avatar.hint"))
+                    .child(Input::new(&self.role_avatar).id("assistant-config-role-avatar")),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.roles.description"))
+                    .child(
+                        Input::new(&self.role_description).id("assistant-config-role-description"),
+                    ),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.roles.instruction"))
+                    .description(t!("assistant.settings.roles.instruction.hint"))
+                    .child(Textarea::new(&self.role_instruction).h(px(80.)).text_sm()),
+            )
+            .footer(role_footer)
+            .into_any_element();
+
+        let mut role_list = v_flex().w_full().gap_1();
+        for (index, role) in roles::builtin_roles().iter().enumerate() {
+            let bundle = Bundle::Role(role.clone());
+            let file_name = format!("role-{}.json", index);
+            role_list = role_list.child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .py_2()
+                    .border_t_1()
+                    .border_color(border)
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_0p5()
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(div().text_sm().child(format!(
+                                        "{} {}",
+                                        role.initial(),
+                                        role.name
+                                    )))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(muted)
+                                            .child(t!("assistant.settings.roles.builtin")),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child(role.description.clone()),
+                            ),
+                    )
+                    .child(
+                        Button::new(format!("assistant-config-builtin-role-export-{index}"))
+                            .xsmall()
+                            .ghost()
+                            .icon(CatalogIcon::Download)
+                            .tooltip(t!("assistant.settings.bundle.export"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.export_bundle(bundle.clone(), &file_name, window, cx);
+                            })),
+                    ),
+            );
+        }
+        if assistant.roles.is_empty() {
+            role_list = role_list.child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(t!("assistant.settings.roles.empty")),
+            );
+        }
+        for (index, role) in assistant.roles.iter().enumerate() {
+            let id = role.id.clone();
+            let edit = id.clone();
+            let bundle = Bundle::Role(role.clone());
+            let file_name = format!("role-{}.json", index + 1);
+            role_list = role_list.child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .py_2()
+                    .border_t_1()
+                    .border_color(border)
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_0p5()
+                            .child(div().text_sm().child(format!(
+                                "{} {}",
+                                role.initial(),
+                                role.name
+                            )))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child(role.description.clone()),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Button::new(format!("assistant-config-role-edit-{index}"))
+                                    .xsmall()
+                                    .ghost()
+                                    .icon(CatalogIcon::Pencil)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.edit_role(&edit, window, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new(format!("assistant-config-role-remove-{index}"))
+                                    .xsmall()
+                                    .ghost()
+                                    .icon(CatalogIcon::Trash)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.remove_role(&id, window, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new(format!("assistant-config-role-export-{index}"))
+                                    .xsmall()
+                                    .ghost()
+                                    .icon(CatalogIcon::Download)
+                                    .tooltip(t!("assistant.settings.bundle.export"))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.export_bundle(bundle.clone(), &file_name, window, cx);
+                                    })),
+                            ),
+                    ),
+            );
+        }
+
+        let mut skill_list = v_flex().w_full().gap_1();
+        if assistant.skills.is_empty() {
+            skill_list = skill_list.child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(t!("assistant.settings.skills.empty")),
+            );
+        }
+        for (index, skill) in assistant.skills.iter().enumerate() {
+            let id = skill.id.clone();
+            let toggle = id.clone();
+            let edit = id.clone();
+            let bundle = Bundle::Skill(skill.clone());
+            let file_name = format!("skill-{}.json", index);
+            skill_list = skill_list.child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .py_2()
+                    .border_t_1()
+                    .border_color(border)
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_1()
+                            .child(
+                                Checkbox::new(format!("assistant-config-skill-enabled-{index}"))
+                                    .label(skill.name.clone())
+                                    .checked(skill.enabled)
+                                    .on_click(cx.listener(move |this, checked: &bool, _, cx| {
+                                        this.toggle_skill(&toggle, *checked, cx);
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child(skill.description.clone()),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Button::new(format!("assistant-config-skill-edit-{index}"))
+                                    .xsmall()
+                                    .ghost()
+                                    .icon(CatalogIcon::Pencil)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.edit_skill(&edit, window, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new(format!("assistant-config-skill-remove-{index}"))
+                                    .xsmall()
+                                    .ghost()
+                                    .icon(CatalogIcon::Trash)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.remove_skill(&id, window, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new(format!("assistant-config-skill-export-{index}"))
+                                    .xsmall()
+                                    .ghost()
+                                    .icon(CatalogIcon::Download)
+                                    .tooltip(t!("assistant.settings.bundle.export"))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.export_bundle(bundle.clone(), &file_name, window, cx);
+                                    })),
+                            ),
+                    ),
+            );
+        }
+        for (index, skill) in roles::builtin_skills().iter().enumerate() {
+            if assistant.skills.iter().any(|added| added.id == skill.id) {
+                continue;
+            }
+            let id = skill.id.clone();
+            skill_list = skill_list.child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .py_2()
+                    .border_t_1()
+                    .border_color(border)
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_0p5()
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(div().text_sm().child(skill.name.clone()))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(muted)
+                                            .child(t!("assistant.settings.skills.suggested")),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child(skill.description.clone()),
+                            ),
+                    )
+                    .child(
+                        Button::new(format!("assistant-config-skill-add-{index}"))
+                            .xsmall()
+                            .ghost()
+                            .icon(CatalogIcon::Plus)
+                            .label(t!("assistant.settings.skills.add"))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.add_builtin_skill(&id, cx);
+                            })),
+                    ),
+            );
+        }
+
+        let skill_footer = h_flex()
+            .items_center()
+            .gap_2()
+            .child(
+                Button::new("assistant-config-skill-save")
+                    .small()
+                    .primary()
+                    .label(if editing_skill {
+                        t!("assistant.settings.skills.save")
+                    } else {
+                        t!("assistant.settings.skills.add_new")
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| this.save_skill(window, cx))),
+            )
+            .when(editing_skill, |row| {
+                row.child(
+                    Button::new("assistant-config-skill-cancel")
+                        .small()
+                        .label(t!("common.cancel"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.clear_skill_form(window, cx);
+                        })),
+                )
+            });
+        let skill_form = Form::new()
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.skills.name"))
+                    .child(Input::new(&self.skill_name).id("assistant-config-skill-name")),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.skills.description"))
+                    .child(
+                        Input::new(&self.skill_description)
+                            .id("assistant-config-skill-description"),
+                    ),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.skills.instruction"))
+                    .description(t!("assistant.settings.skills.instruction.hint"))
+                    .child(Textarea::new(&self.skill_instruction).h(px(80.)).text_sm()),
+            )
+            .footer(skill_footer)
+            .into_any_element();
+
+        let mut pack_list = v_flex().w_full().gap_1();
+        for (index, pack) in roles::builtin_packs().iter().enumerate() {
+            let bundle = Bundle::Pack(pack.clone());
+            let file_name = format!("pack-{}.json", index);
+            let counts = t!(
+                "assistant.settings.packs.counts",
+                roles = pack.roles.len(),
+                skills = pack.skills.len()
+            );
+            pack_list = pack_list.child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .py_2()
+                    .border_t_1()
+                    .border_color(border)
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_0p5()
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(div().text_sm().child(pack.name.clone()))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(muted)
+                                            .child(t!("assistant.settings.roles.builtin")),
+                                    )
+                                    .child(div().text_xs().text_color(muted).child(counts)),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child(pack.description.clone()),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Button::new(format!("assistant-config-pack-add-{index}"))
+                                    .xsmall()
+                                    .ghost()
+                                    .icon(CatalogIcon::Plus)
+                                    .label(t!("assistant.settings.packs.add"))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.add_builtin_pack(index, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new(format!("assistant-config-pack-export-{index}"))
+                                    .xsmall()
+                                    .ghost()
+                                    .icon(CatalogIcon::Download)
+                                    .tooltip(t!("assistant.settings.bundle.export"))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.export_bundle(bundle.clone(), &file_name, window, cx);
+                                    })),
+                            ),
+                    ),
+            );
+        }
+        if assistant.packs.is_empty() {
+            pack_list = pack_list.child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(t!("assistant.settings.packs.empty")),
+            );
+        }
+        for (index, pack) in assistant.packs.iter().enumerate() {
+            let id = pack.id.clone();
+            let bundle = Bundle::Pack(pack.clone());
+            let file_name = format!("pack-imported-{}.json", index);
+            let counts = t!(
+                "assistant.settings.packs.counts",
+                roles = pack.roles.len(),
+                skills = pack.skills.len()
+            );
+            pack_list = pack_list.child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .py_2()
+                    .border_t_1()
+                    .border_color(border)
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_0p5()
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(div().text_sm().child(pack.name.clone()))
+                                    .child(div().text_xs().text_color(muted).child(counts)),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child(pack.description.clone()),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Button::new(format!("assistant-config-pack-remove-{index}"))
+                                    .xsmall()
+                                    .ghost()
+                                    .icon(CatalogIcon::Trash)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.remove_pack(&id, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new(format!(
+                                    "assistant-config-pack-export-imported-{index}"
+                                ))
+                                .xsmall()
+                                .ghost()
+                                .icon(CatalogIcon::Download)
+                                .tooltip(t!("assistant.settings.bundle.export"))
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| {
+                                        this.export_bundle(bundle.clone(), &file_name, window, cx);
+                                    },
+                                )),
+                            ),
+                    ),
+            );
+        }
+
+        let header = |title: SharedString, hint: SharedString| {
+            v_flex()
+                .gap_1()
+                .child(div().text_sm().child(title))
+                .child(div().text_xs().text_color(muted).child(hint))
+        };
+        v_flex()
+            .gap_6()
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(header(
+                                t!("assistant.settings.roles.title"),
+                                t!("assistant.settings.roles.hint"),
+                            ))
+                            .child(
+                                Button::new("assistant-config-role-import")
+                                    .xsmall()
+                                    .ghost()
+                                    .icon(CatalogIcon::Download)
+                                    .label(t!("assistant.settings.bundle.import"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.import_bundle(window, cx);
+                                    })),
+                            ),
+                    )
+                    .child(role_list)
+                    .child(role_form),
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(header(
+                                t!("assistant.settings.skills.title"),
+                                t!("assistant.settings.skills.hint"),
+                            ))
+                            .child(
+                                Button::new("assistant-config-skill-import")
+                                    .xsmall()
+                                    .ghost()
+                                    .icon(CatalogIcon::Download)
+                                    .label(t!("assistant.settings.bundle.import"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.import_bundle(window, cx);
+                                    })),
+                            ),
+                    )
+                    .child(skill_list)
+                    .child(skill_form),
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(header(
+                                t!("assistant.settings.packs.title"),
+                                t!("assistant.settings.packs.hint"),
+                            ))
+                            .child(
+                                Button::new("assistant-config-pack-import")
+                                    .xsmall()
+                                    .ghost()
+                                    .icon(CatalogIcon::Download)
+                                    .label(t!("assistant.settings.bundle.import"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.import_bundle(window, cx);
+                                    })),
+                            ),
+                    )
+                    .child(pack_list),
+            )
+            .into_any_element()
+    }
+
     fn render_proxy(&self, cx: &mut Context<Self>) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         let success = cx.theme().success;
@@ -2088,6 +3186,7 @@ impl Render for AssistantConfigDialog {
             .child(match self.tab {
                 ConfigTab::Model => self.render_model(cx),
                 ConfigTab::Models => self.render_models(cx),
+                ConfigTab::Roles => self.render_roles(cx),
                 ConfigTab::Proxy => self.render_proxy(cx),
                 ConfigTab::Headers => self.render_headers(cx),
                 ConfigTab::Rules => self.render_rules(cx),

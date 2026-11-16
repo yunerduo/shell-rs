@@ -532,6 +532,28 @@ fn clean_extra(extra: &str) -> String {
     }
 }
 
+fn dedupe_roles(roles: &mut Vec<super::roles::Role>) {
+    let mut seen: Vec<String> = Vec::new();
+    roles.retain(|role| {
+        if seen.contains(&role.id) {
+            return false;
+        }
+        seen.push(role.id.clone());
+        true
+    });
+}
+
+fn dedupe_skills(skills: &mut Vec<super::roles::Skill>) {
+    let mut seen: Vec<String> = Vec::new();
+    skills.retain(|skill| {
+        if seen.contains(&skill.id) {
+            return false;
+        }
+        seen.push(skill.id.clone());
+        true
+    });
+}
+
 /// What the next request uses: the picked model when there is one, the
 /// provider's own model otherwise.
 #[derive(Clone, Debug, PartialEq)]
@@ -562,6 +584,12 @@ pub struct AssistantSettings {
     pub models: Vec<ModelProfile>,
     /// The id of the model picked; empty means the provider's own.
     pub active_model: String,
+    /// Roles people wrote. Built-in roles come from `roles`.
+    pub roles: Vec<super::roles::Role>,
+    /// Skills people added, each on or off.
+    pub skills: Vec<super::roles::Skill>,
+    /// Domain packs imported, with their roles and skills.
+    pub packs: Vec<super::roles::DomainPack>,
     /// How long one answer may take, streaming included.
     pub timeout_seconds: u64,
     /// Commands refused whatever the level. Entries may use `*` in an
@@ -593,6 +621,9 @@ impl Default for AssistantSettings {
             anthropic: AssistantProvider::for_protocol(ProviderProtocol::Anthropic),
             models: Vec::new(),
             active_model: String::new(),
+            roles: Vec::new(),
+            skills: Vec::new(),
+            packs: Vec::new(),
             timeout_seconds: 120,
             user_blacklist: Vec::new(),
             user_whitelist: Vec::new(),
@@ -739,6 +770,33 @@ impl AssistantSettings {
         if self.model_profile(&self.active_model).is_none() {
             self.active_model.clear();
         }
+        for role in &mut self.roles {
+            role.normalize();
+        }
+        self.roles.retain(|role| !role.name.is_empty());
+        dedupe_roles(&mut self.roles);
+        self.roles.truncate(super::roles::ROLES_LIMIT);
+        for skill in &mut self.skills {
+            skill.normalize();
+        }
+        self.skills.retain(|skill| !skill.name.is_empty());
+        dedupe_skills(&mut self.skills);
+        self.skills.truncate(super::roles::SKILLS_LIMIT);
+        for pack in &mut self.packs {
+            pack.normalize();
+        }
+        self.packs.retain(|pack| !pack.name.is_empty());
+        {
+            let mut seen: Vec<String> = Vec::new();
+            self.packs.retain(|pack| {
+                if seen.contains(&pack.id) {
+                    return false;
+                }
+                seen.push(pack.id.clone());
+                true
+            });
+        }
+        self.packs.truncate(super::roles::PACKS_LIMIT);
         self.timeout_seconds = self.timeout_seconds.clamp(10, 600);
         self.user_blacklist = clean_list(
             &self.user_blacklist,
