@@ -3,19 +3,28 @@
 # 这是本 fork 的公益构建，没有购买 Apple 开发者证书，所以不签名、不公证。
 # 用户首次打开时需要右键 → 打开，或去掉隔离标记（下载页有说明）。
 #
-# 推送后在 Actions 里选 `package` → Run workflow。产物在该次运行的
+# 推送 package-macos 分支即触发（见下面的 on）。产物在该次运行的
 # Artifacts 里：ShellRS-<版本>-macos-<架构>.app.zip（升级用）和 .dmg
 # （手动安装用）。之后用 `shellas-server publish` 把包和签名清单发到
 # shellas.agree.host。
 name: package
 
 on:
+  # 手动触发的按钮只对默认分支上的 workflow 显示。这个文件在功能分支上，
+  # 所以日常用 package-macos 分支的 push 触发；等文件进了默认分支，
+  # Run workflow 按钮会自动出现。
   workflow_dispatch:
-    inputs:
-      version:
-        description: 版本号，留空则取 Cargo.toml
-        required: false
-        type: string
+  push:
+    branches: [package-macos]
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - src/**
+      - assets/**
+      - locales/**
+      - packaging/macos/**
+      - .github/workflows/package.yml
 
 permissions:
   contents: read
