@@ -1,0 +1,80 @@
+# 手动打包 macOS 安装包：Apple Silicon 与 Intel 各一份。
+#
+# 这是本 fork 的公益构建，没有购买 Apple 开发者证书，所以不签名、不公证。
+# 用户首次打开时需要右键 → 打开，或去掉隔离标记（下载页有说明）。
+#
+# 推送后在 Actions 里选 `package` → Run workflow。产物在该次运行的
+# Artifacts 里：ShellRS-<版本>-macos-<架构>.app.zip（升级用）和 .dmg
+# （手动安装用）。之后用 `shellas-server publish` 把包和签名清单发到
+# shellas.agree.host。
+name: package
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 版本号，留空则取 Cargo.toml
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [aarch64, x86_64]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version
+        id: version
+        run: |
+          version="${{ inputs.version }}"
+          if [ -z "$version" ]; then
+            version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - run: rustup toolchain install
+      - run: rustup target add "${{ matrix.arch }}-apple-darwin"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-unsigned-${{ matrix.arch }}
+      - name: Build the app bundle
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          export SHELLRS_BUILD_DATE=$(date -u +%Y-%m-%d)
+          cargo build --release --locked --bin shellrs --target "$ARCH-apple-darwin"
+          lipo "target/$ARCH-apple-darwin/release/shellrs" \
+            -verify_arch "${ARCH/aarch64/arm64}"
+          packaging/macos/bundle.sh \
+            "target/$ARCH-apple-darwin/release/shellrs" "$VERSION" \
+            "$GITHUB_RUN_NUMBER" build
+      - name: Package (unsigned)
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p dist
+          # 升级包：ditto 原样保留 .app 的结构与权限。
+          ditto -c -k --keepParent build/ShellRS.app \
+            "dist/ShellRS-$VERSION-macos-$ARCH.app.zip"
+          # 首次安装：DMG 里带一个 Applications 快捷方式。
+          mkdir -p "$RUNNER_TEMP/dmg"
+          cp -R build/ShellRS.app "$RUNNER_TEMP/dmg/"
+          ln -s /Applications "$RUNNER_TEMP/dmg/Applications"
+          size=$(( $(du -sm "$RUNNER_TEMP/dmg" | cut -f1) * 2 + 20 ))
+          hdiutil create -volname ShellRS -srcfolder "$RUNNER_TEMP/dmg" -ov \
+            -fs HFS+ -size "${size}m" -format UDZO \
+            "dist/ShellRS-$VERSION-macos-$ARCH.dmg"
+          shasum -a 256 dist/* > "dist/SHA256SUMS-macos-$ARCH.txt"
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}-unsigned
+          path: dist/*
