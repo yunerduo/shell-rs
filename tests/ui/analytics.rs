@@ -6,8 +6,8 @@ use shellrs::analytics::{Analytics, Counter, Signal};
 use crate::support::*;
 
 /// Have the workspace report to a channel the test reads, at the current
-/// setting. Statistics are off by default, so tests about what is reported
-/// use [`reporting`], which turns them on first.
+/// setting. Statistics start on, so tests about what is reported use
+/// [`reporting`], which keeps the switch explicit.
 fn report(
     cx: &mut TestAppContext,
     handle: WindowHandle<Root>,
@@ -202,7 +202,7 @@ fn the_settings_switch_decides_whether_anything_is_reported(cx: &mut TestAppCont
             workspace.settings().read(cx).settings().analytics.enabled
         })
     };
-    assert!(!enabled(cx), "off until the user turns it on");
+    assert!(enabled(cx), "on unless the user turns it off");
 
     // 设置 › 关于 › 隐私 › 发送匿名使用统计.
     in_frame(cx, handle, |window, cx| window.click("open-settings", cx));
@@ -217,18 +217,7 @@ fn the_settings_switch_decides_whether_anything_is_reported(cx: &mut TestAppCont
             .within("group-1")
             .within("item-0")
             .find("check");
-        assert_eq!(switch.checked(), Some(false));
-        window
-            .within("settings")
-            .within("group-1")
-            .within("item-0")
-            .click("check", cx);
-    });
-    assert!(enabled(cx));
-    let received: Vec<Signal> = signals.try_iter().collect();
-    assert!(received.contains(&Signal::Enabled(true)), "{received:?}");
-
-    in_frame(cx, handle, |window, cx| {
+        assert_eq!(switch.checked(), Some(true));
         window
             .within("settings")
             .within("group-1")
@@ -239,6 +228,7 @@ fn the_settings_switch_decides_whether_anything_is_reported(cx: &mut TestAppCont
     let received: Vec<Signal> = signals.try_iter().collect();
     assert!(received.contains(&Signal::Enabled(false)), "{received:?}");
 
+    // Off: a use and the window coming forward are both left alone.
     in_frame(cx, handle, |window, cx| {
         window.dispatch_action(Box::new(NewLocalTerminal), cx)
     });
@@ -246,4 +236,16 @@ fn the_settings_switch_decides_whether_anything_is_reported(cx: &mut TestAppCont
     let received: Vec<Signal> = signals.try_iter().collect();
     assert!(counted(&received).is_empty(), "{received:?}");
     assert!(!came_forward(&received), "{received:?}");
+
+    // Back on, it reports again.
+    in_frame(cx, handle, |window, cx| {
+        window
+            .within("settings")
+            .within("group-1")
+            .within("item-0")
+            .click("check", cx);
+    });
+    assert!(enabled(cx));
+    let received: Vec<Signal> = signals.try_iter().collect();
+    assert!(received.contains(&Signal::Enabled(true)), "{received:?}");
 }
