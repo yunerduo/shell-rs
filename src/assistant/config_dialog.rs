@@ -5,6 +5,7 @@
 
 use gpui_kit::component::{
     ActiveTheme as _, Sizable as _, WindowExt as _,
+    accordion::Accordion,
     button::{Button, ButtonVariants as _},
     checkbox::Checkbox,
     dialog::{DialogClose, DialogFooter},
@@ -164,6 +165,24 @@ fn model_params_line(profile: &ModelProfile) -> String {
     if let Some(value) = profile.top_p {
         parts.push(format!("top_p {value}"));
     }
+    if let Some(value) = profile.top_k {
+        parts.push(format!("top_k {value}"));
+    }
+    if !profile.thinking_param.is_empty() && !profile.thinking_effort.is_empty() {
+        parts.push(format!(
+            "{} {}",
+            profile.thinking_param, profile.thinking_effort
+        ));
+    }
+    if profile.tool_rounds > 0 {
+        parts.push(
+            t!(
+                "assistant.settings.models.tool_rounds_summary",
+                rounds = profile.tool_rounds
+            )
+            .to_string(),
+        );
+    }
     if !profile.stop.is_empty() {
         parts.push(
             t!(
@@ -209,10 +228,17 @@ pub struct AssistantConfigDialog {
     editing_model: Option<String>,
     model_label: Entity<InputState>,
     model_id: Entity<InputState>,
+    model_base_url: Entity<InputState>,
+    model_full_url: bool,
+    model_api_key: Entity<InputState>,
     model_max_tokens: Entity<InputState>,
     model_context: Entity<InputState>,
+    model_tool_rounds: Entity<InputState>,
     model_temperature: Entity<InputState>,
     model_top_p: Entity<InputState>,
+    model_top_k: Entity<InputState>,
+    model_thinking_param: Entity<InputState>,
+    model_thinking_effort: Entity<InputState>,
     model_stop: Entity<InputState>,
     model_instruction: Entity<InputState>,
     model_extra: Entity<InputState>,
@@ -302,13 +328,26 @@ impl AssistantConfigDialog {
         let model_id = cx.new(|cx| {
             InputState::new(window, cx).placeholder(t!("assistant.settings.models.id.placeholder"))
         });
+        let model_base_url = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.models.base_url.placeholder"))
+        });
+        let model_api_key = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.models.api_key.placeholder"))
+                .masked(true)
+        });
         let model_max_tokens = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder(t!("assistant.settings.models.max_tokens.placeholder"))
+                .placeholder(t!("assistant.settings.models.output_tokens.placeholder"))
         });
         let model_context = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder(t!("assistant.settings.models.context_window.placeholder"))
+        });
+        let model_tool_rounds = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.models.tool_rounds.placeholder"))
         });
         let model_temperature = cx.new(|cx| {
             InputState::new(window, cx)
@@ -317,6 +356,18 @@ impl AssistantConfigDialog {
         let model_top_p = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder(t!("assistant.settings.models.top_p.placeholder"))
+        });
+        let model_top_k = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.models.top_k.placeholder"))
+        });
+        let model_thinking_param = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.models.thinking_param.placeholder"))
+        });
+        let model_thinking_effort = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.models.thinking_effort.placeholder"))
         });
         let model_stop = cx.new(|cx| {
             InputState::new(window, cx)
@@ -456,10 +507,17 @@ impl AssistantConfigDialog {
             editing_model: None,
             model_label,
             model_id,
+            model_base_url,
+            model_full_url: false,
+            model_api_key,
             model_max_tokens,
             model_context,
+            model_tool_rounds,
             model_temperature,
             model_top_p,
+            model_top_k,
+            model_thinking_param,
+            model_thinking_effort,
             model_stop,
             model_instruction,
             model_extra,
@@ -610,6 +668,26 @@ impl AssistantConfigDialog {
                     .map_err(|_| t!("assistant.settings.models.number_invalid"))?
             }
         };
+        let tool_rounds = {
+            let text = self.model_tool_rounds.read(cx).value().trim().to_string();
+            if text.is_empty() {
+                0
+            } else {
+                text.parse::<u32>()
+                    .map_err(|_| t!("assistant.settings.models.number_invalid"))?
+            }
+        };
+        let top_k = {
+            let text = self.model_top_k.read(cx).value().trim().to_string();
+            if text.is_empty() {
+                None
+            } else {
+                Some(
+                    text.parse::<u32>()
+                        .map_err(|_| t!("assistant.settings.models.number_invalid"))?,
+                )
+            }
+        };
         let stop = self
             .model_stop
             .read(cx)
@@ -624,13 +702,20 @@ impl AssistantConfigDialog {
             label: self.model_label.read(cx).value().to_string(),
             protocol: self.model_protocol,
             model: self.model_id.read(cx).value().to_string(),
+            base_url: self.model_base_url.read(cx).value().to_string(),
+            full_url: self.model_full_url,
             instruction: self.model_instruction.read(cx).value().to_string(),
             max_tokens,
             context_window,
+            tool_rounds,
             temperature: number(self.model_temperature.read(cx).value().to_string())?,
             top_p: number(self.model_top_p.read(cx).value().to_string())?,
+            top_k,
+            thinking_param: self.model_thinking_param.read(cx).value().to_string(),
+            thinking_effort: self.model_thinking_effort.read(cx).value().to_string(),
             stop,
             extra: self.model_extra.read(cx).value().to_string(),
+            ..ModelProfile::default()
         };
         profile.normalize();
         if profile.model.is_empty() {
@@ -676,6 +761,17 @@ impl AssistantConfigDialog {
         // The id is derived from protocol and model, so an edit may move it.
         profile.id = ModelProfile::id_of(profile.protocol, &profile.model);
         let new_id = profile.id.clone();
+        // A model keeps the keychain entry it was created with, even when
+        // its model name changes; a new model gets one of its own so its key
+        // does not touch the protocol's.
+        let previous_keychain = editing
+            .as_ref()
+            .and_then(|old| settings.model_profile(old))
+            .map(|other| other.keychain_id.clone())
+            .filter(|keychain_id| !keychain_id.is_empty());
+        profile.keychain_id = previous_keychain.unwrap_or_else(|| format!("model:{}", profile.id));
+        let keychain_id = profile.keychain_id.clone();
+        let typed_key = self.model_api_key.read(cx).value().to_string();
         let was_active = editing
             .as_ref()
             .is_some_and(|old| settings.active_model == *old);
@@ -701,6 +797,28 @@ impl AssistantConfigDialog {
         });
         self.clear_model_form(window, cx);
         self.succeed(t!("assistant.settings.models.saved"), cx);
+        if !typed_key.trim().is_empty() {
+            let account = super::settings::account(&keychain_id);
+            let key = Zeroizing::new(typed_key);
+            cx.spawn(async move |this, cx| {
+                let written = cx
+                    .background_executor()
+                    .spawn(async move { KeychainSecretStore::write_account(&account, &key) })
+                    .await;
+                this.update(cx, |this, cx| match written {
+                    Ok(()) => this.succeed(t!("assistant.settings.models.key_saved"), cx),
+                    Err(error) => this.fail(
+                        t!(
+                            "assistant.settings.models.key_failed",
+                            error = error.to_string()
+                        ),
+                        cx,
+                    ),
+                })
+                .ok();
+            })
+            .detach();
+        }
     }
 
     fn edit_model(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -716,13 +834,25 @@ impl AssistantConfigDialog {
         };
         self.editing_model = Some(profile.id.clone());
         self.model_protocol = profile.protocol;
+        self.model_full_url = profile.full_url;
         let values = [
             (&self.model_label, profile.label),
             (&self.model_id, profile.model),
+            (&self.model_base_url, profile.base_url),
             (&self.model_max_tokens, empty_if_zero(profile.max_tokens)),
             (&self.model_context, empty_if_zero(profile.context_window)),
+            (&self.model_tool_rounds, empty_if_zero(profile.tool_rounds)),
             (&self.model_temperature, float_text(profile.temperature)),
             (&self.model_top_p, float_text(profile.top_p)),
+            (
+                &self.model_top_k,
+                profile
+                    .top_k
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+            ),
+            (&self.model_thinking_param, profile.thinking_param),
+            (&self.model_thinking_effort, profile.thinking_effort),
             (&self.model_stop, profile.stop.join(", ")),
             (&self.model_instruction, profile.instruction),
             (&self.model_extra, profile.extra),
@@ -730,12 +860,22 @@ impl AssistantConfigDialog {
         for (input, value) in values {
             input.update(cx, |input, cx| input.set_value(value, window, cx));
         }
+        self.model_api_key
+            .update(cx, |input, cx| input.set_value("", window, cx));
         self.error = None;
         self.notice = None;
         cx.notify();
     }
 
     fn remove_model(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let keychain_id = self
+            .settings
+            .read(cx)
+            .settings()
+            .assistant
+            .model_profile(id)
+            .map(|profile| profile.keychain_id.clone())
+            .filter(|keychain_id| keychain_id.starts_with("model:"));
         self.settings.update(cx, |store, cx| {
             store.update(
                 |settings| {
@@ -747,6 +887,17 @@ impl AssistantConfigDialog {
                 cx,
             )
         });
+        // A model's own key goes with it; a provider's stays.
+        if let Some(keychain_id) = keychain_id {
+            let account = super::settings::account(&keychain_id);
+            cx.spawn(async move |_, cx| {
+                cx.background_executor()
+                    .spawn(async move { KeychainSecretStore::delete_account(&account) })
+                    .await
+                    .ok();
+            })
+            .detach();
+        }
         if self.editing_model.as_deref() == Some(id) {
             self.clear_model_form(window, cx);
         }
@@ -765,13 +916,20 @@ impl AssistantConfigDialog {
     fn clear_model_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editing_model = None;
         self.model_protocol = self.protocol;
+        self.model_full_url = false;
         for input in [
             &self.model_label,
             &self.model_id,
+            &self.model_base_url,
+            &self.model_api_key,
             &self.model_max_tokens,
             &self.model_context,
+            &self.model_tool_rounds,
             &self.model_temperature,
             &self.model_top_p,
+            &self.model_top_k,
+            &self.model_thinking_param,
+            &self.model_thinking_effort,
             &self.model_stop,
             &self.model_instruction,
             &self.model_extra,
@@ -1779,11 +1937,53 @@ impl AssistantConfigDialog {
                         })),
                 )
             });
-        let form = Form::new()
+        let chip_row = |field: &'static str,
+                        target: Entity<InputState>,
+                        values: &[(&'static str, &'static str)],
+                        cx: &mut Context<Self>| {
+            let mut row = h_flex().flex_wrap().gap_1();
+            for (label_key, value) in values {
+                let target = target.clone();
+                let value = *value;
+                row = row.child(
+                    Button::new(format!("assistant-config-{field}-chip-{value}"))
+                        .xsmall()
+                        .ghost()
+                        .label(t!(label_key))
+                        .on_click(cx.listener(move |_, _, window, cx| {
+                            target.update(cx, |input, cx| input.set_value(value, window, cx));
+                        })),
+                );
+            }
+            row
+        };
+        let basic = Form::new()
             .child(
                 Field::new()
                     .label(t!("assistant.settings.models.protocol"))
                     .child(protocols),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.base_url"))
+                    .description(t!("assistant.settings.models.base_url.hint"))
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .child(
+                                Input::new(&self.model_base_url)
+                                    .id("assistant-config-model-base-url"),
+                            )
+                            .child(
+                                Checkbox::new("assistant-config-model-full-url")
+                                    .label(t!("assistant.settings.models.full_url"))
+                                    .checked(self.model_full_url)
+                                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                        this.model_full_url = *checked;
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
             )
             .child(
                 Field::new()
@@ -1799,51 +1999,165 @@ impl AssistantConfigDialog {
             )
             .child(
                 Field::new()
-                    .label(t!("assistant.settings.models.max_tokens"))
-                    .child(
-                        Input::new(&self.model_max_tokens).id("assistant-config-model-max-tokens"),
-                    ),
-            )
-            .child(
-                Field::new()
-                    .label(t!("assistant.settings.models.context_window"))
-                    .description(t!("assistant.settings.models.context_window.hint"))
-                    .child(Input::new(&self.model_context).id("assistant-config-model-context")),
-            )
-            .child(
-                Field::new()
-                    .label(t!("assistant.settings.models.temperature"))
-                    .child(
-                        Input::new(&self.model_temperature)
-                            .id("assistant-config-model-temperature"),
-                    ),
-            )
-            .child(
-                Field::new()
-                    .label(t!("assistant.settings.models.top_p"))
-                    .child(Input::new(&self.model_top_p).id("assistant-config-model-top-p")),
-            )
-            .child(
-                Field::new()
-                    .label(t!("assistant.settings.models.stop"))
-                    .child(Input::new(&self.model_stop).id("assistant-config-model-stop")),
-            )
-            .child(
-                Field::new()
-                    .label(t!("assistant.settings.models.instruction"))
-                    .description(t!("assistant.settings.models.instruction.hint"))
-                    .child(
-                        Input::new(&self.model_instruction)
-                            .id("assistant-config-model-instruction"),
-                    ),
-            )
-            .child(
-                Field::new()
-                    .label(t!("assistant.settings.models.extra"))
-                    .description(t!("assistant.settings.models.extra.hint"))
-                    .child(Input::new(&self.model_extra).id("assistant-config-model-extra")),
-            )
-            .footer(footer)
+                    .label(t!("assistant.settings.models.api_key"))
+                    .description(t!("assistant.settings.models.api_key.hint"))
+                    .child(Input::new(&self.model_api_key).id("assistant-config-model-api-key")),
+            );
+        let advanced = Accordion::new("assistant-config-model-advanced")
+            .bordered(false)
+            .item(|item| {
+                item.title(t!("assistant.settings.models.advanced")).child(
+                    v_flex()
+                        .w_full()
+                        .gap_4()
+                        .child(
+                            Field::new()
+                                .label(t!("assistant.settings.models.context_window"))
+                                .description(t!("assistant.settings.models.context_window.hint"))
+                                .child(
+                                    v_flex()
+                                        .gap_2()
+                                        .child(
+                                            Input::new(&self.model_context)
+                                                .id("assistant-config-model-context"),
+                                        )
+                                        .child(chip_row(
+                                            "context",
+                                            self.model_context.clone(),
+                                            &[
+                                                ("assistant.settings.models.preset.128k", "128000"),
+                                                ("assistant.settings.models.preset.256k", "256000"),
+                                                ("assistant.settings.models.preset.512k", "512000"),
+                                                ("assistant.settings.models.preset.1m", "1000000"),
+                                            ],
+                                            cx,
+                                        )),
+                                ),
+                        )
+                        .child(
+                            Field::new()
+                                .label(t!("assistant.settings.models.output_tokens"))
+                                .description(t!("assistant.settings.models.output_tokens.hint"))
+                                .child(
+                                    v_flex()
+                                        .gap_2()
+                                        .child(
+                                            Input::new(&self.model_max_tokens)
+                                                .id("assistant-config-model-max-tokens"),
+                                        )
+                                        .child(chip_row(
+                                            "output",
+                                            self.model_max_tokens.clone(),
+                                            &[
+                                                ("assistant.settings.models.preset.4k", "4096"),
+                                                ("assistant.settings.models.preset.16k", "16384"),
+                                                ("assistant.settings.models.preset.32k", "32768"),
+                                                ("assistant.settings.models.preset.128k", "131072"),
+                                            ],
+                                            cx,
+                                        )),
+                                ),
+                        )
+                        .child(
+                            Field::new()
+                                .label(t!("assistant.settings.models.tool_rounds"))
+                                .description(t!("assistant.settings.models.tool_rounds.hint"))
+                                .child(
+                                    Input::new(&self.model_tool_rounds)
+                                        .id("assistant-config-model-tool-rounds"),
+                                ),
+                        )
+                        .child(
+                            Field::new()
+                                .label(t!("assistant.settings.models.thinking"))
+                                .description(t!("assistant.settings.models.thinking.hint"))
+                                .child(
+                                    v_flex()
+                                        .gap_2()
+                                        .child(
+                                            Input::new(&self.model_thinking_param)
+                                                .id("assistant-config-model-thinking-param"),
+                                        )
+                                        .child(
+                                            Input::new(&self.model_thinking_effort)
+                                                .id("assistant-config-model-thinking-effort"),
+                                        )
+                                        .child(chip_row(
+                                            "thinking",
+                                            self.model_thinking_effort.clone(),
+                                            &[
+                                                ("assistant.settings.models.thinking.default", ""),
+                                                (
+                                                    "assistant.settings.models.thinking.disabled",
+                                                    "none",
+                                                ),
+                                                ("assistant.settings.models.thinking.low", "low"),
+                                                (
+                                                    "assistant.settings.models.thinking.medium",
+                                                    "medium",
+                                                ),
+                                                ("assistant.settings.models.thinking.high", "high"),
+                                            ],
+                                            cx,
+                                        )),
+                                ),
+                        )
+                        .child(
+                            Field::new()
+                                .label(t!("assistant.settings.models.temperature"))
+                                .child(
+                                    Input::new(&self.model_temperature)
+                                        .id("assistant-config-model-temperature"),
+                                ),
+                        )
+                        .child(
+                            Field::new()
+                                .label(t!("assistant.settings.models.top_p"))
+                                .child(
+                                    Input::new(&self.model_top_p)
+                                        .id("assistant-config-model-top-p"),
+                                ),
+                        )
+                        .child(
+                            Field::new()
+                                .label(t!("assistant.settings.models.top_k"))
+                                .child(
+                                    Input::new(&self.model_top_k)
+                                        .id("assistant-config-model-top-k"),
+                                ),
+                        )
+                        .child(
+                            Field::new()
+                                .label(t!("assistant.settings.models.stop"))
+                                .child(
+                                    Input::new(&self.model_stop).id("assistant-config-model-stop"),
+                                ),
+                        )
+                        .child(
+                            Field::new()
+                                .label(t!("assistant.settings.models.instruction"))
+                                .description(t!("assistant.settings.models.instruction.hint"))
+                                .child(
+                                    Input::new(&self.model_instruction)
+                                        .id("assistant-config-model-instruction"),
+                                ),
+                        )
+                        .child(
+                            Field::new()
+                                .label(t!("assistant.settings.models.extra"))
+                                .description(t!("assistant.settings.models.extra.hint"))
+                                .child(
+                                    Input::new(&self.model_extra)
+                                        .id("assistant-config-model-extra"),
+                                ),
+                        ),
+                )
+            });
+        let form = v_flex()
+            .gap_4()
+            .child(basic)
+            .child(advanced)
+            .child(footer)
             .into_any_element();
         let active = assistant.active_model.clone();
         let mut list = v_flex().w_full().gap_1();

@@ -44,6 +44,8 @@ impl From<ProxyRoute> for ProxySetting {
 pub struct StreamRequest {
     pub protocol: ProviderProtocol,
     pub base_url: String,
+    /// The address is the whole URL: no protocol path is appended.
+    pub full_url: bool,
     pub model: String,
     pub keychain_id: String,
     pub messages: Vec<ChatMessage>,
@@ -63,6 +65,11 @@ pub struct StreamRequest {
     /// From the model profile; `None` leaves the service's default.
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
+    pub top_k: Option<u32>,
+    /// The body field carrying the thinking strength, and its value; both
+    /// empty leaves the service's default.
+    pub thinking_param: String,
+    pub thinking_effort: String,
     /// Sequences that end the answer.
     pub stop: Vec<String>,
     /// A JSON object merged into the request body.
@@ -174,12 +181,26 @@ pub(super) fn run_with_key(
         )
     };
     protocol::append_headers(&mut spec.headers, &request.headers);
+    // A profile whose address is the whole URL skips the protocol's path.
+    if request.full_url {
+        spec.url = request.base_url.trim().trim_end_matches('/').to_string();
+    }
+    let thinking = if request.thinking_param.is_empty() || request.thinking_effort.is_empty() {
+        None
+    } else {
+        Some((
+            request.thinking_param.as_str(),
+            request.thinking_effort.as_str(),
+        ))
+    };
     protocol::apply_tuning(
         &mut spec.body,
         request.protocol,
         &protocol::Tuning {
             temperature: request.temperature,
             top_p: request.top_p,
+            top_k: request.top_k,
+            thinking,
             stop: &request.stop,
             extra: &request.extra,
             instruction: &request.instruction,
@@ -594,6 +615,7 @@ mod tests {
         let request = StreamRequest {
             protocol: ProviderProtocol::OpenAi,
             base_url,
+            full_url: false,
             model,
             keychain_id: "unused-in-this-test".into(),
             messages: vec![ChatMessage::user("Reply with the single word: pong")],
@@ -605,6 +627,9 @@ mod tests {
             proxy: None,
             temperature: None,
             top_p: None,
+            top_k: None,
+            thinking_param: String::new(),
+            thinking_effort: String::new(),
             stop: Vec::new(),
             extra: String::new(),
             instruction: String::new(),

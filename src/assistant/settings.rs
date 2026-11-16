@@ -423,6 +423,14 @@ pub struct ModelProfile {
     pub protocol: ProviderProtocol,
     /// The model name the service knows.
     pub model: String,
+    /// The endpoint this model talks to; blank means its protocol's
+    /// provider address.
+    pub base_url: String,
+    /// The address is already the whole URL: no protocol path is appended.
+    pub full_url: bool,
+    /// The keychain entry holding this model's key; blank means the
+    /// protocol's provider entry.
+    pub keychain_id: String,
     /// Appended to the system prompt for this model only.
     pub instruction: String,
     /// The most tokens an answer may take; 0 means the provider's.
@@ -430,9 +438,17 @@ pub struct ModelProfile {
     /// How many tokens the model's context window holds; 0 means the
     /// default. Only the usage display reads it.
     pub context_window: u32,
+    /// The most tool-call turns one answer may take; 0 means the default.
+    pub tool_rounds: u32,
     /// `None` leaves the service's default.
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
+    pub top_k: Option<u32>,
+    /// The body field carrying the model's thinking strength, dotted for a
+    /// nested field (`reasoning.effort`). Blank sends nothing.
+    pub thinking_param: String,
+    /// The value written at `thinking_param`; blank sends nothing.
+    pub thinking_effort: String,
     /// Sequences that end an answer.
     pub stop: Vec<String>,
     /// A JSON object merged into the request body, after the fields above.
@@ -449,10 +465,21 @@ pub const DEFAULT_CONTEXT_WINDOW: u32 = 128_000;
 
 /// The largest window a profile may declare.
 pub const CONTEXT_WINDOW_MAX: u32 = 2_000_000;
+
+/// The most tokens one answer may ask for.
+pub const OUTPUT_TOKENS_MAX: u32 = 131_072;
+
+/// The tool-call turns one answer gets when the profile does not say.
+pub const DEFAULT_TOOL_ROUNDS: u32 = 8;
+
+/// The most tool-call turns a profile may ask for.
+pub const TOOL_ROUNDS_MAX: u32 = 500;
 const STOP_LIMIT: usize = 8;
 const STOP_LENGTH_LIMIT: usize = 64;
 const INSTRUCTION_LIMIT: usize = 2000;
 const EXTRA_LIMIT: usize = 2000;
+const THINKING_PARAM_LIMIT: usize = 80;
+const THINKING_EFFORT_LIMIT: usize = 40;
 
 impl Default for ModelProfile {
     fn default() -> Self {
@@ -461,11 +488,18 @@ impl Default for ModelProfile {
             label: String::new(),
             protocol: ProviderProtocol::OpenAi,
             model: String::new(),
+            base_url: String::new(),
+            full_url: false,
+            keychain_id: String::new(),
             instruction: String::new(),
             max_tokens: 0,
             context_window: 0,
+            tool_rounds: 0,
             temperature: None,
             top_p: None,
+            top_k: None,
+            thinking_param: String::new(),
+            thinking_effort: String::new(),
             stop: Vec::new(),
             extra: String::new(),
         }
@@ -492,6 +526,9 @@ impl ModelProfile {
     pub fn normalize(&mut self) {
         self.model = self.model.trim().chars().take(128).collect();
         self.label = self.label.trim().chars().take(64).collect();
+        self.base_url = self.base_url.trim().trim_end_matches('/').to_string();
+        self.base_url = self.base_url.chars().take(512).collect();
+        self.keychain_id = self.keychain_id.trim().chars().take(120).collect();
         self.instruction = self
             .instruction
             .trim()
@@ -499,12 +536,41 @@ impl ModelProfile {
             .take(INSTRUCTION_LIMIT)
             .collect();
         self.extra = clean_extra(&self.extra);
-        self.max_tokens = self.max_tokens.clamp(0, 8192);
+        self.max_tokens = self.max_tokens.clamp(0, OUTPUT_TOKENS_MAX);
         self.context_window = self.context_window.clamp(0, CONTEXT_WINDOW_MAX);
+        self.tool_rounds = self.tool_rounds.min(TOOL_ROUNDS_MAX);
         self.temperature = self.temperature.filter(|value| (0.0..=2.0).contains(value));
         self.top_p = self.top_p.filter(|value| (0.0..=1.0).contains(value));
+        self.top_k = self.top_k.filter(|value| (1..=1000).contains(value));
+        self.thinking_param = clean_thinking_param(&self.thinking_param);
+        self.thinking_effort = self
+            .thinking_effort
+            .trim()
+            .chars()
+            .take(THINKING_EFFORT_LIMIT)
+            .collect();
         self.stop = clean_stop(&self.stop);
         self.id = Self::id_of(self.protocol, &self.model);
+    }
+}
+
+/// A body field name for the thinking strength: dot-separated parts of ASCII
+/// letters, digits and underscores. Anything else is dropped, since it could
+/// rewrite a field the protocol sets itself.
+fn clean_thinking_param(text: &str) -> String {
+    let text = text.trim();
+    let valid = !text.is_empty()
+        && text.chars().count() <= THINKING_PARAM_LIMIT
+        && text.split('.').all(|part| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .all(|letter| letter.is_ascii_alphanumeric() || letter == '_')
+        });
+    if valid {
+        text.to_string()
+    } else {
+        String::new()
     }
 }
 
@@ -572,11 +638,18 @@ fn dedupe_skills(skills: &mut Vec<super::roles::Skill>) {
 pub struct ModelSelection {
     pub protocol: ProviderProtocol,
     pub base_url: String,
+    /// The address is the whole URL; no protocol path is appended.
+    pub full_url: bool,
     pub model: String,
     pub keychain_id: String,
     pub max_tokens: u32,
+    pub context_window: u32,
+    pub tool_rounds: u32,
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
+    pub top_k: Option<u32>,
+    pub thinking_param: String,
+    pub thinking_effort: String,
     pub stop: Vec<String>,
     pub extra: String,
     pub instruction: String,
@@ -691,16 +764,38 @@ impl AssistantSettings {
                 let provider = self.provider(profile.protocol);
                 ModelSelection {
                     protocol: profile.protocol,
-                    base_url: provider.base_url.clone(),
+                    base_url: if profile.base_url.is_empty() {
+                        provider.base_url.clone()
+                    } else {
+                        profile.base_url.clone()
+                    },
+                    full_url: profile.full_url,
                     model: profile.model.clone(),
-                    keychain_id: provider.keychain_id.clone(),
+                    keychain_id: if profile.keychain_id.is_empty() {
+                        provider.keychain_id.clone()
+                    } else {
+                        profile.keychain_id.clone()
+                    },
                     max_tokens: if profile.max_tokens == 0 {
                         provider.max_tokens
                     } else {
                         profile.max_tokens
                     },
+                    context_window: if profile.context_window == 0 {
+                        DEFAULT_CONTEXT_WINDOW
+                    } else {
+                        profile.context_window
+                    },
+                    tool_rounds: if profile.tool_rounds == 0 {
+                        DEFAULT_TOOL_ROUNDS
+                    } else {
+                        profile.tool_rounds
+                    },
                     temperature: profile.temperature,
                     top_p: profile.top_p,
+                    top_k: profile.top_k,
+                    thinking_param: profile.thinking_param.clone(),
+                    thinking_effort: profile.thinking_effort.clone(),
                     stop: profile.stop.clone(),
                     extra: profile.extra.clone(),
                     instruction: profile.instruction.clone(),
@@ -712,11 +807,17 @@ impl AssistantSettings {
                 ModelSelection {
                     protocol: self.protocol,
                     base_url: provider.base_url.clone(),
+                    full_url: false,
                     model: provider.model.clone(),
                     keychain_id: provider.keychain_id.clone(),
                     max_tokens: provider.max_tokens,
+                    context_window: DEFAULT_CONTEXT_WINDOW,
+                    tool_rounds: DEFAULT_TOOL_ROUNDS,
                     temperature: None,
                     top_p: None,
+                    top_k: None,
+                    thinking_param: String::new(),
+                    thinking_effort: String::new(),
                     stop: Vec::new(),
                     extra: String::new(),
                     instruction: String::new(),
@@ -948,7 +1049,55 @@ mod tests {
         assert_eq!(selection.max_tokens, settings.anthropic.max_tokens);
         assert_eq!(selection.temperature, Some(0.3));
         assert_eq!(selection.instruction, "回答尽量简短");
+        assert!(!selection.full_url);
+        assert_eq!(selection.context_window, DEFAULT_CONTEXT_WINDOW);
+        assert_eq!(selection.tool_rounds, DEFAULT_TOOL_ROUNDS);
+        assert_eq!(selection.keychain_id, settings.anthropic.keychain_id);
         assert_eq!(settings.account(), "assistant:assistant-anthropic");
+    }
+
+    #[test]
+    fn a_model_can_override_its_address_key_and_tool_budget() {
+        let mut settings = AssistantSettings {
+            models: vec![ModelProfile {
+                protocol: ProviderProtocol::OpenAi,
+                model: "gateway/model".into(),
+                base_url: " https://gateway.test/v1/ ".into(),
+                full_url: true,
+                keychain_id: " model:openai:gateway/model ".into(),
+                context_window: 256_000,
+                tool_rounds: 40,
+                top_k: Some(0),
+                thinking_param: " reasoning.effort ".into(),
+                thinking_effort: " high ".into(),
+                ..ModelProfile::default()
+            }],
+            active_model: "openai:gateway/model".into(),
+            ..AssistantSettings::default()
+        };
+        settings.normalize();
+        let selection = settings.selection();
+        assert_eq!(selection.base_url, "https://gateway.test/v1");
+        assert!(selection.full_url);
+        assert_eq!(selection.keychain_id, "model:openai:gateway/model");
+        assert_eq!(selection.context_window, 256_000);
+        assert_eq!(selection.tool_rounds, 40);
+        assert_eq!(selection.top_k, None, "zero is not a top_k");
+        assert_eq!(selection.thinking_param, "reasoning.effort");
+        assert_eq!(selection.thinking_effort, "high");
+    }
+
+    #[test]
+    fn a_thinking_field_name_that_could_break_the_body_is_dropped() {
+        let mut profile = ModelProfile {
+            model: "m".into(),
+            thinking_param: "a b".into(),
+            thinking_effort: "high".into(),
+            ..ModelProfile::default()
+        };
+        profile.normalize();
+        assert_eq!(profile.thinking_param, "");
+        assert_eq!(profile.thinking_effort, "high");
     }
 
     #[test]

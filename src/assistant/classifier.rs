@@ -111,6 +111,7 @@ pub fn request(settings: &AssistantSettings, command: &str, shell: &str) -> Stre
     StreamRequest {
         protocol: selection.protocol,
         base_url: selection.base_url.clone(),
+        full_url: selection.full_url,
         model,
         keychain_id: selection.keychain_id.clone(),
         messages: vec![ChatMessage::user(prompt(command, shell))],
@@ -124,6 +125,9 @@ pub fn request(settings: &AssistantSettings, command: &str, shell: &str) -> Stre
         // question has one right answer.
         temperature: None,
         top_p: None,
+        top_k: None,
+        thinking_param: String::new(),
+        thinking_effort: String::new(),
         stop: Vec::new(),
         extra: String::new(),
         instruction: String::new(),

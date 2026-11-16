@@ -52,6 +52,7 @@ fn ask_with(terminals: Vec<ToolTerminal>, prompt: &str) -> Vec<ToolCall> {
     let request = StreamRequest {
         protocol: ProviderProtocol::OpenAi,
         base_url,
+        full_url: false,
         model: model.clone(),
         keychain_id: "unused-in-this-test".into(),
         messages: vec![ChatMessage::user(prompt)],
@@ -63,6 +64,9 @@ fn ask_with(terminals: Vec<ToolTerminal>, prompt: &str) -> Vec<ToolCall> {
         proxy: None,
         temperature: None,
         top_p: None,
+        top_k: None,
+        thinking_param: String::new(),
+        thinking_effort: String::new(),
         stop: Vec::new(),
         extra: String::new(),
         instruction: String::new(),

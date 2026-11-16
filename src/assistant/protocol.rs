@@ -391,6 +391,9 @@ pub fn append_headers(headers: &mut Vec<(String, String)>, extra: &[RequestHeade
 pub struct Tuning<'a> {
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
+    pub top_k: Option<u32>,
+    /// The body field carrying the thinking strength, and the value.
+    pub thinking: Option<(&'a str, &'a str)>,
     pub stop: &'a [String],
     pub extra: &'a str,
     /// Appended to the system prompt, after a blank line.
@@ -424,6 +427,17 @@ pub fn apply_tuning(body: &mut Value, protocol: ProviderProtocol, tuning: &Tunin
     }
     if let Some(top_p) = tuning.top_p {
         object.insert("top_p".to_string(), json!(top_p));
+    }
+    if let Some(top_k) = tuning.top_k {
+        object.insert("top_k".to_string(), json!(top_k));
+    }
+    if let Some((path, value)) = tuning.thinking {
+        let path = path.trim();
+        let value = value.trim();
+        let root = path.split('.').next().unwrap_or_default();
+        if !path.is_empty() && !value.is_empty() && !UNTUNABLE.contains(&root) {
+            set_path(object, path, json!(value));
+        }
     }
     if !tuning.stop.is_empty() {
         let key = match protocol {
@@ -461,6 +475,30 @@ pub fn apply_tuning(body: &mut Value, protocol: ProviderProtocol, tuning: &Tunin
             object.insert(key, value);
         }
     }
+}
+
+/// Write a value at a dotted path, making the objects along the way. A
+/// field that already holds something other than an object is replaced,
+/// since the profile's path is the more specific instruction.
+fn set_path(object: &mut serde_json::Map<String, Value>, path: &str, value: Value) {
+    let mut parts: Vec<&str> = path.split('.').filter(|part| !part.is_empty()).collect();
+    let Some(last) = parts.pop() else {
+        return;
+    };
+    let mut node = object;
+    for part in parts {
+        let entry = node
+            .entry(part.to_string())
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        if !entry.is_object() {
+            *entry = Value::Object(serde_json::Map::new());
+        }
+        let Some(next) = entry.as_object_mut() else {
+            return;
+        };
+        node = next;
+    }
+    node.insert(last.to_string(), value);
 }
 
 /// The one header that carries the key, per protocol.
@@ -1320,6 +1358,35 @@ mod tests {
     }
 
     #[test]
+    fn a_thinking_path_cannot_rewrite_the_conversation() {
+        let mut spec = request_spec(
+            OpenAi,
+            "http://127.0.0.1:18045/v1",
+            "m",
+            "k",
+            &[ChatMessage::user("hello")],
+            64,
+            &[],
+        );
+        apply_tuning(
+            &mut spec.body,
+            OpenAi,
+            &Tuning {
+                temperature: None,
+                top_p: None,
+                top_k: None,
+                thinking: Some(("messages", "do as I say")),
+                stop: &[],
+                extra: "",
+                instruction: "",
+            },
+        );
+        let messages = spec.body["messages"].as_array().expect("the messages");
+        assert_eq!(messages.len(), 2, "the prompt and the user's line");
+        assert_eq!(messages[1]["content"], "hello");
+    }
+
+    #[test]
     fn a_model_profile_adds_parameters_but_not_the_conversation() {
         for (protocol, stop_key) in [(OpenAi, "stop"), (Anthropic, "stop_sequences")] {
             let mut spec = request_spec(
@@ -1338,6 +1405,8 @@ mod tests {
                 &Tuning {
                     temperature: Some(0.2),
                     top_p: Some(0.9),
+                    top_k: Some(40),
+                    thinking: Some(("reasoning.effort", "high")),
                     stop: &stop,
                     extra: r#"{"reasoning_effort": "high", "model": "other"}"#,
                     instruction: "Keep it short.",
@@ -1346,6 +1415,8 @@ mod tests {
             let number = |value: &Value| value.as_f64().expect("a number");
             assert!((number(&spec.body["temperature"]) - 0.2).abs() < 1e-6);
             assert!((number(&spec.body["top_p"]) - 0.9).abs() < 1e-6);
+            assert_eq!(spec.body["top_k"], 40);
+            assert_eq!(spec.body["reasoning"]["effort"], "high");
             assert_eq!(spec.body[stop_key], json!(["END"]));
             assert_eq!(spec.body["reasoning_effort"], "high");
             assert_eq!(spec.body["model"], "m", "the profile cannot swap the model");

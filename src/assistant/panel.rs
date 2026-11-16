@@ -59,11 +59,6 @@ const EXEC_LIMIT: usize = 256 * 1024;
 /// terminal has all of it anyway.
 const INJECT_LIMIT: usize = 256 * 1024;
 
-/// How many model turns one exchange may take. Eight is enough for a
-/// question, a look, a follow-up look, and an answer, with room to spare;
-/// more than that is a loop, not a conversation.
-const MAX_ROUNDS: u32 = 8;
-
 /// Full access waits this long before its confirmation can be accepted: the
 /// second click is a decision, not a reflex.
 const FULL_ACCESS_HOLD: Duration = Duration::from_secs(10);
@@ -676,6 +671,7 @@ impl AssistantPanel {
         let request = StreamRequest {
             protocol: selection.protocol,
             base_url: selection.base_url,
+            full_url: selection.full_url,
             model: selection.model,
             keychain_id: selection.keychain_id,
             messages: vec![ChatMessage::user(prompt.to_string())],
@@ -690,6 +686,9 @@ impl AssistantPanel {
             proxy: assistant.proxy_route(selection.protocol).map(Into::into),
             temperature: selection.temperature,
             top_p: selection.top_p,
+            top_k: selection.top_k,
+            thinking_param: selection.thinking_param,
+            thinking_effort: selection.thinking_effort,
             stop: selection.stop,
             extra: selection.extra,
             instruction: selection.instruction,
@@ -894,6 +893,7 @@ impl AssistantPanel {
         let request = StreamRequest {
             protocol: selection.protocol,
             base_url: selection.base_url,
+            full_url: selection.full_url,
             model: selection.model,
             keychain_id: selection.keychain_id,
             messages: run.messages.clone(),
@@ -908,6 +908,9 @@ impl AssistantPanel {
             proxy: assistant.proxy_route(selection.protocol).map(Into::into),
             temperature: selection.temperature,
             top_p: selection.top_p,
+            top_k: selection.top_k,
+            thinking_param: selection.thinking_param,
+            thinking_effort: selection.thinking_effort,
             stop: selection.stop,
             extra: selection.extra,
             instruction: selection.instruction,
@@ -1607,12 +1610,13 @@ impl AssistantPanel {
         {
             return;
         }
-        if self.rounds >= MAX_ROUNDS {
-            self.notice = Some(t!("assistant.tool.round_limit", rounds = MAX_ROUNDS));
-            return;
-        }
         let assistant = self.settings.read(cx).settings().assistant.clone();
         let selection = assistant.selection();
+        let round_limit = selection.tool_rounds.max(1);
+        if self.rounds >= round_limit {
+            self.notice = Some(t!("assistant.tool.round_limit", rounds = round_limit));
+            return;
+        }
         if selection.base_url.trim().is_empty() || selection.model.trim().is_empty() {
             self.error = Some(t!("assistant.error.no_provider"));
             return;
@@ -1634,6 +1638,7 @@ impl AssistantPanel {
         let request = StreamRequest {
             protocol: selection.protocol,
             base_url: selection.base_url,
+            full_url: selection.full_url,
             model: selection.model,
             keychain_id: selection.keychain_id,
             messages: self.messages[..self.messages.len() - 1].to_vec(),
@@ -1653,6 +1658,9 @@ impl AssistantPanel {
             proxy: assistant.proxy_route(selection.protocol).map(Into::into),
             temperature: selection.temperature,
             top_p: selection.top_p,
+            top_k: selection.top_k,
+            thinking_param: selection.thinking_param,
+            thinking_effort: selection.thinking_effort,
             stop: selection.stop,
             extra: selection.extra,
             instruction,

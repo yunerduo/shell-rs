@@ -418,11 +418,38 @@ assistant.settings.key_failed:
   zh-CN: 保存 Key 失败：%{error}
   en: "The key could not be saved: %{error}"
 assistant.settings.models.hint:
-  zh-CN: 这里配置的模型会出现在聊天输入框的模型菜单里，点选即切换。接口地址、Key 与代理沿用上面的供应商设置。
-  en: The models configured here are listed in the composer's model menu and switch with a click. Address, key and proxy come from the provider above.
+  zh-CN: 这里配置的模型会出现在聊天输入框的模型菜单里，点选即切换。地址与 Key 可各自覆盖，留空则沿用上面的供应商设置。
+  en: The models configured here are listed in the composer's model menu and switch with a click. Address and key can each be overridden; blank falls back to the provider above.
 assistant.settings.models.protocol:
   zh-CN: 协议
   en: Protocol
+assistant.settings.models.base_url:
+  zh-CN: 请求地址
+  en: Endpoint
+assistant.settings.models.base_url.hint:
+  zh-CN: 留空用供应商的地址；不勾选「完整 URL」时会把协议路径接在后面。
+  en: Blank uses the provider's address; the protocol's path is appended unless Full URL is on.
+assistant.settings.models.base_url.placeholder:
+  zh-CN: 例如 https://api.example.com/v1
+  en: "For example https://api.example.com/v1"
+assistant.settings.models.full_url:
+  zh-CN: 完整 URL
+  en: Full URL
+assistant.settings.models.api_key:
+  zh-CN: API Key
+  en: API key
+assistant.settings.models.api_key.hint:
+  zh-CN: 留空则用供应商已保存的 Key；填写会单独存在这个模型名下。
+  en: Blank uses the provider's saved key; a typed key is stored under this model.
+assistant.settings.models.api_key.placeholder:
+  zh-CN: 留空不改
+  en: Leave blank to keep
+assistant.settings.models.key_saved:
+  zh-CN: 模型的 Key 已保存
+  en: The model's key was saved
+assistant.settings.models.key_failed:
+  zh-CN: 保存模型的 Key 失败：%{error}
+  en: "The model's key could not be saved: %{error}"
 assistant.settings.models.id:
   zh-CN: 模型 ID
   en: Model ID
@@ -441,21 +468,87 @@ assistant.settings.models.label.hint:
 assistant.settings.models.label.placeholder:
   zh-CN: 可留空
   en: Optional
-assistant.settings.models.max_tokens:
-  zh-CN: 最大输出 tokens
-  en: Max output tokens
-assistant.settings.models.max_tokens.placeholder:
+assistant.settings.models.output_tokens:
+  zh-CN: 输出 tokens
+  en: Output tokens
+assistant.settings.models.output_tokens.hint:
+  zh-CN: 单次回答的上限，留空用服务商默认。
+  en: The cap on one answer; blank uses the provider's default.
+assistant.settings.models.output_tokens.placeholder:
   zh-CN: 留空用服务商默认
   en: Blank for the provider's default
 assistant.settings.models.context_window:
-  zh-CN: 上下文窗口 tokens
-  en: Context window tokens
+  zh-CN: 上下文窗口（输入 tokens）
+  en: Context window (input tokens)
 assistant.settings.models.context_window.placeholder:
   zh-CN: 留空按 128k 估算
   en: Blank assumes 128k
 assistant.settings.models.context_window.hint:
   zh-CN: 只用于对话里的上下文占用率显示，不会发给服务商。
   en: Used only by the conversation's context usage display; it is not sent to the provider.
+assistant.settings.models.preset.4k:
+  zh-CN: 4k
+  en: 4k
+assistant.settings.models.preset.16k:
+  zh-CN: 16k
+  en: 16k
+assistant.settings.models.preset.32k:
+  zh-CN: 32k
+  en: 32k
+assistant.settings.models.preset.128k:
+  zh-CN: 128k
+  en: 128k
+assistant.settings.models.preset.256k:
+  zh-CN: 256k
+  en: 256k
+assistant.settings.models.preset.512k:
+  zh-CN: 512k
+  en: 512k
+assistant.settings.models.preset.1m:
+  zh-CN: 1M
+  en: 1M
+assistant.settings.models.tool_rounds:
+  zh-CN: 工具调用轮数
+  en: Tool-call turns
+assistant.settings.models.tool_rounds.hint:
+  zh-CN: 一次回答里最多执行几轮工具调用，留空按 8 轮。
+  en: The most tool-call turns one answer may take; blank means 8.
+assistant.settings.models.tool_rounds.placeholder:
+  zh-CN: 留空按 8
+  en: Blank means 8
+assistant.settings.models.tool_rounds_summary:
+  zh-CN: "%{rounds} 轮工具调用"
+  en: "%{rounds} tool turns"
+assistant.settings.models.thinking:
+  zh-CN: 思考模式
+  en: Thinking mode
+assistant.settings.models.thinking.hint:
+  zh-CN: 参数名按模型文档填写，例如 reasoning_effort 或 reasoning.effort；值为空则不发这个参数。
+  en: Use the parameter name from the model's documentation, such as reasoning_effort or reasoning.effort; an empty value sends nothing.
+assistant.settings.models.thinking_param.placeholder:
+  zh-CN: 参数名，例如 reasoning_effort
+  en: "Parameter name, for example reasoning_effort"
+assistant.settings.models.thinking_effort.placeholder:
+  zh-CN: 强度值，例如 high
+  en: "Strength, for example high"
+assistant.settings.models.thinking.default:
+  zh-CN: 默认
+  en: Default
+assistant.settings.models.thinking.disabled:
+  zh-CN: 关闭
+  en: "Off"
+assistant.settings.models.thinking.low:
+  zh-CN: 低
+  en: Low
+assistant.settings.models.thinking.medium:
+  zh-CN: 中
+  en: Medium
+assistant.settings.models.thinking.high:
+  zh-CN: 高
+  en: High
+assistant.settings.models.advanced:
+  zh-CN: 高级配置
+  en: Advanced
 assistant.settings.models.temperature:
   zh-CN: 温度（0–2）
   en: Temperature (0–2)
@@ -474,6 +567,12 @@ assistant.settings.models.top_p.placeholder:
 assistant.settings.models.top_p.invalid:
   zh-CN: top_p 需要在 0 到 1 之间
   en: top_p must be between 0 and 1
+assistant.settings.models.top_k:
+  zh-CN: top_k（1–1000）
+  en: top_k (1–1000)
+assistant.settings.models.top_k.placeholder:
+  zh-CN: 留空用服务商默认
+  en: Blank for the provider's default
 assistant.settings.models.stop:
   zh-CN: 停止序列
   en: Stop sequences
