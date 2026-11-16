@@ -228,15 +228,6 @@ fn the_settings_switch_decides_whether_anything_is_reported(cx: &mut TestAppCont
     let received: Vec<Signal> = signals.try_iter().collect();
     assert!(received.contains(&Signal::Enabled(false)), "{received:?}");
 
-    // Off: a use and the window coming forward are both left alone.
-    in_frame(cx, handle, |window, cx| {
-        window.dispatch_action(Box::new(NewLocalTerminal), cx)
-    });
-    bring_forward(cx, handle);
-    let received: Vec<Signal> = signals.try_iter().collect();
-    assert!(counted(&received).is_empty(), "{received:?}");
-    assert!(!came_forward(&received), "{received:?}");
-
     // Back on, it reports again.
     in_frame(cx, handle, |window, cx| {
         window
@@ -248,4 +239,24 @@ fn the_settings_switch_decides_whether_anything_is_reported(cx: &mut TestAppCont
     assert!(enabled(cx));
     let received: Vec<Signal> = signals.try_iter().collect();
     assert!(received.contains(&Signal::Enabled(true)), "{received:?}");
+
+    // Off once more: a use and the window coming forward are both left
+    // alone. This also opens a terminal in the middle, replacing the
+    // settings tab, so it comes last.
+    in_frame(cx, handle, |window, cx| {
+        window
+            .within("settings")
+            .within("group-1")
+            .within("item-0")
+            .click("check", cx);
+    });
+    assert!(!enabled(cx));
+    signals.try_iter().for_each(drop);
+    in_frame(cx, handle, |window, cx| {
+        window.dispatch_action(Box::new(NewLocalTerminal), cx)
+    });
+    bring_forward(cx, handle);
+    let received: Vec<Signal> = signals.try_iter().collect();
+    assert!(counted(&received).is_empty(), "{received:?}");
+    assert!(!came_forward(&received), "{received:?}");
 }
