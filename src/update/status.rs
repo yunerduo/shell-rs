@@ -368,7 +368,7 @@ mod tests {
             })
             .status_line()
             .0,
-            "Downloading Agree ShellAS 0.2.0… 45%"
+            "Downloading Agree ShellAs 0.2.0… 45%"
         );
         let failed = snapshot(Phase::Failed {
             stage: Stage::Download,
@@ -376,7 +376,7 @@ mod tests {
         });
         assert_eq!(
             failed.status_line().0,
-            "Couldn’t download Agree ShellAS 0.2.0: GitHub answered HTTP 503"
+            "Couldn’t download Agree ShellAs 0.2.0: GitHub answered HTTP 503"
         );
         let mut off = snapshot(Phase::Off);
         off.unsupported = Some(Unsupported::DevelopmentBuild);
@@ -404,7 +404,7 @@ mod tests {
         );
         assert_eq!(
             snapshot(Phase::Ready).status_line().0,
-            "新版本 0.2.0 已下载，重启 Agree ShellAS 即可完成更新。"
+            "新版本 0.2.0 已下载，重启 Agree ShellAs 即可完成更新。"
         );
         let failed = snapshot(Phase::Failed {
             stage: Stage::Download,

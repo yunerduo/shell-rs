@@ -1,11 +1,11 @@
 ---
 name: shellrs
-description: This skill should be used when the user asks to "connect to a server", "SSH into a machine", "run a command on a remote host", "check a server", "list servers" or "list SSH sessions", "upload/download or sync files to a server", "add, change or remove a saved host or credential", or mentions Agree ShellAS or the `shellrs` CLI. Use `shellrs` instead of running `ssh`, `scp`, or `sftp` directly.
+description: This skill should be used when the user asks to "connect to a server", "SSH into a machine", "run a command on a remote host", "check a server", "list servers" or "list SSH sessions", "upload/download or sync files to a server", "add, change or remove a saved host or credential", or mentions Agree ShellAs or the `shellrs` CLI. Use `shellrs` instead of running `ssh`, `scp`, or `sftp` directly.
 ---
 
-# Agree ShellAS CLI
+# Agree ShellAs CLI
 
-Use the `shellrs` CLI to manage the user's saved SSH hosts and credentials, run one-off commands, and transfer files through the user's running Agree ShellAS desktop app. Agree ShellAS holds the credentials and connects with the saved configuration.
+Use the `shellrs` CLI to manage the user's saved SSH hosts and credentials, run one-off commands, and transfer files through the user's running Agree ShellAs desktop app. Agree ShellAs holds the credentials and connects with the saved configuration.
 
 Prefer `shellrs` over running `ssh`, `scp`, or `sftp` directly.
 Run `shellrs --help` or `shellrs <command> --help` for details. Every command prints JSON when piped or given `--json`.
@@ -21,7 +21,7 @@ shellrs download <host-id> <remote-path> <local-path>
 shellrs sync <host-id> <local-dir> <remote-dir> [--delete]
 ```
 
-`<host-id>` is the 16-character `id` from `shellrs hosts list`, the same ID that Agree ShellAS copies with Copy ID (复制 ID).
+`<host-id>` is the 16-character `id` from `shellrs hosts list`, the same ID that Agree ShellAs copies with Copy ID (复制 ID).
 
 For a simple command, pass one complete remote shell command string as `<command>`.
 Pass a command through stdin when it contains quotes, pipes, redirects, JSON, `$`, backticks, or nested shell code, and quote the heredoc delimiter so the local shell leaves it alone:
@@ -34,7 +34,7 @@ EOF
 
 ## Hosts Opened From a Bastion Host
 
-A host listed with `"temporary": true` may have been opened by a bastion host's link that allows one login. Then `exec`, `upload` and `download`, which log in again, fail with `missing_credential` or `connect_failed`, and the message says so. Run the command in the host's terminal open in Agree ShellAS instead:
+A host listed with `"temporary": true` may have been opened by a bastion host's link that allows one login. Then `exec`, `upload` and `download`, which log in again, fail with `missing_credential` or `connect_failed`, and the message says so. Run the command in the host's terminal open in Agree ShellAs instead:
 
 ```bash
 shellrs exec <host-id> --terminal "<command>"
@@ -87,11 +87,11 @@ EOF
 - `group` is a path such as `生产/web`; groups that are not there are made.
 - A host logs in with `"auth": "password"` (its own password), `"credential"` (a saved credential, by its ID; the host logs in as the credential's user, or as `user` when given, so one key serves several users; `"user": ""` goes back to the credential's) or `"no_password"` (the SSH agent and the default keys).
 - `route` is `{"type": "direct"}`, `{"type": "jump", "hosts": ["<host-id>", ...]}` or `{"type": "proxy", "kind": "http", "host": "...", "port": 3128}`.
-- A host listed with `"protocol": "serial"` is a serial port of the user's computer, opened in a Agree ShellAS terminal; it has `serial` (`device`, `baud`, `data_bits`, `parity`, `stop_bits`, `flow_control`) instead of `host`, `port`, `user`, `auth` and `route`. Create one with `{"name": "console", "serial": {"device": "/dev/ttyUSB0", "baud": 115200}}`. `exec`, `upload`, `download` and `sync` don't work on serial hosts.
-- A host listed with `"protocol": "telnet"` is a Telnet server (switches, console servers, embedded devices), opened in a Agree ShellAS terminal. It has `host`, `port` (23 by default), `route` and `telnet` (`user_prompt`, `password_prompt`); its `auth` is its automatic login: `password` types `user` and `password` at the device's prompts, `credential` a password credential's, `no_password` none. Create one with `{"name": "switch", "protocol": "telnet", "host": "10.0.0.5", "auth": "password", "user": "admin", "password": "…"}`. `exec`, `upload`, `download` and `sync` don't work on Telnet hosts either.
-- A credential is `"kind": "password"`, `"key"` (with `key_path`, a key file on this machine, or `private_key`, the key's text for Agree ShellAS to keep) or `"agent"`.
-- `hosts update` can change `protocol`: the host keeps its name, group and notes (between SSH and Telnet, its address and route too) and takes the new protocol's defaults for everything else, so give its new fields in the same request (a serial host's `serial.device`). An SSH host that other hosts use as a jump host or port forwards go via stays SSH. Tabs already open in Agree ShellAS keep the settings they opened with.
-- `hosts delete` leaves the host's open tabs in Agree ShellAS as they are.
+- A host listed with `"protocol": "serial"` is a serial port of the user's computer, opened in a Agree ShellAs terminal; it has `serial` (`device`, `baud`, `data_bits`, `parity`, `stop_bits`, `flow_control`) instead of `host`, `port`, `user`, `auth` and `route`. Create one with `{"name": "console", "serial": {"device": "/dev/ttyUSB0", "baud": 115200}}`. `exec`, `upload`, `download` and `sync` don't work on serial hosts.
+- A host listed with `"protocol": "telnet"` is a Telnet server (switches, console servers, embedded devices), opened in a Agree ShellAs terminal. It has `host`, `port` (23 by default), `route` and `telnet` (`user_prompt`, `password_prompt`); its `auth` is its automatic login: `password` types `user` and `password` at the device's prompts, `credential` a password credential's, `no_password` none. Create one with `{"name": "switch", "protocol": "telnet", "host": "10.0.0.5", "auth": "password", "user": "admin", "password": "…"}`. `exec`, `upload`, `download` and `sync` don't work on Telnet hosts either.
+- A credential is `"kind": "password"`, `"key"` (with `key_path`, a key file on this machine, or `private_key`, the key's text for Agree ShellAs to keep) or `"agent"`.
+- `hosts update` can change `protocol`: the host keeps its name, group and notes (between SSH and Telnet, its address and route too) and takes the new protocol's defaults for everything else, so give its new fields in the same request (a serial host's `serial.device`). An SSH host that other hosts use as a jump host or port forwards go via stays SSH. Tabs already open in Agree ShellAs keep the settings they opened with.
+- `hosts delete` leaves the host's open tabs in Agree ShellAs as they are.
 
 ## Windows
 
@@ -130,8 +130,8 @@ To create or update a host or credential from Windows PowerShell 5.1, pipe the J
 
 ## Rules
 
-- Do not ask the user for SSH passwords, private keys, or passphrases. Agree ShellAS holds those credentials.
-- Only when the user gives you a password, key or passphrase to save in Agree ShellAS, put it in the JSON on stdin (`password`, `private_key`, `passphrase`), never in a command argument. Agree ShellAS keeps it in the system keychain and never prints it back: `show` only says whether one is saved.
+- Do not ask the user for SSH passwords, private keys, or passphrases. Agree ShellAs holds those credentials.
+- Only when the user gives you a password, key or passphrase to save in Agree ShellAs, put it in the JSON on stdin (`password`, `private_key`, `passphrase`), never in a command argument. Agree ShellAs keeps it in the system keychain and never prints it back: `show` only says whether one is saved.
 - Create, change or delete hosts and credentials only when the user asks you to. Deleting a credential makes its hosts log in on their own.
 - `shellrs exec` takes a host id and one complete remote shell command string, opens a temporary SSH connection, runs the command, and closes the connection. Its stdout and stderr are the remote command's, and its exit code is the remote command's exit code.
 - The remote command gets no stdin, so interactive programs (editors, pagers, password prompts) will not work. Use non-interactive flags such as `--yes`, `-y`, or `--no-pager`.
@@ -144,17 +144,17 @@ To create or update a host or credential from Windows PowerShell 5.1, pipe the J
 
 Errors are printed to stderr with a code in brackets, such as `[not_enabled]`. Exit code 255 means `shellrs` could not run the command at all.
 
-- `not_running`: Agree ShellAS is not open. Ask the user to open Agree ShellAS.
-- `not_enabled`: ask the user to turn on Enable external CLI (启用外部 CLI) in Agree ShellAS under Settings → External CLI (设置 → 外部 CLI).
+- `not_running`: Agree ShellAs is not open. Ask the user to open Agree ShellAs.
+- `not_enabled`: ask the user to turn on Enable external CLI (启用外部 CLI) in Agree ShellAs under Settings → External CLI (设置 → 外部 CLI).
 - `host_not_found`: run `shellrs hosts list` again and use an `id` from its output. `credential_not_found`: the same with `shellrs credentials list`.
-- `bad_request` from `create` or `update`: the message says which field is wrong, in the words the Agree ShellAS forms use.
+- `bad_request` from `create` or `update`: the message says which field is wrong, in the words the Agree ShellAs forms use.
 - `save_failed`: the change was made, but not all of it could be written to disk or the keychain. Tell the user the message.
-- `version_mismatch`: the `shellrs` command and the running Agree ShellAS are different versions. Ask the user to restart or update Agree ShellAS.
-- `host_key_unknown`, `missing_credential`: Agree ShellAS has not connected to this host yet, or has no saved password. Ask the user to connect to the host once in Agree ShellAS and save the password. For a host opened from a bastion host, use `--terminal` (see above).
+- `version_mismatch`: the `shellrs` command and the running Agree ShellAs are different versions. Ask the user to restart or update Agree ShellAs.
+- `host_key_unknown`, `missing_credential`: Agree ShellAs has not connected to this host yet, or has no saved password. Ask the user to connect to the host once in Agree ShellAs and save the password. For a host opened from a bastion host, use `--terminal` (see above).
 - `host_key_changed`: the server's host key changed. Tell the user; do not try to work around it.
-- `no_terminal` (`--terminal`): the host has no connected terminal in Agree ShellAS. Ask the user to open or reconnect it.
+- `no_terminal` (`--terminal`): the host has no connected terminal in Agree ShellAs. Ask the user to open or reconnect it.
 - `terminal_busy` (`--terminal`): a full-screen program has the terminal, another `--terminal` command still runs there, a ZMODEM transfer (`rz` / `sz`) has it, the shell did not answer, or it did not start the command (a bastion host's command filter may hold it back). Tell the user the message.
 - `unsupported_shell` (`--terminal`): the terminal runs a shell other than bash, dash or busybox ash. Tell the user.
 - `too_long` (`--terminal`): split the command into shorter ones.
 - `not_ssh`: the host is a Telnet or serial host, which has no SSH connection. Tell the user.
-- `connect_failed` saying there is no permission to connect to Agree ShellAS: the agent's sandbox blocks local inter-process communication. Ask the user to allow it, or run the command outside the sandbox.
+- `connect_failed` saying there is no permission to connect to Agree ShellAs: the agent's sandbox blocks local inter-process communication. Ask the user to allow it, or run the command outside the sandbox.

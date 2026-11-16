@@ -1,6 +1,6 @@
 # 从 Xshell 导入主机
 
-ShellRS 可以直接读 Xshell 的会话：整体导出的 `.xts`、单个 `.xsh`，或者整个
+Agree ShellAs 可以直接读 Xshell 的会话：整体导出的 `.xts`、单个 `.xsh`，或者整个
 `Sessions` 文件夹。导入只新增主机，不修改已有主机。
 
 ## 怎么用
@@ -26,7 +26,7 @@ ShellRS 可以直接读 Xshell 的会话：整体导出的 `.xts`、单个 `.xsh
 | 需重新输入密码 | Xshell 保存了密码，但没有主密码、主密码不对，或这条会话无法解开；首次连接时会提示输入。 |
 | 密码可解密 | 已用主密码解开这条会话的密码，导入后写入系统钥匙串。 |
 | 私钥缺失 | 会话指定了私钥，但文件不在 Xshell 的 `SECSH/UserKeys` 里；导入后需要重新指定。 |
-| 部分设置未导入 | 会话带有 ShellRS 没有对应概念或没有导入的设置，鼠标停在状态上可看明细。 |
+| 部分设置未导入 | 会话带有 Agree ShellAs 没有对应概念或没有导入的设置，鼠标停在状态上可看明细。 |
 
 对话框顶部的说明会汇总「多少台需要密码」「多少台私钥缺失」「多少个会话没能导入」。
 某个会话读不出来不会中断整次导入，其余会话照常列出；把鼠标停在说明上可以看到
@@ -53,7 +53,7 @@ ShellRS 可以直接读 Xshell 的会话：整体导出的 `.xts`、单个 `.xsh
 
 ### 导入的设置
 
-| Xshell | ShellRS | 说明 |
+| Xshell | Agree ShellAs | 说明 |
 | --- | --- | --- |
 | `[CONNECTION] Host`（或 `Address`） | 地址 | |
 | `[CONNECTION] Port` | 端口 | 缺省时 SSH 用 22，Telnet 用 23。 |
@@ -67,7 +67,7 @@ ShellRS 可以直接读 Xshell 的会话：整体导出的 `.xts`、单个 `.xsh
 
 ### 明确丢弃的设置
 
-这些字段在 ShellRS 里没有对应概念，或者属于运行期行为，导入时丢弃，并在行的
+这些字段在 Agree ShellAs 里没有对应概念，或者属于运行期行为，导入时丢弃，并在行的
 「状态」里标出「部分设置未导入」，鼠标悬停可看具体是哪几项：
 
 - `Password` / `Passphrase`：加密保存的口令，见下一节。
@@ -77,11 +77,11 @@ ShellRS 可以直接读 Xshell 的会话：整体导出的 `.xts`、单个 `.xsh
 - 代理：`[CONNECTION:PROXY] Proxy`（含 SSH 会话里的代理配置）。
 - 字符集、终端类型、初始目录：`[TERMINAL] CodePage`（非 UTF-8 时）、
   `[TERMINAL] Type`（非 xterm 时）、`[CONNECTION:SSH] InitRemoteDirectory`。
-  ShellRS 的终端按自己的设置运行，不跟随单个会话的编码和终端类型。
+  Agree ShellAs 的终端按自己的设置运行，不跟随单个会话的编码和终端类型。
 
 ### 无法导入的会话
 
-- `SERIAL`、`RLOGIN`、`RDP` 等 ShellRS 不支持的协议：跳过并计入告警。
+- `SERIAL`、`RLOGIN`、`RDP` 等 Agree ShellAs 不支持的协议：跳过并计入告警。
 - 没有地址的会话：跳过并计入告警。
 - 文件损坏、不是 INI、超过 4 MB：跳过并计入告警。
 
@@ -91,7 +91,7 @@ ShellRS 可以直接读 Xshell 的会话：整体导出的 `.xts`、单个 `.xsh
 ## 密码怎么处理
 
 Xshell 在启用主密码后会把会话密码加密保存：`Password` 是 Base64，解码后是
-「密文 + 32 字节校验值」，密文用主密码派生出的密钥做流式加密。ShellRS 按同样
+「密文 + 32 字节校验值」，密文用主密码派生出的密钥做流式加密。Agree ShellAs 按同样
 的构造在内存里解开，条件只有一个：用户愿意在导入对话框里填入那台机器的 Xshell
 主密码。填入之后：
 
@@ -112,7 +112,7 @@ Xshell 在启用主密码后会把会话密码加密保存：`Password` 是 Base
 
 ## 已知限制
 
-- 只支持 ShellRS 已有的 SSH 和 Telnet；Xshell 的串口、RLOGIN 等会话会跳过。
+- 只支持 Agree ShellAs 已有的 SSH 和 Telnet；Xshell 的串口、RLOGIN 等会话会跳过。
 - 代理、跳板、端口转发、登录脚本、远程命令不会转换，需要导入后手动配置。
 - 已存在判断按「协议 + 地址 + 端口」比较，不比较用户名；同一台机器上不同用户
   的会话会被视为已存在，需要先改端口或手动新建。

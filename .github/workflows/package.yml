@@ -4,7 +4,7 @@
 # 用户首次打开时需要右键 → 打开，或去掉隔离标记（下载页有说明）。
 #
 # 推送 package-macos 分支即触发（见下面的 on）。产物在该次运行的
-# Artifacts 里：ShellRS-<版本>-macos-<架构>.app.zip（升级用）和 .dmg
+# Artifacts 里：ShellAs-<版本>-macos-<架构>.app.zip（升级用）和 .dmg
 # （手动安装用）。之后用 `shellas-server publish` 把包和签名清单发到
 # shellas.agree.host。
 name: package
@@ -75,16 +75,16 @@ jobs:
         run: |
           mkdir -p dist
           # 升级包：ditto 原样保留 .app 的结构与权限。
-          ditto -c -k --keepParent build/ShellRS.app \
-            "dist/ShellRS-$VERSION-macos-$ARCH.app.zip"
+          ditto -c -k --keepParent build/Agree ShellAs.app \
+            "dist/ShellAs-$VERSION-macos-$ARCH.app.zip"
           # 首次安装：DMG 里带一个 Applications 快捷方式。
           mkdir -p "$RUNNER_TEMP/dmg"
-          cp -R build/ShellRS.app "$RUNNER_TEMP/dmg/"
+          cp -R build/Agree ShellAs.app "$RUNNER_TEMP/dmg/"
           ln -s /Applications "$RUNNER_TEMP/dmg/Applications"
           size=$(( $(du -sm "$RUNNER_TEMP/dmg" | cut -f1) * 2 + 20 ))
-          hdiutil create -volname ShellRS -srcfolder "$RUNNER_TEMP/dmg" -ov \
+          hdiutil create -volname Agree ShellAs -srcfolder "$RUNNER_TEMP/dmg" -ov \
             -fs HFS+ -size "${size}m" -format UDZO \
-            "dist/ShellRS-$VERSION-macos-$ARCH.dmg"
+            "dist/ShellAs-$VERSION-macos-$ARCH.dmg"
           shasum -a 256 dist/* > "dist/SHA256SUMS-macos-$ARCH.txt"
           ls -l dist
       - uses: actions/upload-artifact@v4

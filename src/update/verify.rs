@@ -358,11 +358,11 @@ pub(crate) mod tests {
         let dist = dir.path().join("dist");
         std::fs::create_dir(&dist).unwrap();
         for name in [
-            "ShellRS-0.2.0-macos-aarch64.app.zip",
-            "ShellRS-0.2.0-macos-x86_64.app.zip",
-            "ShellRS-0.2.0-windows-x86_64-setup.exe",
-            "ShellRS-0.2.0-windows-x86_64-portable.zip",
-            "ShellRS-0.2.0-linux-x86_64.AppImage",
+            "ShellAs-0.2.0-macos-aarch64.app.zip",
+            "ShellAs-0.2.0-macos-x86_64.app.zip",
+            "ShellAs-0.2.0-windows-x86_64-setup.exe",
+            "ShellAs-0.2.0-windows-x86_64-portable.zip",
+            "ShellAs-0.2.0-linux-x86_64.AppImage",
         ] {
             std::fs::write(dist.join(name), name).unwrap();
         }
@@ -398,7 +398,7 @@ pub(crate) mod tests {
         assert_eq!(manifest.notes, "### 新增\n\n- 在线升级\n");
         for arch in ["aarch64", "x86_64"] {
             let key = format!("macos-{arch}");
-            let name = format!("ShellRS-0.2.0-{key}.app.zip");
+            let name = format!("ShellAs-0.2.0-{key}.app.zip");
             let asset = &manifest.assets[&key];
             // Each architecture has its own package and both download sources.
             assert_eq!(
@@ -413,7 +413,7 @@ pub(crate) mod tests {
             assert_eq!(verify_file(&dist.join(&name), asset), Ok(()));
             assert_eq!(
                 manifest.installers[&key],
-                format!("https://dl.shellrs.com/releases/0.2.0/ShellRS-0.2.0-{key}.dmg")
+                format!("https://dl.shellrs.com/releases/0.2.0/ShellAs-0.2.0-{key}.dmg")
             );
         }
         assert_ne!(
@@ -422,12 +422,12 @@ pub(crate) mod tests {
         );
         assert_eq!(
             verify_file(
-                &dist.join("ShellRS-0.2.0-macos-x86_64.app.zip"),
+                &dist.join("ShellAs-0.2.0-macos-x86_64.app.zip"),
                 &manifest.assets["macos-aarch64"],
             ),
             Err(UpdateError::Corrupt)
         );
-        let package = dist.join("ShellRS-0.2.0-linux-x86_64.AppImage");
+        let package = dist.join("ShellAs-0.2.0-linux-x86_64.AppImage");
         assert_eq!(
             verify_file(&package, &manifest.assets["linux-x86_64"]),
             Ok(())
@@ -438,14 +438,14 @@ pub(crate) mod tests {
             manifest.installers
         );
         // The portable copy updates from the zip a person downloads.
-        let portable = dist.join("ShellRS-0.2.0-windows-x86_64-portable.zip");
+        let portable = dist.join("ShellAs-0.2.0-windows-x86_64-portable.zip");
         assert_eq!(
             verify_file(&portable, &manifest.assets["windows-x86_64-portable"]),
             Ok(())
         );
         assert_eq!(
             manifest.installers["windows-x86_64-portable"],
-            "https://dl.shellrs.com/releases/0.2.0/ShellRS-0.2.0-windows-x86_64-portable.zip"
+            "https://dl.shellrs.com/releases/0.2.0/ShellAs-0.2.0-windows-x86_64-portable.zip"
         );
         assert_eq!(
             open_envelope(&bytes, Channel::Beta, &keys),
@@ -487,7 +487,7 @@ pub(crate) mod tests {
 
     #[test]
     fn open_reads_a_github_release_with_its_digest() {
-        let release = r#"{"tag_name":"v0.4.0","assets":[{"name":"ShellRS-0.4.0-macos-aarch64.app.zip","size":7,"browser_download_url":"https://github.com/yunerduo/shell-rs/releases/download/v0.4.0/ShellRS-0.4.0-macos-aarch64.app.zip","digest":"sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"}]}"#;
+        let release = r#"{"tag_name":"v0.4.0","assets":[{"name":"ShellAs-0.4.0-macos-aarch64.app.zip","size":7,"browser_download_url":"https://github.com/yunerduo/shell-rs/releases/download/v0.4.0/ShellAs-0.4.0-macos-aarch64.app.zip","digest":"sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"}]}"#;
         // No keys at all: a GitHub release needs no signature.
         let Ok(Opened::Manifest(manifest)) = open(
             release.as_bytes(),

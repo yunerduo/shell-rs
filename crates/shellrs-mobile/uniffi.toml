@@ -1,7 +1,7 @@
 [bindings.swift]
-module_name = "ShellRSCore"
-ffi_module_name = "ShellRSCoreFFI"
-ffi_module_filename = "ShellRSCoreFFI"
+module_name = "Agree ShellAsCore"
+ffi_module_name = "Agree ShellAsCoreFFI"
+ffi_module_filename = "Agree ShellAsCoreFFI"
 
 [bindings.kotlin]
 package_name = "com.shellrs.core"

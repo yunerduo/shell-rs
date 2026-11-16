@@ -373,12 +373,12 @@ mod tests {
         };
         assert_eq!(
             newer.message(),
-            "数据库来自更新版本的 Agree ShellAS（结构版本 21，本版本支持到 20），请安装最新版本"
+            "数据库来自更新版本的 Agree ShellAs（结构版本 21，本版本支持到 20），请安装最新版本"
         );
         let old = OpenError::TooOld { version: 12 };
         assert_eq!(
             old.message(),
-            "数据库来自 Agree ShellAS 的早期开发版本（结构版本 12），无法升级"
+            "数据库来自 Agree ShellAs 的早期开发版本（结构版本 12），无法升级"
         );
     }
 
@@ -405,7 +405,7 @@ mod tests {
         assert_eq!(ForwardKind::Local.label(), "Local");
         assert_eq!(
             OpenError::TooOld { version: 12 }.message(),
-            "The database is from an early development version of Agree ShellAS (schema version 12) and can’t be upgraded."
+            "The database is from an early development version of Agree ShellAs (schema version 12) and can’t be upgraded."
         );
         assert_eq!(FlowControl::RtsCts.label(), "RTS/CTS");
     }

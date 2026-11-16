@@ -1,4 +1,4 @@
-# Agree ShellAS 服务端（shellas.agree.host）
+# Agree ShellAs 服务端（shellas.agree.host）
 
 [返回 README](../README.zh-CN.md)
 

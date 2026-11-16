@@ -370,8 +370,8 @@ mod tests {
 
     #[test]
     fn an_app_in_applications_replaces_itself() {
-        let exe = Path::new("/Applications/ShellRS.app/Contents/MacOS/shellrs");
-        let bundle = Path::new("/Applications/ShellRS.app");
+        let exe = Path::new("/Applications/Agree ShellAs.app/Contents/MacOS/shellrs");
+        let bundle = Path::new("/Applications/Agree ShellAs.app");
         let kind = detect(&Surroundings {
             bundle: Some(bundle),
             ..at("macos", exe)
@@ -386,9 +386,9 @@ mod tests {
 
     #[test]
     fn a_translocated_or_disk_image_app_asks_to_be_moved_first() {
-        let exe = Path::new("/x/ShellRS.app/Contents/MacOS/shellrs");
+        let exe = Path::new("/x/Agree ShellAs.app/Contents/MacOS/shellrs");
         let translocated =
-            Path::new("/private/var/folders/x/T/AppTranslocation/1234/d/ShellRS.app");
+            Path::new("/private/var/folders/x/T/AppTranslocation/1234/d/Agree ShellAs.app");
         assert_eq!(
             detect(&Surroundings {
                 bundle: Some(translocated),
@@ -396,7 +396,7 @@ mod tests {
             }),
             InstallKind::Unsupported(Unsupported::Translocated)
         );
-        let on_disk_image = Path::new("/Volumes/ShellRS/ShellRS.app");
+        let on_disk_image = Path::new("/Volumes/ShellRS/Agree ShellAs.app");
         assert_eq!(
             detect(&Surroundings {
                 bundle: Some(on_disk_image),
@@ -405,7 +405,7 @@ mod tests {
             }),
             InstallKind::Unsupported(Unsupported::DiskImage)
         );
-        let theirs = Path::new("/Applications/ShellRS.app");
+        let theirs = Path::new("/Applications/Agree ShellAs.app");
         assert_eq!(
             detect(&Surroundings {
                 bundle: Some(theirs),
@@ -504,7 +504,7 @@ mod tests {
             detect(&at("linux", exe)),
             InstallKind::Unsupported(Unsupported::NotAppImage)
         );
-        let file = Path::new("/home/me/Apps/ShellRS-x86_64.AppImage");
+        let file = Path::new("/home/me/Apps/ShellAs-x86_64.AppImage");
         let mounted = Path::new("/tmp/.mount_ShellRabc/usr/bin/shellrs");
         assert_eq!(
             detect(&Surroundings {

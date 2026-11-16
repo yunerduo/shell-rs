@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Put a built `shellrs` binary into ShellRS.app.
+# Put a built `shellrs` binary into Agree ShellAs.app.
 #
 #   packaging/macos/bundle.sh <binary> <version> <build-number> <out-dir>
 #
@@ -15,7 +15,7 @@ out=$4
 
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
-app="$out/ShellRS.app"
+app="$out/Agree ShellAs.app"
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"

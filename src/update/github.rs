@@ -209,7 +209,7 @@ mod tests {
     fn release(tag: &str, extra: &str) -> String {
         format!(
             r####"{{"tag_name":"{tag}","body":"### 新增\n- 一个版本","published_at":"2026-11-01T08:00:00Z","html_url":"https://github.com/yunerduo/shell-rs/releases/tag/{tag}","draft":false,"prerelease":{extra},"assets":[{}]}}"####,
-            artifact("ShellRS-0.3.0-macos-aarch64.app.zip", Some(DIGEST))
+            artifact("ShellAs-0.3.0-macos-aarch64.app.zip", Some(DIGEST))
         )
     }
 
@@ -283,17 +283,17 @@ mod tests {
     fn a_package_without_a_digest_is_refused() {
         let json = format!(
             r#"{{"tag_name":"v0.3.0","assets":[{}]}}"#,
-            artifact("ShellRS-0.3.0-macos-aarch64.app.zip", None)
+            artifact("ShellAs-0.3.0-macos-aarch64.app.zip", None)
         );
         assert_eq!(
             open(&json, Channel::Stable, "macos-aarch64"),
             Err(UpdateError::Unverified(
-                "ShellRS-0.3.0-macos-aarch64.app.zip".into()
+                "ShellAs-0.3.0-macos-aarch64.app.zip".into()
             ))
         );
         let wrong = format!(
             r#"{{"tag_name":"v0.3.0","assets":[{}]}}"#,
-            artifact("ShellRS-0.3.0-macos-aarch64.app.zip", Some("md5:abc"))
+            artifact("ShellAs-0.3.0-macos-aarch64.app.zip", Some("md5:abc"))
         );
         assert!(matches!(
             open(&wrong, Channel::Stable, "macos-aarch64"),
@@ -305,8 +305,8 @@ mod tests {
     fn another_platforms_package_does_not_have_to_be_usable() {
         let json = format!(
             r#"{{"tag_name":"v0.3.0","assets":[{}, {}]}}"#,
-            artifact("ShellRS-0.3.0-linux-x86_64.AppImage", None),
-            artifact("ShellRS-0.3.0-windows-x86_64-setup.exe", Some(DIGEST))
+            artifact("ShellAs-0.3.0-linux-x86_64.AppImage", None),
+            artifact("ShellAs-0.3.0-windows-x86_64-setup.exe", Some(DIGEST))
         );
         let manifest = open(&json, Channel::Stable, "windows-x86_64").unwrap();
         assert!(!manifest.assets.contains_key("linux-x86_64"));
@@ -318,7 +318,7 @@ mod tests {
     fn a_package_not_served_over_https_is_refused() {
         let json = format!(
             r#"{{"tag_name":"v0.3.0","assets":[{}]}}"#,
-            artifact("ShellRS-0.3.0-macos-aarch64.app.zip", Some(DIGEST))
+            artifact("ShellAs-0.3.0-macos-aarch64.app.zip", Some(DIGEST))
                 .replace("https://github.com", "http://github.com")
         );
         assert_eq!(
@@ -331,7 +331,7 @@ mod tests {
     fn a_tag_that_names_no_version_is_a_bad_manifest() {
         let json = format!(
             r#"{{"tag_name":"nightly","assets":[{}]}}"#,
-            artifact("ShellRS-0.3.0-macos-aarch64.app.zip", Some(DIGEST))
+            artifact("ShellAs-0.3.0-macos-aarch64.app.zip", Some(DIGEST))
         );
         assert!(matches!(
             open(&json, Channel::Stable, "macos-aarch64"),

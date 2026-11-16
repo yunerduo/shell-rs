@@ -308,7 +308,7 @@ mod tests {
         fs::write(root.path().join("bin/shellrs.exe"), "command").unwrap();
         let download = root
             .path()
-            .join("data/updates/0.2.0/ShellRS-0.2.0-windows-x86_64-portable.zip");
+            .join("data/updates/0.2.0/ShellAs-0.2.0-windows-x86_64-portable.zip");
         (root, download)
     }
 

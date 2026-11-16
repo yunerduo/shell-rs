@@ -133,12 +133,12 @@ serde_yaml_ng = "0.10.0"
 # ZMODEM (`rz` / `sz` in a terminal): the protocol only, driven by the
 # terminal's parser thread. Pinned: its 0.x API changes between releases.
 zmodem2 = "=0.7.3"
-# 显示或隐藏 ShellRS, the shortcut that works in any app: the system's
+# 显示或隐藏 Agree ShellAs, the shortcut that works in any app: the system's
 # hot keys (Carbon on macOS, RegisterHotKey on Windows, X11 on Linux).
 global-hotkey = "0.9"
 
 [target.'cfg(unix)'.dependencies]
-# `access(2)`: whether the folder ShellRS runs from can take its update.
+# `access(2)`: whether the folder Agree ShellAs runs from can take its update.
 libc = "0.2"
 
 # The Dock icon when running outside an app bundle (`cargo run`), and the

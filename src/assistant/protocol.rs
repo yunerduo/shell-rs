@@ -22,7 +22,7 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// This is the app's own prompt, not a setting: it is sent before the mode's
 /// prompt, and a model profile's instruction and the loaded roles come after
 /// both.
-const PLATFORM_PROMPT: &str = "You are the assistant inside Agree ShellAS, a terminal app for \
+const PLATFORM_PROMPT: &str = "You are the assistant inside Agree ShellAs, a terminal app for \
 managing SSH hosts and local terminals. The app keeps the hosts, their connections and a \
 command policy; you see only the terminals the user bound to this conversation, and every \
 command you ask to run is judged by that policy before it runs. Answer in the user's \
@@ -743,7 +743,7 @@ fn run_command_tool(terminals: &[ToolTerminal]) -> Value {
         "type": "function",
         "function": {
             "name": "run_command",
-            "description": "Run one shell command on a bound terminal of Agree ShellAS and return \
+            "description": "Run one shell command on a bound terminal of Agree ShellAs and return \
     its stdout, stderr, exit code, whether the output was truncated, and whether it timed out. \
     The command runs beside the user's shell with no terminal attached; if the user authorizes \
     taking over the terminal, the same call may be typed into the shell instead, and nothing is \
@@ -1417,7 +1417,7 @@ mod tests {
             spec.body["system"]
                 .as_str()
                 .unwrap()
-                .contains("Agree ShellAS")
+                .contains("Agree ShellAs")
         );
         assert_eq!(spec.body["messages"].as_array().unwrap().len(), 1);
         assert_eq!(spec.body["messages"][0]["role"], "user");

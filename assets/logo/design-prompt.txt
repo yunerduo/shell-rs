@@ -1,4 +1,4 @@
-ShellRS 最终版设计说明
+Agree ShellAs 最终版设计说明
 
 以 shellrs.svg 为最终设计源文件；最终版本经过矢量路径重绘，不应使用早期生成图替代。
 

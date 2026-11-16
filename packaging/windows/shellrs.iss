@@ -23,10 +23,10 @@
 
 [Setup]
 AppId={{45D9E9F5-84BB-4B09-ABE8-1FFE107ACF96}
-AppName=Agree ShellAS
+AppName=Agree ShellAs
 AppVersion={#AppVersion}
-AppVerName=Agree ShellAS {#AppVersion}
-AppPublisher=Agree ShellAS
+AppVerName=Agree ShellAs {#AppVersion}
+AppPublisher=Agree ShellAs
 AppPublisherURL=https://github.com/yunerduo/shell-rs
 AppSupportURL=https://github.com/yunerduo/shell-rs
 AppUpdatesURL=https://github.com/yunerduo/shell-rs/releases
@@ -36,12 +36,12 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-OutputBaseFilename=ShellRS-{#AppVersion}-windows-x86_64-setup
+OutputBaseFilename=ShellAs-{#AppVersion}-windows-x86_64-setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\shellrs.exe
-UninstallDisplayName=Agree ShellAS
+UninstallDisplayName=Agree ShellAs
 ; A running ShellRS is closed through the Restart Manager rather than
 ; making the setup fail on files in use.
 CloseApplications=yes
@@ -75,13 +75,13 @@ Source: "{#BuildDir}\shellrs-cli.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; The AppUserModelID ShellRS gives itself (`set_app_identity`, for its
 ; notifications): the same here keeps a pinned shortcut and the running
 ; window one taskbar button.
-Name: "{autoprograms}\Agree ShellAS"; Filename: "{app}\shellrs.exe"; AppUserModelID: "com.shellrs.ShellRS"
-Name: "{autodesktop}\Agree ShellAS"; Filename: "{app}\shellrs.exe"; AppUserModelID: "com.shellrs.ShellRS"; Tasks: desktopicon
+Name: "{autoprograms}\Agree ShellAs"; Filename: "{app}\shellrs.exe"; AppUserModelID: "com.shellrs.ShellRS"
+Name: "{autodesktop}\Agree ShellAs"; Filename: "{app}\shellrs.exe"; AppUserModelID: "com.shellrs.ShellRS"; Tasks: desktopicon
 
 [Run]
 ; Interactive installs only: an update is restarted by ShellRS's own helper,
 ; which waits for this setup to finish.
-Filename: "{app}\shellrs.exe"; Description: "{cm:LaunchProgram,Agree ShellAS}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\shellrs.exe"; Description: "{cm:LaunchProgram,Agree ShellAs}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 ; Files a later version added, which this uninstaller does not list.

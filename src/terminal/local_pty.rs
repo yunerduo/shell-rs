@@ -348,7 +348,7 @@ mod tests {
     #[test]
     fn the_shell_does_not_see_the_packaging() {
         const CHILD: &str = "SHELLRS_TEST_WITH_THE_PACKAGING";
-        const APPIMAGE: &str = "/tmp/ShellRS-0.1.14-linux-x86_64.AppImage";
+        const APPIMAGE: &str = "/tmp/ShellAs-0.1.14-linux-x86_64.AppImage";
         if std::env::var_os(CHILD).is_some() {
             // The child: the shell runs and says what it sees.
             let shell = if PathBuf::from("/bin/zsh").exists() {

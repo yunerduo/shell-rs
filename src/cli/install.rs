@@ -460,7 +460,7 @@ mod tests {
     #[test]
     fn inside_an_appimage_the_command_links_to_the_appimage() {
         let mounted = PathBuf::from("/tmp/.mount_ShellRabc/usr/bin/shellrs");
-        let appimage = PathBuf::from("/home/me/Apps/ShellRS-x86_64.AppImage");
+        let appimage = PathBuf::from("/home/me/Apps/ShellAs-x86_64.AppImage");
         assert_eq!(program(mounted.clone(), Some(appimage.clone())), appimage);
         assert_eq!(program(mounted.clone(), None), mounted);
     }

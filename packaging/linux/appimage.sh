@@ -34,7 +34,7 @@ cp "$icon" "$appdir/shellrs.png"
 ln -s usr/bin/shellrs "$appdir/AppRun"
 
 mkdir -p "$out"
-target="$out/ShellRS-$version-linux-x86_64.AppImage"
+target="$out/ShellAs-$version-linux-x86_64.AppImage"
 ARCH=x86_64 "$tool" --no-appstream "$appdir" "$target"
 rm -rf "$work"
 echo "$target"

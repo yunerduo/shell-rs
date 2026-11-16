@@ -1,2 +1,2 @@
-/* What macOS shows when Agree ShellAS first reaches for the local network. */
-NSLocalNetworkUsageDescription = "Agree ShellAS needs the local network to connect to hosts on your LAN.";
+/* What macOS shows when Agree ShellAs first reaches for the local network. */
+NSLocalNetworkUsageDescription = "Agree ShellAs needs the local network to connect to hosts on your LAN.";

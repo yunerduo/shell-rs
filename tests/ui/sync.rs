@@ -1070,7 +1070,7 @@ async fn what_is_not_a_setup_code_is_refused_at_once(cx: &mut TestAppContext) {
         // "SRSC", then version 2.
         (
             "shellrs-sync:U1JTQwI".to_owned(),
-            "这个配置码来自更新版本的 Agree ShellAS，升级后才能使用。",
+            "这个配置码来自更新版本的 Agree ShellAs，升级后才能使用。",
         ),
     ] {
         cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string(pasted)));

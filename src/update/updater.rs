@@ -843,9 +843,9 @@ mod tests {
     fn a_package_is_named_after_its_address() {
         assert_eq!(
             package_name(&release(&[
-                "https://dl.shellrs.com/releases/0.2.0/ShellRS-0.2.0-macos-universal.app.zip"
+                "https://dl.shellrs.com/releases/0.2.0/ShellAs-0.2.0-macos-universal.app.zip"
             ])),
-            "ShellRS-0.2.0-macos-universal.app.zip"
+            "ShellAs-0.2.0-macos-universal.app.zip"
         );
         assert_eq!(package_name(&release(&["https://x/a b?.exe"])), "a_b_.exe");
         assert_eq!(package_name(&release(&["https://x/.."])), "package");

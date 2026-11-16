@@ -3,7 +3,7 @@ name = "shellrs-hosts"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "ShellRS hosts core: the saved hosts, credentials and rules, their database, and sync"
+description = "Agree ShellAs hosts core: the saved hosts, credentials and rules, their database, and sync"
 license = "MIT"
 repository = "https://github.com/since2006/shell-rs"
 

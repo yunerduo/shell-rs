@@ -223,12 +223,12 @@ mod tests {
                 (
                     crate::app::PRODUCT_NAME.into(),
                     vec![
-                        ("About Agree ShellAS".into(), None),
+                        ("About Agree ShellAs".into(), None),
                         ("Settings…".into(), written("cmd-,")),
-                        ("Hide Agree ShellAS".into(), written("cmd-h")),
+                        ("Hide Agree ShellAs".into(), written("cmd-h")),
                         ("Hide Others".into(), written("cmd-alt-h")),
                         ("Show All".into(), None),
-                        ("Quit Agree ShellAS".into(), written("cmd-q")),
+                        ("Quit Agree ShellAs".into(), written("cmd-q")),
                     ],
                 ),
                 (

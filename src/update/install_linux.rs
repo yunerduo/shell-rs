@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn the_appimage_is_replaced_in_one_rename_and_stays_executable() {
         let folder = tempfile::tempdir().unwrap();
-        let file = folder.path().join("ShellRS-x86_64.AppImage");
+        let file = folder.path().join("ShellAs-x86_64.AppImage");
         fs::write(&file, "old").unwrap();
         let package = folder.path().join("downloaded");
         fs::write(&package, "new").unwrap();
@@ -113,13 +113,13 @@ mod tests {
         assert_eq!(mode & 0o777, 0o755);
 
         fs::write(
-            sibling(&file, ".ShellRS-x86_64.AppImage.update-0.1.9"),
+            sibling(&file, ".ShellAs-x86_64.AppImage.update-0.1.9"),
             "stale",
         )
         .unwrap();
         // Staged since start and waiting for the restart: kept.
         fs::write(
-            sibling(&file, ".ShellRS-x86_64.AppImage.update-0.3.0"),
+            sibling(&file, ".ShellAs-x86_64.AppImage.update-0.3.0"),
             "next",
         )
         .unwrap();
@@ -133,8 +133,8 @@ mod tests {
         assert_eq!(
             left,
             [
-                ".ShellRS-x86_64.AppImage.update-0.3.0",
-                "ShellRS-x86_64.AppImage",
+                ".ShellAs-x86_64.AppImage.update-0.3.0",
+                "ShellAs-x86_64.AppImage",
                 "downloaded"
             ]
         );

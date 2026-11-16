@@ -9,7 +9,7 @@ use crate::support::*;
 const RUNNING_VERSION: &str = "0.1.0";
 
 /// Where the fake installer says the restart goes.
-const INSTALLED_BUNDLE: &str = "/Applications/ShellRS.app";
+const INSTALLED_BUNDLE: &str = "/Applications/Agree ShellAs.app";
 
 /// Serves each channel's manifest, signed when asked for, and one package,
 /// and counts the requests.
@@ -388,7 +388,7 @@ async fn a_found_update_downloads_by_itself_and_the_title_bar_offers_it(cx: &mut
     );
     assert_eq!(
         update_status(cx, handle),
-        "新版本 0.2.0 已下载，重启 Agree ShellAS 即可完成更新。"
+        "新版本 0.2.0 已下载，重启 Agree ShellAs 即可完成更新。"
     );
     in_frame(cx, handle, |window, _| {
         // One button: restarting takes the place of 检查更新.
@@ -560,7 +560,7 @@ async fn an_unsupported_install_offers_the_download_page(cx: &mut TestAppContext
         window.click("check-for-updates", cx)
     });
     wait_for_update_status(cx, handle, |status| {
-        status == "发现新版本 0.2.0。这份 Agree ShellAS 不是 AppImage，请用安装它的方式更新。"
+        status == "发现新版本 0.2.0。这份 Agree ShellAs 不是 AppImage，请用安装它的方式更新。"
     })
     .await;
     assert_eq!(fixture.downloads(), 0);
@@ -693,7 +693,7 @@ async fn switching_the_update_channel_looks_at_that_channel(cx: &mut TestAppCont
     // With 自动升级 on, the other channel is looked at right away.
     set_update_channel(cx, &workspace, Channel::Beta);
     wait_for_update_status(cx, handle, |status| {
-        status == "新版本 0.2.0-beta.1 已下载，重启 Agree ShellAS 即可完成更新。"
+        status == "新版本 0.2.0-beta.1 已下载，重启 Agree ShellAs 即可完成更新。"
     })
     .await;
     assert_eq!(fixture.channels(), [Channel::Stable, Channel::Beta]);

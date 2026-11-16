@@ -20,7 +20,7 @@
 		<string>zh-Hans</string>
 	</array>
 	<key>CFBundleDisplayName</key>
-	<string>Agree ShellAS</string>
+	<string>Agree ShellAs</string>
 	<key>CFBundleExecutable</key>
 	<string>shellrs</string>
 	<key>CFBundleIconFile</key>
@@ -30,7 +30,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Agree ShellAS</string>
+	<string>Agree ShellAs</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -44,8 +44,8 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Agree ShellAS needs the local network to connect to hosts on your LAN.</string>
+	<string>Agree ShellAs needs the local network to connect to hosts on your LAN.</string>
 	<key>NSHumanReadableCopyright</key>
-	<string>© Agree ShellAS</string>
+	<string>© Agree ShellAs</string>
 </dict>
 </plist>

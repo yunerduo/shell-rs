@@ -19,9 +19,10 @@ pub const BUILD_DATE: Option<&str> = option_env!("SHELLRS_BUILD_DATE");
 /// The Apple team that signs this app: a new bundle must come from it.
 pub const APPLE_TEAM_ID: Option<&str> = option_env!("SHELLRS_APPLE_TEAM_ID");
 
-/// This fork's GitHub releases. Updates come from here, over HTTPS and
-/// without a token: the repository is public.
-pub const RELEASES_API: &str = "https://api.github.com/repos/yunerduo/shell-rs/releases";
+/// This fork's signed update manifests. `{channel}` is replaced with
+/// `stable` or `beta`; a development build can override the address with
+/// `SHELLRS_UPDATE_URL`.
+pub const RELEASES_API: &str = "https://shellas.agree.host/update/v1/{channel}.json";
 
 /// The project page.
 pub const WEBSITE: &str = "https://github.com/yunerduo/shell-rs";
@@ -42,8 +43,8 @@ pub fn changelog_page(_locale: &str) -> &'static str {
 /// The release workflow refuses to build a release while this is empty: a
 /// build without keys rejects every manifest.
 pub const TRUSTED_KEYS: &[&str] = &[
-    // In use: the release workflow signs with it (key id CD239E668A535CB0).
-    "RWSwXFOKZp4jzaKmM9EkpY3iIyI0vMzi4EhFDlXwGy+XYiaHIWZY4ELa",
+    // In use: the release workflow signs with it (key id 9A7DE51998612035).
+    "RWSafeUZmGEgNRjcj/kFGvjlZlIQhZUbPwuZfE9bIndPfFF2xkNFEXnB",
     // Spare, kept offline (key id F3B9F08DE80AF399).
     "RWSZ8wrojfC584RC+h7Frcp/pDW0pd7TaB4pO6bTVVOgSj6mo1KFs0sh",
 ];
@@ -79,13 +80,9 @@ impl Channel {
         option_env!("SHELLRS_UPDATE_CHANNEL").and_then(Self::from_key)
     }
 
-    /// The GitHub API address of this channel's releases: the latest
-    /// stable one, or the newest of the list (which also holds betas).
+    /// The address of this channel's signed manifest.
     pub fn releases_url(self) -> String {
-        match self {
-            Self::Stable => format!("{RELEASES_API}/latest"),
-            Self::Beta => format!("{RELEASES_API}?per_page=20"),
-        }
+        RELEASES_API.replace("{channel}", self.key())
     }
 }
 
@@ -99,14 +96,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn each_channel_asks_github_for_its_releases() {
+    fn each_channel_asks_shellas_for_its_manifest() {
         assert_eq!(
             Channel::Stable.releases_url(),
-            "https://api.github.com/repos/yunerduo/shell-rs/releases/latest"
+            "https://shellas.agree.host/update/v1/stable.json"
         );
         assert_eq!(
             Channel::Beta.releases_url(),
-            "https://api.github.com/repos/yunerduo/shell-rs/releases?per_page=20"
+            "https://shellas.agree.host/update/v1/beta.json"
         );
         assert!(Channel::Stable.releases_url().starts_with("https://"));
         assert_eq!(Channel::from_key("nightly"), None);
