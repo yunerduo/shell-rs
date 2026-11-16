@@ -1,4 +1,6 @@
 /target/
+# 打包产物：安装包、清单与校验和，不提交。
+/dist/
 /.idea/
 .DS_Store
 .env
