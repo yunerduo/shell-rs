@@ -132,8 +132,8 @@ jobs:
             -A -t cert -f pkcs12 -k "$keychain"
           security set-key-partition-list -S apple-tool:,apple: -k "$password" "$keychain"
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
-          codesign --force --timestamp --options runtime --sign "$IDENTITY" build/Agree ShellAs.app
-          codesign --verify --deep --strict --verbose=2 build/Agree ShellAs.app
+          codesign --force --timestamp --options runtime --sign "$IDENTITY" "build/Agree ShellAs.app"
+          codesign --verify --deep --strict --verbose=2 "build/Agree ShellAs.app"
       - name: Notarize and staple
         env:
           API_KEY: ${{ secrets.APPLE_API_KEY_P8 }}
@@ -154,15 +154,15 @@ jobs:
               exit 1
             fi
           }
-          ditto -c -k --keepParent build/Agree ShellAs.app "$RUNNER_TEMP/notarize.zip"
+          ditto -c -k --keepParent "build/Agree ShellAs.app" "$RUNNER_TEMP/notarize.zip"
           notarize "$RUNNER_TEMP/notarize.zip"
-          xcrun stapler staple build/Agree ShellAs.app
+          xcrun stapler staple "build/Agree ShellAs.app"
           # The update package: the stapled bundle, zipped the way the
           # updater unzips it (ditto keeps the signature intact).
-          ditto -c -k --keepParent build/Agree ShellAs.app "dist/ShellAs-$VERSION-macos-$ARCH.app.zip"
+          ditto -c -k --keepParent "build/Agree ShellAs.app" "dist/ShellAs-$VERSION-macos-$ARCH.app.zip"
           # The first-install disk image, with the Applications shortcut.
           mkdir -p "$RUNNER_TEMP/dmg"
-          cp -R build/Agree ShellAs.app "$RUNNER_TEMP/dmg/"
+          cp -R "build/Agree ShellAs.app" "$RUNNER_TEMP/dmg/"
           ln -s /Applications "$RUNNER_TEMP/dmg/Applications"
           dmg="dist/ShellAs-$VERSION-macos-$ARCH.dmg"
           # hdiutil's own estimate of the image size once came out too small
@@ -172,7 +172,7 @@ jobs:
           df -h "$RUNNER_TEMP" .
           size=$(( $(du -sm "$RUNNER_TEMP/dmg" | cut -f1) * 2 + 20 ))
           for attempt in 1 2 3; do
-            hdiutil create -volname Agree ShellAs -srcfolder "$RUNNER_TEMP/dmg" -ov \
+            hdiutil create -volname "Agree ShellAs" -srcfolder "$RUNNER_TEMP/dmg" -ov \
               -fs HFS+ -size "${size}m" -format UDZO "$dmg" && break
             [ "$attempt" = 3 ] && exit 1
             sleep 10

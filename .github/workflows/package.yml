@@ -75,14 +75,14 @@ jobs:
         run: |
           mkdir -p dist
           # 升级包：ditto 原样保留 .app 的结构与权限。
-          ditto -c -k --keepParent build/Agree ShellAs.app \
+          ditto -c -k --keepParent "build/Agree ShellAs.app" \
             "dist/ShellAs-$VERSION-macos-$ARCH.app.zip"
           # 首次安装：DMG 里带一个 Applications 快捷方式。
           mkdir -p "$RUNNER_TEMP/dmg"
-          cp -R build/Agree ShellAs.app "$RUNNER_TEMP/dmg/"
+          cp -R "build/Agree ShellAs.app" "$RUNNER_TEMP/dmg/"
           ln -s /Applications "$RUNNER_TEMP/dmg/Applications"
           size=$(( $(du -sm "$RUNNER_TEMP/dmg" | cut -f1) * 2 + 20 ))
-          hdiutil create -volname Agree ShellAs -srcfolder "$RUNNER_TEMP/dmg" -ov \
+          hdiutil create -volname "Agree ShellAs" -srcfolder "$RUNNER_TEMP/dmg" -ov \
             -fs HFS+ -size "${size}m" -format UDZO \
             "dist/ShellAs-$VERSION-macos-$ARCH.dmg"
           shasum -a 256 dist/* > "dist/SHA256SUMS-macos-$ARCH.txt"
