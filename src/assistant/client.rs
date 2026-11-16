@@ -6,7 +6,9 @@ use std::io::Read;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+use zeroize::Zeroizing;
 
 use crate::secrets::KeychainSecretStore;
 
@@ -241,10 +243,17 @@ pub(super) fn run_with_key(
 /// The HTTP client one answer uses, with the proxy in force. The proxy's
 /// password is read here, on the worker thread, and stays in the client.
 fn build_client(request: &StreamRequest) -> Result<reqwest::blocking::Client, ChatError> {
+    http_client(request.timeout, request.proxy.as_ref())
+}
+
+fn http_client(
+    timeout: Duration,
+    proxy: Option<&ProxySetting>,
+) -> Result<reqwest::blocking::Client, ChatError> {
     let mut builder = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(10))
-        .timeout(request.timeout);
-    if let Some(proxy) = &request.proxy {
+        .timeout(timeout);
+    if let Some(proxy) = proxy {
         let password = if proxy.username.is_empty() {
             None
         } else {
@@ -261,6 +270,114 @@ fn build_client(request: &StreamRequest) -> Result<reqwest::blocking::Client, Ch
         builder = builder.proxy(configured);
     }
     builder.build().map_err(ChatError::from)
+}
+
+/// One model test, for the settings. The key is not here: a typed key comes
+/// with the call, otherwise the keychain entry named by `keychain_id`.
+#[derive(Clone, Debug)]
+pub struct ProbeRequest {
+    pub protocol: ProviderProtocol,
+    pub base_url: String,
+    /// The address is the whole URL: no protocol path is appended.
+    pub full_url: bool,
+    pub model: String,
+    pub keychain_id: String,
+    pub headers: Vec<RequestHeader>,
+    pub proxy: Option<ProxySetting>,
+    pub timeout: Duration,
+    /// Send the picture probe too, after the plain one answered.
+    pub images: bool,
+}
+
+/// What the service said to the test.
+#[derive(Clone, Debug)]
+pub struct ProbeOutcome {
+    /// How long the plain answer took.
+    pub elapsed: Duration,
+    /// The picture probe, when one ran: `Ok` when the service took the
+    /// picture, `Err` with the service's own reason when it refused.
+    pub image: Option<Result<(), PictureRefusal>>,
+}
+
+/// A service that would not take the probe picture. The status is kept
+/// apart from the mapped error because a rejected body and a broken service
+/// both arrive as a refusal, and only the first says anything about vision.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PictureRefusal {
+    pub status: u16,
+    pub error: ChatError,
+}
+
+/// Test one model: ask it a one-word question and, when `images` is set, ask
+/// again with a small picture. Both requests are the same shape a real turn
+/// uses, so a model that fails here fails in the conversation too. This
+/// blocks; the settings call it on the background executor.
+pub fn probe(request: &ProbeRequest, typed_key: Option<&str>) -> Result<ProbeOutcome, ChatError> {
+    let typed = typed_key
+        .filter(|key| !key.trim().is_empty())
+        .map(|key| Zeroizing::new(key.to_string()));
+    let key = match typed {
+        Some(key) => key,
+        None => KeychainSecretStore::read_account(&account(&request.keychain_id))
+            .map_err(|error| ChatError::Keychain(short(&error.to_string())))?
+            .ok_or(ChatError::KeyMissing)?,
+    };
+    let client = http_client(request.timeout, request.proxy.as_ref())?;
+    let started = Instant::now();
+    probe_once(&client, request, &key, None).map_err(|(_, error)| error)?;
+    let elapsed = started.elapsed();
+    let image = if request.images {
+        super::attachment::probe_picture().map(|(mime, data)| {
+            probe_once(&client, request, &key, Some((mime, data.as_str())))
+                .map_err(|(status, error)| PictureRefusal { status, error })
+        })
+    } else {
+        None
+    };
+    Ok(ProbeOutcome { elapsed, image })
+}
+
+/// One request of the test. A failure carries the status as well, because
+/// only a status the service refused outright says anything about the body.
+fn probe_once(
+    client: &reqwest::blocking::Client,
+    request: &ProbeRequest,
+    key: &str,
+    image: Option<(&str, &str)>,
+) -> Result<(), (u16, ChatError)> {
+    let mut spec = protocol::probe_spec(
+        request.protocol,
+        &request.base_url,
+        &request.model,
+        key,
+        image,
+    );
+    protocol::append_headers(&mut spec.headers, &request.headers);
+    if request.full_url {
+        spec.url = request.base_url.trim().trim_end_matches('/').to_string();
+    }
+    let mut call = client
+        .post(&spec.url)
+        .header("Content-Type", "application/json");
+    for (name, value) in &spec.headers {
+        call = call.header(name, value);
+    }
+    let body = serde_json::to_vec(&spec.body)
+        .map_err(|error| (0, ChatError::Network(short(&error.to_string()))))?;
+    let response = call
+        .body(body)
+        .send()
+        .map_err(|error| (0, ChatError::from(error)))?;
+    let status = response.status();
+    if status.is_success() {
+        return Ok(());
+    }
+    let mut body = String::new();
+    let _ = response.take(8192).read_to_string(&mut body);
+    Err((
+        status.as_u16(),
+        protocol::status_error(status.as_u16(), &body),
+    ))
 }
 
 /// Why a proxy check failed. The reasons are kept apart so the settings can
@@ -593,6 +710,123 @@ mod tests {
             test_proxy(&config, None, "http://example.com/"),
             Err(ProxyTestError::Dns)
         );
+    }
+
+    /// The body of one HTTP request, read past its headers.
+    fn read_probe_request(stream: &mut std::net::TcpStream) -> String {
+        use std::io::{BufRead as _, BufReader, Read as _};
+
+        let mut length = 0;
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        while reader.read_line(&mut line).unwrap_or(0) > 0 {
+            let trimmed = line.trim_end();
+            if trimmed.is_empty() {
+                break;
+            }
+            if let Some((name, value)) = trimmed.split_once(':')
+                && name.eq_ignore_ascii_case("content-length")
+            {
+                length = value.trim().parse().unwrap_or(0);
+            }
+            line.clear();
+        }
+        let mut body = vec![0u8; length];
+        let _ = reader.read_exact(&mut body);
+        String::from_utf8_lossy(&body).to_string()
+    }
+
+    /// A service that answers the plain question and refuses the picture is
+    /// exactly the model the settings must be able to describe.
+    #[test]
+    fn a_probe_reports_a_model_that_refuses_a_picture() {
+        use std::io::Write as _;
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("the bound address").port();
+        let server = std::thread::spawn(move || {
+            let answers = [
+                ("200 OK", "{}"),
+                (
+                    "400 Bad Request",
+                    r#"{"error":{"message":"this model takes text only"}}"#,
+                ),
+            ];
+            for (index, (status, body)) in answers.iter().enumerate() {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let raw = read_probe_request(&mut stream);
+                assert_eq!(raw.contains("image_url"), index == 1, "{raw}");
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.flush();
+            }
+        });
+        let request = ProbeRequest {
+            protocol: ProviderProtocol::OpenAi,
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            full_url: false,
+            model: "text-only".into(),
+            keychain_id: String::new(),
+            headers: Vec::new(),
+            proxy: None,
+            timeout: Duration::from_secs(10),
+            images: true,
+        };
+        let outcome = probe(&request, Some("a-key")).expect("the plain question is answered");
+        server.join().expect("the fake service should finish");
+        let refusal = outcome
+            .image
+            .expect("the picture probe ran")
+            .expect_err("the service refused the picture");
+        assert_eq!(refusal.status, 400);
+        assert!(refusal.error.message().contains("text only"));
+    }
+
+    /// A service that takes both answers is a vision model; the test says so
+    /// instead of guessing from its name.
+    #[test]
+    fn a_probe_reports_a_model_that_takes_a_picture() {
+        use std::io::Write as _;
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("the bound address").port();
+        let server = std::thread::spawn(move || {
+            let mut bodies = Vec::new();
+            for _ in 0..2 {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return bodies;
+                };
+                bodies.push(read_probe_request(&mut stream));
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                      Content-Length: 2\r\nConnection: close\r\n\r\n{}",
+                );
+                let _ = stream.flush();
+            }
+            bodies
+        });
+        let request = ProbeRequest {
+            protocol: ProviderProtocol::OpenAi,
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            full_url: false,
+            model: "vision".into(),
+            keychain_id: String::new(),
+            headers: Vec::new(),
+            proxy: None,
+            timeout: Duration::from_secs(10),
+            images: true,
+        };
+        let outcome = probe(&request, Some("a-key")).expect("both questions are answered");
+        let bodies = server.join().expect("the fake service should finish");
+        assert_eq!(outcome.image, Some(Ok(())));
+        assert!(bodies[0].contains("pong"));
+        assert!(bodies[1].contains("data:image/png;base64,"));
     }
 
     /// The one check that talks to a real service. It is ignored by default

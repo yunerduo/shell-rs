@@ -2,6 +2,7 @@
 //! talks to a model service and, from P1 on, runs what the user's policy
 //! allows. See `docs/ai-terminal-assistant.zh.md`.
 
+pub mod attachment;
 pub mod audit;
 pub mod bindings;
 pub mod chat;

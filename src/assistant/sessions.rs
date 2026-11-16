@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use super::attachment::{Attachment, AttachmentRef};
 use super::chat::ChatMessage;
 
 /// How long a session is kept after its last change.
@@ -44,9 +45,22 @@ pub struct SessionIndex {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SessionEvent {
-    User { text: String },
-    Assistant { text: String },
-    Error { text: String },
+    User {
+        text: String,
+        #[serde(default)]
+        attachments: Vec<AttachmentRef>,
+    },
+    Assistant {
+        text: String,
+    },
+    Error {
+        text: String,
+    },
+}
+
+/// Where one session's attachment files live.
+pub fn attachments_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join("assistant").join("attachments").join(id)
 }
 
 /// The index's path under the data directory.
@@ -85,6 +99,7 @@ impl Sessions {
             .collect();
         for id in &expired {
             let _ = fs::remove_file(journal_path(dir, id));
+            let _ = fs::remove_dir_all(attachments_path(dir, id));
         }
         index
             .sessions
@@ -188,6 +203,7 @@ impl Sessions {
             return false;
         }
         let _ = fs::remove_file(journal_path(&self.dir, id));
+        let _ = fs::remove_dir_all(attachments_path(&self.dir, id));
         if self.index.active.as_deref() == Some(id) {
             self.index.active = self.index.sessions.last().map(|session| session.id.clone());
         }
@@ -216,7 +232,7 @@ impl Sessions {
         if let Some(session) = self.index.sessions.iter_mut().find(|s| s.id == id) {
             session.updated_at = now;
             if session.title.is_empty()
-                && let SessionEvent::User { text } = event
+                && let SessionEvent::User { text, .. } = event
             {
                 session.title = title_from(text);
             }
@@ -231,14 +247,21 @@ impl Sessions {
         let Ok(text) = fs::read_to_string(journal_path(&self.dir, id)) else {
             return Vec::new();
         };
+        let dir = attachments_path(&self.dir, id);
         let mut messages = Vec::new();
         for line in text.lines() {
             let Ok(event) = serde_json::from_str::<SessionEvent>(line) else {
                 continue;
             };
             match event {
-                SessionEvent::User { text } if !text.trim().is_empty() => {
-                    messages.push(ChatMessage::user(text));
+                SessionEvent::User { text, attachments }
+                    if !text.trim().is_empty() || !attachments.is_empty() =>
+                {
+                    let attachments = attachments
+                        .iter()
+                        .filter_map(|reference| Attachment::restore(&dir, reference))
+                        .collect();
+                    messages.push(ChatMessage::user_with(text, attachments));
                 }
                 SessionEvent::Assistant { text } if !text.trim().is_empty() => {
                     messages.push(ChatMessage::assistant(text));
@@ -249,6 +272,11 @@ impl Sessions {
             }
         }
         messages
+    }
+
+    /// Where the open session's attachment files go.
+    pub fn attachment_dir(&self, id: &str) -> PathBuf {
+        attachments_path(&self.dir, id)
     }
 
     fn unique_id(&self, now: i64) -> String {
@@ -338,6 +366,7 @@ mod tests {
                 &id,
                 &SessionEvent::User {
                     text: "check the disk".into(),
+                    attachments: Vec::new(),
                 },
                 1,
             )
@@ -374,13 +403,21 @@ mod tests {
         let id = sessions.active_id().unwrap().to_string();
         let long = format!("  line one\nline two  {}", "x".repeat(80));
         sessions
-            .append(&id, &SessionEvent::User { text: long }, 1)
+            .append(
+                &id,
+                &SessionEvent::User {
+                    text: long,
+                    attachments: Vec::new(),
+                },
+                1,
+            )
             .expect("append");
         sessions
             .append(
                 &id,
                 &SessionEvent::User {
                     text: "second".into(),
+                    attachments: Vec::new(),
                 },
                 2,
             )
@@ -447,6 +484,40 @@ mod tests {
         fs::write(&path, "{not json").unwrap();
         let sessions = Sessions::load(&dir, 1_700_000_000_000);
         assert_eq!(sessions.sessions().len(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn attachments_come_back_with_the_message() {
+        let dir = temp_dir("attachments");
+        let mut sessions = Sessions::load(&dir, 1_700_000_000_000);
+        let id = sessions.active_id().unwrap().to_string();
+        let attachment = Attachment::text("build.log", b"line one").expect("attachment");
+        attachment
+            .save(&sessions.attachment_dir(&id))
+            .expect("save");
+        sessions
+            .append(
+                &id,
+                &SessionEvent::User {
+                    text: "look".into(),
+                    attachments: vec![attachment.reference()],
+                },
+                1,
+            )
+            .expect("append");
+        let messages = sessions.messages(&id);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].attachments.len(), 1);
+        assert_eq!(
+            messages[0].attachments[0]
+                .text_content()
+                .map(|(text, _)| text),
+            Some("line one")
+        );
+
+        sessions.delete(&id, 2);
+        assert!(!attachments_path(&dir, &id).exists(), "files go with it");
         let _ = fs::remove_dir_all(&dir);
     }
 }

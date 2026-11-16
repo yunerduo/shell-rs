@@ -94,6 +94,8 @@ icon_assets!(
         FileSearch,
         SquareDashedText,
         CopyPlus,
+        Paperclip,
+        X,
         CloudSync
     ]
 );

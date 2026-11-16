@@ -902,6 +902,9 @@ async fn projects_and_snippets_hidden_in_the_settings_leave_local_terminals_with
         assert!(window.try_find(("tool-sidebar-local", 1_u64)).is_none());
     });
     hide(ToolKind::Snippets, cx);
+    // The assistant is a tool of its own and stays on for a local terminal,
+    // so it has to go too before the sidebar has nothing left to show.
+    hide(ToolKind::Assistant, cx);
     in_frame(cx, handle, |window, _| {
         assert!(window.try_find("tool-switch").is_none());
         assert!(window.try_find(("tool-sidebar-local", 1_u64)).is_none());

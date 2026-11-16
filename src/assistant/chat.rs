@@ -5,6 +5,8 @@ use serde::Deserialize;
 
 use crate::i18n::t;
 
+use super::attachment::Attachment;
+
 /// Who said a thing in the conversation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
@@ -158,16 +160,24 @@ pub struct ChatMessage {
     pub tool_calls: Vec<ToolCall>,
     /// For a tool message: the call it answers.
     pub tool_call_id: Option<String>,
+    /// Pictures and text files the user attached to this turn.
+    pub attachments: Vec<Attachment>,
 }
 
 impl ChatMessage {
     pub fn user(text: impl Into<String>) -> Self {
+        Self::user_with(text, Vec::new())
+    }
+
+    /// A user turn with what was pasted or dropped beside the words.
+    pub fn user_with(text: impl Into<String>, attachments: Vec<Attachment>) -> Self {
         Self {
             role: Role::User,
             text: text.into(),
             reasoning: String::new(),
             tool_calls: Vec::new(),
             tool_call_id: None,
+            attachments,
         }
     }
 
@@ -178,6 +188,7 @@ impl ChatMessage {
             reasoning: String::new(),
             tool_calls: Vec::new(),
             tool_call_id: None,
+            attachments: Vec::new(),
         }
     }
 
@@ -190,6 +201,7 @@ impl ChatMessage {
             reasoning: String::new(),
             tool_calls,
             tool_call_id: None,
+            attachments: Vec::new(),
         }
     }
 
@@ -201,6 +213,7 @@ impl ChatMessage {
             reasoning: String::new(),
             tool_calls: Vec::new(),
             tool_call_id: Some(call_id.into()),
+            attachments: Vec::new(),
         }
     }
 }
@@ -218,7 +231,9 @@ pub fn export_markdown(
     let assistant_heading = t!("assistant.role.assistant");
     let mut body = String::new();
     for message in messages {
-        if message.text.trim().is_empty() || message.role == Role::Tool {
+        if (message.text.trim().is_empty() && message.attachments.is_empty())
+            || message.role == Role::Tool
+        {
             continue;
         }
         let heading: &str = match message.role {
@@ -232,7 +247,20 @@ pub fn export_markdown(
         body.push_str("## ");
         body.push_str(heading);
         body.push_str("\n\n");
-        body.push_str(&plain(&message.text));
+        if !message.text.trim().is_empty() {
+            body.push_str(&plain(&message.text));
+        }
+        for attachment in &message.attachments {
+            if !body.ends_with('\n') {
+                body.push('\n');
+            }
+            body.push_str("- ");
+            body.push_str(&t!(
+                "assistant.attachment.line",
+                name = attachment.name.clone()
+            ));
+            body.push('\n');
+        }
     }
     if body.is_empty() {
         return String::new();

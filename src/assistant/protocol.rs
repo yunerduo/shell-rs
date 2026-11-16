@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 
 use crate::i18n::t;
 
+use super::attachment::request_text;
 use super::chat::{ChatMessage, Role};
 use super::settings::{ProviderProtocol, RequestHeader};
 
@@ -301,6 +302,55 @@ pub fn plain_request_spec(
     RequestSpec { url, headers, body }
 }
 
+/// Build the request that tests a model: one short question, no history and
+/// no tools, so nothing but the address, the key and the model is at stake.
+/// With `image`, the same question carries a small picture, which is how the
+/// settings learn whether the service takes one.
+pub fn probe_spec(
+    protocol: ProviderProtocol,
+    base_url: &str,
+    model: &str,
+    key: &str,
+    image: Option<(&str, &str)>,
+) -> RequestSpec {
+    let url = endpoint(protocol, base_url);
+    let prompt = "Reply with the single word: pong.";
+    let body = match protocol {
+        ProviderProtocol::OpenAi => {
+            let content = match image {
+                Some((mime, data)) => json!([
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": format!("data:{mime};base64,{data}")}},
+                ]),
+                None => json!(prompt),
+            };
+            json!({
+                "model": model,
+                "messages": [{"role": "user", "content": content}],
+                "max_tokens": 16,
+                "stream": false,
+            })
+        }
+        ProviderProtocol::Anthropic => {
+            let content = match image {
+                Some((mime, data)) => json!([
+                    {"type": "text", "text": prompt},
+                    {"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}},
+                ]),
+                None => json!(prompt),
+            };
+            json!({
+                "model": model,
+                "messages": [{"role": "user", "content": content}],
+                "max_tokens": 16,
+                "stream": false,
+            })
+        }
+    };
+    let headers = auth_headers(protocol, key);
+    RequestSpec { url, headers, body }
+}
+
 /// Build the request for a scheduled task. Both protocols get the read-only
 /// screen and host tools plus a proposal tool that cannot run anything.
 pub fn scheduled_request_spec(
@@ -563,7 +613,8 @@ fn openai_message(message: &ChatMessage) -> Value {
                 })
                 .collect::<Vec<Value>>(),
         }),
-        Role::User | Role::Assistant | Role::System => json!({
+        Role::User => openai_user_message(message),
+        Role::Assistant | Role::System => json!({
             "role": match message.role {
                 Role::User => "user",
                 Role::Assistant => "assistant",
@@ -572,6 +623,31 @@ fn openai_message(message: &ChatMessage) -> Value {
             "content": message.text,
         }),
     }
+}
+
+/// A user turn with pictures becomes the content array both providers read;
+/// text files stay part of the text, marked as files.
+fn openai_user_message(message: &ChatMessage) -> Value {
+    let text = request_text(&message.text, &message.attachments);
+    let images: Vec<(&str, String)> = message
+        .attachments
+        .iter()
+        .filter_map(|attachment| attachment.image_payload())
+        .collect();
+    if images.is_empty() {
+        return json!({"role": "user", "content": text});
+    }
+    let mut blocks = Vec::with_capacity(images.len() + 1);
+    if !text.trim().is_empty() {
+        blocks.push(json!({"type": "text", "text": text}));
+    }
+    for (mime, data) in images {
+        blocks.push(json!({
+            "type": "image_url",
+            "image_url": {"url": format!("data:{mime};base64,{data}")},
+        }));
+    }
+    json!({"role": "user", "content": blocks})
 }
 
 /// The same tools in Anthropic's shape: the schema is not nested under
@@ -623,7 +699,8 @@ fn anthropic_message(message: &ChatMessage) -> Value {
             }
             json!({"role": "assistant", "content": blocks})
         }
-        Role::User | Role::Assistant | Role::System => json!({
+        Role::User => anthropic_user_message(message),
+        Role::Assistant | Role::System => json!({
             "role": if message.role == Role::Assistant {
                 "assistant"
             } else {
@@ -632,6 +709,31 @@ fn anthropic_message(message: &ChatMessage) -> Value {
             "content": message.text,
         }),
     }
+}
+
+/// Anthropic takes pictures as base64 blocks of their own; the text,
+/// including any text files, is one block before them.
+fn anthropic_user_message(message: &ChatMessage) -> Value {
+    let text = request_text(&message.text, &message.attachments);
+    let images: Vec<(&str, String)> = message
+        .attachments
+        .iter()
+        .filter_map(|attachment| attachment.image_payload())
+        .collect();
+    if images.is_empty() {
+        return json!({"role": "user", "content": text});
+    }
+    let mut blocks = Vec::with_capacity(images.len() + 1);
+    if !text.trim().is_empty() {
+        blocks.push(json!({"type": "text", "text": text}));
+    }
+    for (mime, data) in images {
+        blocks.push(json!({
+            "type": "image",
+            "source": {"type": "base64", "media_type": mime, "data": data},
+        }));
+    }
+    json!({"role": "user", "content": blocks})
 }
 
 /// The one tool P1 exposes. Its schema names the aliases, so a model that
@@ -1651,5 +1753,107 @@ mod tests {
                 .contains("web (web-1)")
         );
         assert!(spec.body["messages"][0]["content"].is_string());
+    }
+
+    #[test]
+    fn a_user_turn_with_a_picture_uses_the_providers_image_block() {
+        let source = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            2,
+            2,
+            image::Rgba([1, 2, 3, 255]),
+        ));
+        let mut bytes = Vec::new();
+        source
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("encode");
+        let attachment = crate::assistant::attachment::Attachment::from_image(
+            "shot.png",
+            gpui_kit::Image::from_bytes(gpui_kit::ImageFormat::Png, bytes),
+        )
+        .expect("attachment");
+        let message = ChatMessage::user_with("what is wrong here", vec![attachment]);
+
+        let openai = openai_message(&message);
+        assert_eq!(openai["content"][0]["type"], "text");
+        assert_eq!(openai["content"][1]["type"], "image_url");
+        assert!(
+            openai["content"][1]["image_url"]["url"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:image/png;base64,")
+        );
+
+        let anthropic = anthropic_message(&message);
+        assert_eq!(anthropic["content"][0]["type"], "text");
+        assert_eq!(anthropic["content"][1]["type"], "image");
+        assert_eq!(anthropic["content"][1]["source"]["media_type"], "image/png");
+    }
+
+    #[test]
+    fn a_probe_asks_one_question_and_takes_no_tools() {
+        for protocol in ProviderProtocol::ALL {
+            let spec = probe_spec(protocol, "https://api.test", "m", "k", None);
+            assert_eq!(spec.body["stream"], false);
+            assert_eq!(spec.body["max_tokens"], 16);
+            assert!(spec.body.get("tools").is_none());
+            assert_eq!(spec.body["messages"].as_array().map(Vec::len), Some(1));
+            assert!(spec.body["messages"][0]["content"].is_string());
+            // OpenAI signs with Authorization, Anthropic with x-api-key;
+            // either way the key rides in a header, never in the body.
+            assert!(
+                spec.headers
+                    .iter()
+                    .any(|(name, value)| !name.is_empty() && !value.is_empty()),
+                "{protocol:?}"
+            );
+            assert!(!spec.body.to_string().contains("\"k\""));
+        }
+    }
+
+    #[test]
+    fn a_probe_with_a_picture_uses_the_providers_image_block() {
+        let image = Some(("image/png", "AAAA"));
+        let openai = probe_spec(
+            ProviderProtocol::OpenAi,
+            "https://api.test",
+            "m",
+            "k",
+            image,
+        );
+        assert_eq!(
+            openai.body["messages"][0]["content"][1]["type"],
+            "image_url"
+        );
+        assert_eq!(
+            openai.body["messages"][0]["content"][1]["image_url"]["url"],
+            "data:image/png;base64,AAAA"
+        );
+
+        let anthropic = probe_spec(
+            ProviderProtocol::Anthropic,
+            "https://api.test",
+            "m",
+            "k",
+            image,
+        );
+        assert_eq!(anthropic.body["messages"][0]["content"][1]["type"], "image");
+        assert_eq!(
+            anthropic.body["messages"][0]["content"][1]["source"]["media_type"],
+            "image/png"
+        );
+    }
+
+    #[test]
+    fn a_text_file_rides_along_in_the_text_block() {
+        let attachment =
+            crate::assistant::attachment::Attachment::text("build.log", b"boom").expect("file");
+        let message = ChatMessage::user_with("look", vec![attachment]);
+        let openai = openai_message(&message);
+        let text = openai["content"].as_str().expect("plain text");
+        assert!(text.contains("<file name=\"build.log\">"));
+        assert!(text.contains("boom"));
     }
 }

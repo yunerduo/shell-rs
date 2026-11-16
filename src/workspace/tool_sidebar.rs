@@ -153,6 +153,11 @@ pub struct ToolSidebar {
 }
 
 impl ToolSidebar {
+    /// The assistant panel, for the workspace's accessor and the tests.
+    pub fn assistant(&self) -> &Entity<AssistantPanel> {
+        &self.assistant
+    }
+
     /// `dispatch` is the workspace's focus handle, which the tools' buttons
     /// dispatch on.
     pub fn new(

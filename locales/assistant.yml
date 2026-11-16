@@ -93,6 +93,39 @@ assistant.placeholder:
 assistant.input.aria:
   zh-CN: 指令输入
   en: Instruction input
+assistant.attachment.add:
+  zh-CN: 添加图片或文本文件
+  en: Add a picture or text file
+assistant.attachment.pasted_image:
+  zh-CN: 粘贴的图片
+  en: Pasted picture
+assistant.attachment.line:
+  zh-CN: 附件：%{name}
+  en: "Attachment: %{name}"
+assistant.attachment.truncated:
+  zh-CN: 文件较长，发送时只包含前面一部分。
+  en: The file is long; only its beginning is sent.
+assistant.attachment.images_off:
+  zh-CN: 当前模型标记为不能看图，图片没有加上；可在模型设置里打开图片输入。
+  en: The current model is marked as unable to see, so the picture was not added; turn pictures on in the model settings.
+assistant.attachment.too_many:
+  zh-CN: 一条消息最多带 %{limit} 个附件。
+  en: A message can carry at most %{limit} attachments.
+assistant.attachment.too_large:
+  zh-CN: 文件太大，上限为 %{limit}。
+  en: The file is too large; the limit is %{limit}.
+assistant.attachment.unsupported:
+  zh-CN: 这种文件无法识别为图片或文本。
+  en: This file is neither a picture nor readable text.
+assistant.attachment.binary:
+  zh-CN: 二进制文件不能作为文本附件。
+  en: A binary file cannot be attached as text.
+assistant.attachment.unreadable:
+  zh-CN: 读取失败：%{reason}
+  en: "Could not read it: %{reason}"
+assistant.attachment.save_failed:
+  zh-CN: 附件已发送，但未能保存，重新打开会话后可能看不到它。
+  en: The attachment was sent but not saved; reopening the session may not show it.
 assistant.mode.restricted:
   zh-CN: 受限模式
   en: Restricted
@@ -444,6 +477,39 @@ assistant.settings.models.api_key.hint:
 assistant.settings.models.api_key.placeholder:
   zh-CN: 留空不改
   en: Leave blank to keep
+assistant.settings.models.images:
+  zh-CN: 图片输入
+  en: Pictures
+assistant.settings.models.images.on:
+  zh-CN: 这个模型能看图
+  en: This model takes pictures
+assistant.settings.models.images.hint:
+  zh-CN: 关掉后，粘贴或拖进对话的图片会被拒绝，不会发去看不见图的模型。
+  en: When off, pictures pasted or dropped into the conversation are refused instead of being sent to a model that cannot see.
+assistant.settings.models.test.action:
+  zh-CN: 测试连接
+  en: Test
+assistant.settings.models.test.running:
+  zh-CN: 正在测试…
+  en: Testing…
+assistant.settings.models.test.passed:
+  zh-CN: 连接正常（%{ms} 毫秒）
+  en: "Connected in %{ms} ms"
+assistant.settings.models.test.passed_images:
+  zh-CN: 连接正常，图片输入可用（%{ms} 毫秒）
+  en: "Connected in %{ms} ms, and it takes a picture"
+assistant.settings.models.test.images_off:
+  zh-CN: 连接正常，但模型不接受图片，已关闭图片输入：%{reason}
+  en: "Connected, but the model refused the picture, so pictures are now off: %{reason}"
+assistant.settings.models.test.images_refused:
+  zh-CN: 连接正常，但图片被拒绝：%{reason}
+  en: "Connected, but the picture was refused: %{reason}"
+assistant.settings.models.test.failed:
+  zh-CN: 测试失败：%{reason}
+  en: "The test failed: %{reason}"
+assistant.settings.models.test.no_base_url:
+  zh-CN: 请先填写请求地址，或在供应商设置里填一个。
+  en: Fill in an endpoint here, or one in the provider's settings.
 assistant.settings.models.key_saved:
   zh-CN: 模型的 Key 已保存
   en: The model's key was saved

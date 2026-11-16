@@ -433,6 +433,10 @@ pub struct ModelProfile {
     pub keychain_id: String,
     /// Appended to the system prompt for this model only.
     pub instruction: String,
+    /// The model takes pictures. Off keeps pasted or dropped pictures out
+    /// of the composer, so a text-only model is never handed one. The test
+    /// button in the form settles what the service actually does.
+    pub supports_images: bool,
     /// The most tokens an answer may take; 0 means the provider's.
     pub max_tokens: u32,
     /// How many tokens the model's context window holds; 0 means the
@@ -492,6 +496,9 @@ impl Default for ModelProfile {
             full_url: false,
             keychain_id: String::new(),
             instruction: String::new(),
+            // Most models someone configures by hand are vision models, and
+            // a service that refuses pictures says so when one arrives.
+            supports_images: true,
             max_tokens: 0,
             context_window: 0,
             tool_rounds: 0,
@@ -653,6 +660,9 @@ pub struct ModelSelection {
     pub stop: Vec<String>,
     pub extra: String,
     pub instruction: String,
+    /// Whether the model takes pictures; the composer checks it before it
+    /// keeps one.
+    pub supports_images: bool,
     pub headers: Vec<RequestHeader>,
 }
 
@@ -799,6 +809,7 @@ impl AssistantSettings {
                     stop: profile.stop.clone(),
                     extra: profile.extra.clone(),
                     instruction: profile.instruction.clone(),
+                    supports_images: profile.supports_images,
                     headers: provider.headers.clone(),
                 }
             }
@@ -821,6 +832,7 @@ impl AssistantSettings {
                     stop: Vec::new(),
                     extra: String::new(),
                     instruction: String::new(),
+                    supports_images: true,
                     headers: provider.headers.clone(),
                 }
             }
@@ -1298,5 +1310,22 @@ mod tests {
         assert_eq!(read, settings);
         let read: AssistantSettings = serde_json::from_str("{}").unwrap();
         assert_eq!(read, AssistantSettings::default());
+    }
+
+    /// A profile saved before the picture switch existed takes pictures as
+    /// far as the composer is concerned: the field is absent and the default
+    /// keeps pictures allowed rather than quietly dropping them.
+    #[test]
+    fn a_profile_saved_before_the_picture_switch_still_takes_pictures() {
+        let profile: ModelProfile =
+            serde_json::from_str(r#"{"id":"openai:old","model":"old"}"#).unwrap();
+        assert!(profile.supports_images);
+        let settings = AssistantSettings {
+            protocol: ProviderProtocol::OpenAi,
+            active_model: profile.id.clone(),
+            models: vec![profile],
+            ..AssistantSettings::default()
+        };
+        assert!(settings.selection().supports_images);
     }
 }

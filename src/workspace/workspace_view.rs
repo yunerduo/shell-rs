@@ -40,6 +40,7 @@ use crate::app::{
     ToggleTheme, ToolKind, ZoomIn, ZoomOut, ZoomReset, ZoomTerminalIn, ZoomTerminalOut,
     ZoomTerminalReset,
 };
+use crate::assistant::panel::AssistantPanel;
 use crate::cli::{CliIntegration, CliServer, IntegrationPaths, SshCliBackend};
 use crate::connection::{
     ConnectionPrompt, ConnectionPromptField, ConnectionPromptKind, ConnectionPromptReply,
@@ -953,6 +954,11 @@ impl Workspace {
 
     pub fn updater(&self) -> &Entity<Updater> {
         &self.updater
+    }
+
+    /// The assistant, for tests that talk to it without a click.
+    pub fn assistant(&self, cx: &App) -> Entity<AssistantPanel> {
+        self.tools.read(cx).assistant().clone()
     }
 
     pub fn sync(&self) -> &Entity<SyncService> {

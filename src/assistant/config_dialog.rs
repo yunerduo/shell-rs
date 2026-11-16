@@ -3,8 +3,10 @@
 //! The panel keeps only the conversation; everything that configures it lives
 //! here, where the controls have room.
 
+use std::time::Duration;
+
 use gpui_kit::component::{
-    ActiveTheme as _, Sizable as _, WindowExt as _,
+    ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _,
     accordion::Accordion,
     button::{Button, ButtonVariants as _},
     checkbox::Checkbox,
@@ -41,6 +43,9 @@ use super::settings::{
 const DIALOG_WIDTH: f32 = 760.0;
 /// The margin left between the dialog and the window's edges.
 const DIALOG_MARGIN: f32 = 32.0;
+/// How long one model test may take before it is called a failure. A test
+/// the user waits on should not outlast a slow answer.
+const MODEL_TEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The pages of the settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,6 +137,15 @@ enum ProxyCheck {
     Running,
     /// The proxy answered; the status is what the service returned.
     Passed(u16),
+    Failed(SharedString),
+}
+
+/// The last test of the models tab's form: whether the service answered at
+/// all, and whether it took the picture. The line is built when the answer
+/// arrives, so it says the same thing on every render.
+enum ModelCheck {
+    Running,
+    Passed(SharedString),
     Failed(SharedString),
 }
 
@@ -230,6 +244,9 @@ pub struct AssistantConfigDialog {
     model_id: Entity<InputState>,
     model_base_url: Entity<InputState>,
     model_full_url: bool,
+    /// Whether the model this form describes takes pictures; the composer
+    /// keeps them out when it does not.
+    model_supports_images: bool,
     model_api_key: Entity<InputState>,
     model_max_tokens: Entity<InputState>,
     model_context: Entity<InputState>,
@@ -242,6 +259,8 @@ pub struct AssistantConfigDialog {
     model_stop: Entity<InputState>,
     model_instruction: Entity<InputState>,
     model_extra: Entity<InputState>,
+    /// The last test of the form, while it runs and after it answers.
+    model_test: Option<ModelCheck>,
     /// The roles and skills tab: the role being written (or edited), and
     /// the fields of both forms.
     editing_role: Option<String>,
@@ -509,6 +528,7 @@ impl AssistantConfigDialog {
             model_id,
             model_base_url,
             model_full_url: false,
+            model_supports_images: true,
             model_api_key,
             model_max_tokens,
             model_context,
@@ -521,6 +541,7 @@ impl AssistantConfigDialog {
             model_stop,
             model_instruction,
             model_extra,
+            model_test: None,
             editing_role: None,
             role_name,
             role_avatar,
@@ -705,6 +726,7 @@ impl AssistantConfigDialog {
             base_url: self.model_base_url.read(cx).value().to_string(),
             full_url: self.model_full_url,
             instruction: self.model_instruction.read(cx).value().to_string(),
+            supports_images: self.model_supports_images,
             max_tokens,
             context_window,
             tool_rounds,
@@ -821,6 +843,112 @@ impl AssistantConfigDialog {
         }
     }
 
+    /// Test the form's model without saving it. One request asks a word;
+    /// when the form says the model takes pictures, a second one carries
+    /// one, and a service that refuses it turns the checkbox off, so the
+    /// answer is what the model does rather than what its name suggests.
+    fn test_model(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.model_test, Some(ModelCheck::Running)) {
+            return;
+        }
+        let profile = match self.model_from_fields(cx) {
+            Ok(profile) => profile,
+            Err(message) => {
+                self.model_test = Some(ModelCheck::Failed(message));
+                cx.notify();
+                return;
+            }
+        };
+        let assistant = self.settings.read(cx).settings().assistant.clone();
+        let provider = assistant.provider(profile.protocol);
+        let base_url = if profile.base_url.is_empty() {
+            provider.base_url.clone()
+        } else {
+            profile.base_url.clone()
+        };
+        if base_url.trim().is_empty() {
+            self.model_test = Some(ModelCheck::Failed(t!(
+                "assistant.settings.models.test.no_base_url"
+            )));
+            cx.notify();
+            return;
+        }
+        let keychain_id = self
+            .editing_model
+            .as_ref()
+            .and_then(|id| assistant.model_profile(id))
+            .map(|other| other.keychain_id.clone())
+            .filter(|id| !id.is_empty())
+            .unwrap_or_else(|| {
+                format!(
+                    "model:{}",
+                    ModelProfile::id_of(profile.protocol, &profile.model)
+                )
+            });
+        let request = client::ProbeRequest {
+            protocol: profile.protocol,
+            base_url,
+            full_url: profile.full_url,
+            model: profile.model.clone(),
+            keychain_id,
+            headers: provider.headers.clone(),
+            proxy: assistant
+                .proxy_route(profile.protocol)
+                .map(client::ProxySetting::from),
+            timeout: MODEL_TEST_TIMEOUT,
+            images: self.model_supports_images,
+        };
+        let key = self.model_api_key.read(cx).value().to_string();
+        self.model_test = Some(ModelCheck::Running);
+        self.error = None;
+        self.notice = None;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let outcome = cx
+                .background_executor()
+                .spawn(async move { client::probe(&request, Some(key.as_str())) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.model_test = Some(match outcome {
+                    Ok(outcome) => {
+                        let ms = outcome.elapsed.as_millis();
+                        let line = match &outcome.image {
+                            None => t!("assistant.settings.models.test.passed", ms = ms),
+                            Some(Ok(())) => {
+                                t!("assistant.settings.models.test.passed_images", ms = ms)
+                            }
+                            Some(Err(refusal)) => {
+                                let reason = refusal.error.message();
+                                // A request the service rejected is the
+                                // model's answer about pictures; the
+                                // form should not keep claiming them.
+                                if (400..=422).contains(&refusal.status) {
+                                    this.model_supports_images = false;
+                                    t!(
+                                        "assistant.settings.models.test.images_off",
+                                        reason = reason.as_str()
+                                    )
+                                } else {
+                                    t!(
+                                        "assistant.settings.models.test.images_refused",
+                                        reason = reason.as_str()
+                                    )
+                                }
+                            }
+                        };
+                        ModelCheck::Passed(line)
+                    }
+                    Err(error) => ModelCheck::Failed(t!(
+                        "assistant.settings.models.test.failed",
+                        reason = error.message().as_str()
+                    )),
+                });
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn edit_model(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(profile) = self
             .settings
@@ -835,6 +963,8 @@ impl AssistantConfigDialog {
         self.editing_model = Some(profile.id.clone());
         self.model_protocol = profile.protocol;
         self.model_full_url = profile.full_url;
+        self.model_supports_images = profile.supports_images;
+        self.model_test = None;
         let values = [
             (&self.model_label, profile.label),
             (&self.model_id, profile.model),
@@ -917,6 +1047,8 @@ impl AssistantConfigDialog {
         self.editing_model = None;
         self.model_protocol = self.protocol;
         self.model_full_url = false;
+        self.model_supports_images = true;
+        self.model_test = None;
         for input in [
             &self.model_label,
             &self.model_id,
@@ -1897,6 +2029,7 @@ impl AssistantConfigDialog {
     fn render_models(&self, cx: &mut Context<Self>) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         let success = cx.theme().success;
+        let danger = cx.theme().danger;
         let border = cx.theme().border;
         let assistant = self.settings.read(cx).settings().assistant.clone();
         let editing = self.editing_model.is_some();
@@ -1916,6 +2049,13 @@ impl AssistantConfigDialog {
         let footer = h_flex()
             .items_center()
             .gap_2()
+            .child(
+                Button::new("assistant-config-model-test")
+                    .small()
+                    .label(t!("assistant.settings.models.test.action"))
+                    .disabled(matches!(self.model_test, Some(ModelCheck::Running)))
+                    .on_click(cx.listener(|this, _, _, cx| this.test_model(cx))),
+            )
             .child(
                 Button::new("assistant-config-model-save")
                     .small()
@@ -2002,6 +2142,20 @@ impl AssistantConfigDialog {
                     .label(t!("assistant.settings.models.api_key"))
                     .description(t!("assistant.settings.models.api_key.hint"))
                     .child(Input::new(&self.model_api_key).id("assistant-config-model-api-key")),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.images"))
+                    .description(t!("assistant.settings.models.images.hint"))
+                    .child(
+                        Checkbox::new("assistant-config-model-images")
+                            .label(t!("assistant.settings.models.images.on"))
+                            .checked(self.model_supports_images)
+                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                this.model_supports_images = *checked;
+                                cx.notify();
+                            })),
+                    ),
             );
         let advanced = Accordion::new("assistant-config-model-advanced")
             .bordered(false)
@@ -2158,6 +2312,21 @@ impl AssistantConfigDialog {
             .child(basic)
             .child(advanced)
             .child(footer)
+            .when_some(self.model_test.as_ref(), |form, check| {
+                let (color, text) = match check {
+                    ModelCheck::Running => (muted, t!("assistant.settings.models.test.running")),
+                    ModelCheck::Passed(text) => (success, text.clone()),
+                    ModelCheck::Failed(text) => (danger, text.clone()),
+                };
+                form.child(
+                    div()
+                        .id("assistant-config-model-test-result")
+                        .test_support()
+                        .text_sm()
+                        .text_color(color)
+                        .child(text),
+                )
+            })
             .into_any_element();
         let active = assistant.active_model.clone();
         let mut list = v_flex().w_full().gap_1();

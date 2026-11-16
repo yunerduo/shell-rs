@@ -3,6 +3,7 @@
 //! allows, one command at a time, with a card for anything not whitelisted.
 
 use std::collections::{HashSet, VecDeque};
+use std::path::PathBuf;
 use std::sync::mpsc::TryRecvError;
 use std::time::{Duration, Instant};
 
@@ -29,6 +30,7 @@ use crate::terminal::{
     TerminalView,
 };
 
+use super::attachment::{self, Attachment, AttachmentError, AttachmentKind};
 use super::audit;
 use super::bindings::{self, AssistantTerminal, Bindings, SavedBinding};
 use super::chat::{
@@ -259,6 +261,8 @@ pub struct AssistantPanel {
     /// The conversations kept between launches; `messages` is the open one.
     sessions: Sessions,
     messages: Vec<ChatMessage>,
+    /// What the user pasted or dropped into the composer, not sent yet.
+    attachments: Vec<Attachment>,
     stream: Option<StreamHandle>,
     /// The calls of this exchange not yet handled.
     queue: VecDeque<ToolCall>,
@@ -378,6 +382,7 @@ impl AssistantPanel {
             available: Vec::new(),
             sessions,
             messages,
+            attachments: Vec::new(),
             stream: None,
             queue: VecDeque::new(),
             pending: VecDeque::new(),
@@ -416,7 +421,34 @@ impl AssistantPanel {
         // moved forward, never run late.
         panel.resume_schedules(cx);
         panel.ensure_schedule_tick(cx);
+        panel.install_paste_interceptor(cx);
         panel
+    }
+
+    /// Ctrl+V with a picture or files on the clipboard becomes an attachment.
+    /// Anything else falls through to the field's own paste.
+    fn install_paste_interceptor(&mut self, cx: &mut Context<Self>) {
+        let weak = cx.entity().downgrade();
+        let subscription = cx.intercept_keystrokes(move |event, window, cx| {
+            let keystroke = &event.keystroke;
+            if !keystroke.key.eq_ignore_ascii_case("v")
+                || (!keystroke.modifiers.platform && !keystroke.modifiers.control)
+                || keystroke.modifiers.alt
+            {
+                return;
+            }
+            let mut taken = false;
+            let _ = weak.update(cx, |this, cx| {
+                if !this.input.read(cx).focus_handle(cx).is_focused(window) {
+                    return;
+                }
+                taken = this.attach_clipboard(cx);
+            });
+            if taken {
+                cx.stop_propagation();
+            }
+        });
+        self._subscriptions.push(subscription);
     }
 
     fn schedules_path() -> std::path::PathBuf {
@@ -1550,7 +1582,7 @@ impl AssistantPanel {
             return;
         }
         let text = self.input.read(cx).value().trim().to_string();
-        if text.is_empty() {
+        if text.is_empty() && self.attachments.is_empty() {
             return;
         }
         if self.bindings.is_empty() {
@@ -1560,6 +1592,13 @@ impl AssistantPanel {
         }
         let assistant = self.settings.read(cx).settings().assistant.clone();
         let selection = assistant.selection();
+        if !selection.supports_images && self.attachments.iter().any(Attachment::is_image) {
+            // The model was marked text-only after the picture was added;
+            // sending it would only come back as a provider error.
+            self.error = Some(t!("assistant.attachment.images_off"));
+            cx.notify();
+            return;
+        }
         if selection.base_url.trim().is_empty() || selection.model.trim().is_empty() {
             self.error = Some(t!("assistant.error.no_provider"));
             self.open_config(window, cx);
@@ -1577,8 +1616,28 @@ impl AssistantPanel {
         }
         self.conversation_note = super::roles::instructions(&library, &loaded);
 
-        self.messages.push(ChatMessage::user(text.clone()));
-        self.session_append(SessionEvent::User { text });
+        let attachments = std::mem::take(&mut self.attachments);
+        if let Some(dir) = self
+            .sessions
+            .active_id()
+            .map(|id| self.sessions.attachment_dir(id))
+        {
+            for attachment in &attachments {
+                if attachment.save(&dir).is_err() {
+                    self.notice = Some(t!("assistant.attachment.save_failed"));
+                }
+            }
+        }
+        let references = attachments
+            .iter()
+            .map(|attachment| attachment.reference())
+            .collect();
+        self.messages
+            .push(ChatMessage::user_with(text.clone(), attachments));
+        self.session_append(SessionEvent::User {
+            text,
+            attachments: references,
+        });
         self.queue.clear();
         self.pending.clear();
         self.rounds = 0;
@@ -1591,6 +1650,184 @@ impl AssistantPanel {
 
         self.request_round(cx);
         cx.notify();
+    }
+
+    /// Take pictures or files off the clipboard. Returns whether anything was
+    /// taken, so plain text still pastes into the field.
+    fn attach_clipboard(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(item) = cx.read_from_clipboard() else {
+            return false;
+        };
+        let name = t!("assistant.attachment.pasted_image").to_string();
+        let mut images = Vec::new();
+        let mut files = Vec::new();
+        for entry in item.entries {
+            match entry {
+                ClipboardEntry::Image(image) => images.push(image),
+                ClipboardEntry::ExternalPaths(paths) => files.extend(paths.paths().iter().cloned()),
+                ClipboardEntry::String(_) => {}
+            }
+        }
+        let taken = !images.is_empty() || !files.is_empty();
+        for image in images {
+            self.add_attachment(Attachment::from_image(name.clone(), image), cx);
+        }
+        if !files.is_empty() {
+            self.attach_paths(files, cx);
+        }
+        taken
+    }
+
+    /// Read dropped or chosen files on the background executor; the model
+    /// only ever sees the result.
+    pub fn attach_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let room = attachment::MAX_ATTACHMENTS.saturating_sub(self.attachments.len());
+        if room == 0 {
+            self.notice = Some(t!(
+                "assistant.attachment.too_many",
+                limit = attachment::MAX_ATTACHMENTS
+            ));
+            cx.notify();
+            return;
+        }
+        let paths: Vec<PathBuf> = paths
+            .into_iter()
+            .filter(|path| path.is_file())
+            .take(room)
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        let task = cx.background_spawn(async move {
+            paths
+                .iter()
+                .map(|path| Attachment::from_path(path))
+                .collect::<Vec<_>>()
+        });
+        cx.spawn(async move |this, cx| {
+            let results = task.await;
+            let _ = this.update(cx, |this, cx| {
+                for result in results {
+                    this.add_attachment(result, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn add_attachment(
+        &mut self,
+        result: Result<Attachment, AttachmentError>,
+        cx: &mut Context<Self>,
+    ) {
+        match result {
+            Ok(attachment) => {
+                if self.attachments.len() >= attachment::MAX_ATTACHMENTS {
+                    self.notice = Some(t!(
+                        "assistant.attachment.too_many",
+                        limit = attachment::MAX_ATTACHMENTS
+                    ));
+                } else if attachment.is_image()
+                    && !self
+                        .settings
+                        .read(cx)
+                        .settings()
+                        .assistant
+                        .selection()
+                        .supports_images
+                {
+                    // The model's profile says it cannot see; a picture
+                    // would come back as a provider error, so say it here.
+                    self.notice = Some(t!("assistant.attachment.images_off"));
+                } else {
+                    self.attachments.push(attachment);
+                }
+            }
+            Err(error) => self.notice = Some(self.describe_attachment_error(error)),
+        }
+        cx.notify();
+    }
+
+    fn describe_attachment_error(&self, error: AttachmentError) -> SharedString {
+        match error {
+            AttachmentError::UnsupportedFormat => t!("assistant.attachment.unsupported"),
+            AttachmentError::TooLarge { limit } => t!(
+                "assistant.attachment.too_large",
+                limit = attachment::size_label(limit)
+            ),
+            AttachmentError::Binary => t!("assistant.attachment.binary"),
+            AttachmentError::Read(error) => {
+                t!(
+                    "assistant.attachment.unreadable",
+                    reason = error.to_string()
+                )
+            }
+            AttachmentError::LimitReached => t!(
+                "assistant.attachment.too_many",
+                limit = attachment::MAX_ATTACHMENTS
+            ),
+        }
+    }
+
+    fn choose_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let choice = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some(t!("assistant.attachment.add")),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = choice.await {
+                let _ = this.update_in(cx, |this, _window, cx| this.attach_paths(paths, cx));
+            }
+        })
+        .detach();
+    }
+
+    fn remove_attachment(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.attachments.retain(|attachment| attachment.id != id);
+        cx.notify();
+    }
+
+    fn preview_attachment(
+        &mut self,
+        attachment: Attachment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.open_dialog(cx, move |dialog, _window, cx| {
+            let title = attachment.name.clone();
+            let body = match &attachment.kind {
+                AttachmentKind::Image(_) => match attachment.image_source() {
+                    Some(source) => img(source)
+                        .max_w(px(720.))
+                        .max_h(px(560.))
+                        .object_fit(ObjectFit::Contain)
+                        .into_any_element(),
+                    None => div().into_any_element(),
+                },
+                AttachmentKind::Text { text, truncated } => v_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id("assistant-attachment-preview")
+                            .max_h(px(560.))
+                            .overflow_y_scroll()
+                            .text_sm()
+                            .child(text.clone()),
+                    )
+                    .when(*truncated, |column| {
+                        column.child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(t!("assistant.attachment.truncated")),
+                        )
+                    })
+                    .into_any_element(),
+            };
+            dialog.title(title).child(body)
+        });
     }
 
     /// Ask for one more model turn. Nothing is asked while a command is
@@ -2955,6 +3192,7 @@ impl AssistantPanel {
             None => Vec::new(),
         };
         self.expanded.clear();
+        self.attachments.clear();
         self.queue.clear();
         self.pending.clear();
         self.waiting.clear();
@@ -3858,16 +4096,24 @@ impl AssistantPanel {
         let assistant = self.settings.read(cx).settings().assistant.clone();
         let mut chars = self.conversation_note.chars().count();
         chars += assistant.selection().instruction.chars().count();
+        let mut image_tokens = 0;
         for message in &self.messages {
             chars += message.text.chars().count() + message.reasoning.chars().count();
             for call in &message.tool_calls {
                 chars += call.name.chars().count() + call.arguments.chars().count() + 8;
             }
+            for attachment in &message.attachments {
+                match attachment.text_content() {
+                    Some((text, _)) => chars += text.chars().count(),
+                    // Roughly what one picture costs once it is scaled.
+                    None => image_tokens += 1_100,
+                }
+            }
         }
         // The platform prompt and the tool schemas travel every time.
         chars += 12_000;
         (
-            chars / 4 + self.messages.len() * 4,
+            chars / 4 + self.messages.len() * 4 + image_tokens,
             assistant.context_window() as usize,
         )
     }
@@ -3959,12 +4205,182 @@ impl AssistantPanel {
                     }
                 }
                 _ => {
-                    turn = turn.child(div().text_sm().child(message.text.clone()));
+                    if !message.text.is_empty() {
+                        turn = turn.child(div().text_sm().child(message.text.clone()));
+                    }
+                    if !message.attachments.is_empty() {
+                        turn = turn.child(self.render_sent_attachments(index, message, cx));
+                    }
                 }
             }
             list = list.child(turn);
         }
         list
+    }
+
+    /// The pictures and files waiting to be sent, each with a way to look at
+    /// it and a way to drop it.
+    fn render_attachments(&self, cx: &mut Context<Self>) -> AnyElement {
+        h_flex()
+            .id("assistant-attachments")
+            .flex_wrap()
+            .gap_2()
+            .children(
+                self.attachments
+                    .iter()
+                    .enumerate()
+                    .map(|(index, attachment)| self.render_attachment(index, attachment, cx)),
+            )
+            .into_any_element()
+    }
+
+    /// One waiting attachment. Its id is the slot, not the attachment's own
+    /// id, so the strip reads the same way in a test and on screen.
+    fn render_attachment(
+        &self,
+        index: usize,
+        attachment: &Attachment,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let preview_id = attachment.id.clone();
+        let remove_id = attachment.id.clone();
+        let border = cx.theme().border;
+        let muted = cx.theme().muted_foreground;
+        let body: AnyElement = match attachment.image_source() {
+            Some(source) => img(source)
+                .w(px(56.))
+                .h(px(56.))
+                .rounded_md()
+                .object_fit(ObjectFit::Cover)
+                .into_any_element(),
+            None => h_flex()
+                .h(px(56.))
+                .max_w(px(200.))
+                .px_2()
+                .gap_1()
+                .items_center()
+                .child(Icon::new(CatalogIcon::FileText).small().text_color(muted))
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .child(div().text_xs().truncate().child(attachment.name.clone()))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(muted)
+                                .child(attachment::size_label(attachment.size())),
+                        ),
+                )
+                .into_any_element(),
+        };
+        div()
+            .id(("assistant-attachment", index))
+            .test_support()
+            .relative()
+            .rounded_md()
+            .border_1()
+            .border_color(border)
+            .overflow_hidden()
+            .cursor_pointer()
+            .child(body)
+            .child(
+                h_flex()
+                    .id(("assistant-attachment-remove", index))
+                    .test_support()
+                    .absolute()
+                    .top(px(1.))
+                    .right(px(1.))
+                    .w(px(18.))
+                    .h(px(18.))
+                    .rounded_full()
+                    .bg(cx.theme().background)
+                    .border_1()
+                    .border_color(border)
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .child(Icon::new(CatalogIcon::X).xsmall())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.remove_attachment(&remove_id, cx);
+                        cx.stop_propagation();
+                    })),
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if let Some(attachment) = this
+                    .attachments
+                    .iter()
+                    .find(|attachment| attachment.id == preview_id)
+                    .cloned()
+                {
+                    this.preview_attachment(attachment, window, cx);
+                }
+            }))
+            .into_any_element()
+    }
+
+    /// What a sent message carried, shown as the same thumbnails the
+    /// composer uses, minus the remove button.
+    fn render_sent_attachments(
+        &self,
+        index: usize,
+        message: &ChatMessage,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        h_flex()
+            .id(("assistant-sent-attachments", index))
+            .flex_wrap()
+            .gap_2()
+            .children(
+                message
+                    .attachments
+                    .iter()
+                    .enumerate()
+                    .map(|(position, attachment)| {
+                        let attachment = attachment.clone();
+                        let size = attachment::size_label(attachment.size());
+                        let muted = cx.theme().muted_foreground;
+                        let content: AnyElement = match attachment.image_source() {
+                            Some(source) => img(source)
+                                .w(px(56.))
+                                .h(px(56.))
+                                .rounded_md()
+                                .object_fit(ObjectFit::Cover)
+                                .into_any_element(),
+                            None => h_flex()
+                                .h(px(56.))
+                                .max_w(px(200.))
+                                .px_2()
+                                .gap_1()
+                                .items_center()
+                                .child(Icon::new(CatalogIcon::FileText).small().text_color(muted))
+                                .child(
+                                    v_flex()
+                                        .gap_1()
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .truncate()
+                                                .child(attachment.name.clone()),
+                                        )
+                                        .child(div().text_xs().text_color(muted).child(size)),
+                                )
+                                .into_any_element(),
+                        };
+                        div()
+                            .id(("assistant-sent-attachment", index * 100 + position))
+                            .rounded_md()
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .overflow_hidden()
+                            .cursor_pointer()
+                            .child(content)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.preview_attachment(attachment.clone(), window, cx);
+                            }))
+                            .into_any_element()
+                    }),
+            )
+            .into_any_element()
     }
 
     fn render_composer(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -4034,6 +4450,12 @@ impl AssistantPanel {
                     .border_1()
                     .border_color(border)
                     .bg(cx.theme().group_box)
+                    .on_drop(cx.listener(|this, paths: &ExternalPaths, _window, cx| {
+                        this.attach_paths(paths.paths().to_vec(), cx);
+                    }))
+                    .when(!self.attachments.is_empty(), |card| {
+                        card.child(self.render_attachments(cx))
+                    })
                     .child(
                         Textarea::new(&self.input)
                             .h(px(72.))
@@ -4056,6 +4478,17 @@ impl AssistantPanel {
                             .w_full()
                             .items_center()
                             .gap_1()
+                            .child(
+                                Button::new("assistant-attach")
+                                    .xsmall()
+                                    .ghost()
+                                    .icon(CatalogIcon::Paperclip)
+                                    .tooltip(t!("assistant.attachment.add"))
+                                    .disabled(streaming || busy)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.choose_files(window, cx)
+                                    })),
+                            )
                             .child(self.render_mode_menu(cx))
                             .child(self.render_role_menu(cx))
                             .child(self.render_model_menu(streaming || busy, cx))
@@ -4091,7 +4524,7 @@ impl AssistantPanel {
                                     .primary()
                                     .icon(CatalogIcon::Send)
                                     .label(t!("assistant.action.send"))
-                                    .disabled(empty || busy)
+                                    .disabled(empty && self.attachments.is_empty() || busy)
                                     .on_click(
                                         cx.listener(|this, _, window, cx| this.send(window, cx)),
                                     )
@@ -4458,6 +4891,9 @@ impl Render for AssistantPanel {
             .min_h_0()
             .bg(cx.theme().sidebar)
             .text_color(cx.theme().sidebar_foreground)
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, _window, cx| {
+                this.attach_paths(paths.paths().to_vec(), cx);
+            }))
             .child(
                 h_flex()
                     .justify_between()
@@ -4481,6 +4917,8 @@ impl Render for AssistantPanel {
                             .when_some(self.notice.clone(), |header, notice| {
                                 header.child(
                                     div()
+                                        .id("assistant-notice")
+                                        .test_support()
                                         .min_w_0()
                                         .truncate()
                                         .text_xs()
