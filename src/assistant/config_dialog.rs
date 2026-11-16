@@ -210,6 +210,7 @@ pub struct AssistantConfigDialog {
     model_label: Entity<InputState>,
     model_id: Entity<InputState>,
     model_max_tokens: Entity<InputState>,
+    model_context: Entity<InputState>,
     model_temperature: Entity<InputState>,
     model_top_p: Entity<InputState>,
     model_stop: Entity<InputState>,
@@ -304,6 +305,10 @@ impl AssistantConfigDialog {
         let model_max_tokens = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder(t!("assistant.settings.models.max_tokens.placeholder"))
+        });
+        let model_context = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("assistant.settings.models.context_window.placeholder"))
         });
         let model_temperature = cx.new(|cx| {
             InputState::new(window, cx)
@@ -452,6 +457,7 @@ impl AssistantConfigDialog {
             model_label,
             model_id,
             model_max_tokens,
+            model_context,
             model_temperature,
             model_top_p,
             model_stop,
@@ -595,6 +601,15 @@ impl AssistantConfigDialog {
                     .map_err(|_| t!("assistant.settings.models.number_invalid"))?
             }
         };
+        let context_window = {
+            let text = self.model_context.read(cx).value().trim().to_string();
+            if text.is_empty() {
+                0
+            } else {
+                text.parse::<u32>()
+                    .map_err(|_| t!("assistant.settings.models.number_invalid"))?
+            }
+        };
         let stop = self
             .model_stop
             .read(cx)
@@ -611,6 +626,7 @@ impl AssistantConfigDialog {
             model: self.model_id.read(cx).value().to_string(),
             instruction: self.model_instruction.read(cx).value().to_string(),
             max_tokens,
+            context_window,
             temperature: number(self.model_temperature.read(cx).value().to_string())?,
             top_p: number(self.model_top_p.read(cx).value().to_string())?,
             stop,
@@ -704,6 +720,7 @@ impl AssistantConfigDialog {
             (&self.model_label, profile.label),
             (&self.model_id, profile.model),
             (&self.model_max_tokens, empty_if_zero(profile.max_tokens)),
+            (&self.model_context, empty_if_zero(profile.context_window)),
             (&self.model_temperature, float_text(profile.temperature)),
             (&self.model_top_p, float_text(profile.top_p)),
             (&self.model_stop, profile.stop.join(", ")),
@@ -752,6 +769,7 @@ impl AssistantConfigDialog {
             &self.model_label,
             &self.model_id,
             &self.model_max_tokens,
+            &self.model_context,
             &self.model_temperature,
             &self.model_top_p,
             &self.model_stop,
@@ -1785,6 +1803,12 @@ impl AssistantConfigDialog {
                     .child(
                         Input::new(&self.model_max_tokens).id("assistant-config-model-max-tokens"),
                     ),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.context_window"))
+                    .description(t!("assistant.settings.models.context_window.hint"))
+                    .child(Input::new(&self.model_context).id("assistant-config-model-context")),
             )
             .child(
                 Field::new()

@@ -95,6 +95,9 @@ pub enum SseChunk {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ParsedEvent {
     Text(String),
+    /// A fragment of the model's own reasoning, when the provider streams
+    /// it. It is shown beside the answer and never sent back.
+    Thinking(String),
     /// One provider's chunk of a tool call; the pieces are merged by index.
     ToolCalls(Vec<ToolCallDelta>),
     Done,
@@ -812,6 +815,17 @@ pub fn parse_event(protocol: ProviderProtocol, data: &str) -> Result<ParsedEvent
     }
     match protocol {
         ProviderProtocol::OpenAi => {
+            // Reasoning models put their thinking in one of these and leave
+            // `content` empty until the answer starts.
+            for key in ["reasoning_content", "reasoning"] {
+                if let Some(text) = value
+                    .pointer(&format!("/choices/0/delta/{key}"))
+                    .and_then(Value::as_str)
+                    && !text.is_empty()
+                {
+                    return Ok(ParsedEvent::Thinking(text.to_string()));
+                }
+            }
             if let Some(text) = value
                 .pointer("/choices/0/delta/content")
                 .and_then(Value::as_str)
@@ -878,6 +892,12 @@ pub fn parse_event(protocol: ProviderProtocol, data: &str) -> Result<ParsedEvent
                             .unwrap_or_default()
                             .to_string(),
                     }])),
+                    Some("thinking_delta") => Ok(value
+                        .pointer("/delta/thinking")
+                        .and_then(Value::as_str)
+                        .filter(|text| !text.is_empty())
+                        .map(|text| ParsedEvent::Thinking(text.to_string()))
+                        .unwrap_or(ParsedEvent::Ignore)),
                     _ => match value.pointer("/delta/text").and_then(Value::as_str) {
                         Some(text) => Ok(ParsedEvent::Text(text.to_string())),
                         None => Ok(ParsedEvent::Ignore),

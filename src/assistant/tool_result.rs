@@ -7,7 +7,7 @@ use gpui_kit::SharedString;
 use crate::i18n::t;
 use crate::terminal::ExecDetailResult;
 
-use super::chat::{RunCommandArgs, ToolCall, WaitForOutputArgs};
+use super::chat::{AskUserArgs, RunCommandArgs, ToolCall, WaitForOutputArgs};
 use super::output;
 
 /// The most characters of one tool result a card draws. The result sent to
@@ -279,34 +279,117 @@ fn reason_line(value: &serde_json::Value) -> String {
     .to_string()
 }
 
-/// One call as a line in the conversation: the alias and command a person
-/// can check, the terminal and text a wait watches, or the raw call when it
-/// is neither.
-pub(super) fn call_line(call: &ToolCall) -> String {
+/// The tool, the terminal and the text one call carries: the folded card
+/// needs the three in one line, and the opened card shows them apart.
+pub(super) struct CallParts {
+    pub tool: String,
+    pub terminal: Option<String>,
+    pub detail: Option<String>,
+}
+
+pub(super) fn call_parts(call: &ToolCall) -> CallParts {
     if call.name == "wait_for_output"
         && let Ok(args) = serde_json::from_str::<WaitForOutputArgs>(&call.arguments)
     {
-        return t!(
-            "assistant.tool.waiting_for",
-            alias = args.terminal.as_str(),
-            pattern = args.pattern.as_str()
-        )
-        .to_string();
+        return CallParts {
+            tool: call.name.clone(),
+            terminal: Some(args.terminal),
+            detail: Some(args.pattern),
+        };
     }
-    match serde_json::from_str::<RunCommandArgs>(&call.arguments) {
-        Ok(args) => t!(
-            "assistant.tool.calling",
-            alias = args.terminal.as_str(),
-            command = args.command.as_str()
-        )
-        .to_string(),
-        Err(_) => t!(
-            "assistant.tool.calling_raw",
-            tool = call.name.as_str(),
-            arguments = call.arguments.as_str()
-        )
-        .to_string(),
+    if let Ok(args) = serde_json::from_str::<RunCommandArgs>(&call.arguments) {
+        return CallParts {
+            tool: call.name.clone(),
+            terminal: Some(args.terminal),
+            detail: Some(args.command),
+        };
     }
+    if let Ok(args) = serde_json::from_str::<AskUserArgs>(&call.arguments) {
+        return CallParts {
+            tool: call.name.clone(),
+            terminal: None,
+            detail: Some(args.question),
+        };
+    }
+    CallParts {
+        tool: call.name.clone(),
+        terminal: None,
+        detail: Some(call.arguments.clone()),
+    }
+}
+
+/// One line for a folded card: the tool, the terminal, and what it asks for.
+pub(super) fn call_summary(call: &ToolCall) -> String {
+    let parts = call_parts(call);
+    let mut line = parts.tool;
+    if let Some(terminal) = &parts.terminal {
+        line.push_str(" · ");
+        line.push_str(terminal);
+    }
+    if let Some(detail) = &parts.detail {
+        line.push_str(" · ");
+        line.push_str(&flatten(detail, 80));
+    }
+    line
+}
+
+/// What an opened card reads out of a result besides its summary and body.
+#[derive(Default)]
+pub(super) struct ResultFacts {
+    pub elapsed_ms: Option<u64>,
+    pub risk: Option<String>,
+    pub rule: Option<String>,
+    pub reason: Option<String>,
+    pub truncated: bool,
+    pub timed_out: bool,
+}
+
+pub(super) fn result_facts(text: &str) -> ResultFacts {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
+        return ResultFacts::default();
+    };
+    let seconds = |field: &str| {
+        value
+            .get(field)
+            .and_then(|value| value.as_u64())
+            .map(|seconds| seconds * 1000)
+    };
+    ResultFacts {
+        elapsed_ms: value
+            .get("elapsed_ms")
+            .and_then(|value| value.as_u64())
+            .or_else(|| seconds("elapsed"))
+            .or_else(|| seconds("waited")),
+        risk: string_field(&value, "risk"),
+        rule: string_field(&value, "rule"),
+        reason: string_field(&value, "reason"),
+        truncated: value
+            .get("truncated")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false),
+        timed_out: value
+            .get("timed_out")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false),
+    }
+}
+
+fn string_field(value: &serde_json::Value, field: &str) -> Option<String> {
+    value
+        .get(field)
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+}
+
+/// Text on one line, cut to a readable length for a folded card.
+fn flatten(text: &str, limit: usize) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= limit {
+        return flat;
+    }
+    let mut cut: String = flat.chars().take(limit).collect();
+    cut.push('…');
+    cut
 }
 
 /// The most of a card's body that is drawn; the whole result stays in the
@@ -469,38 +552,58 @@ mod tests {
     }
 
     #[test]
-    fn a_call_shows_the_alias_and_the_command() {
+    fn a_folded_call_shows_the_tool_the_alias_and_the_command() {
         let call = ToolCall {
             id: "1".into(),
             name: "run_command".into(),
             arguments: r#"{"terminal":"web","command":"df -h"}"#.into(),
         };
-        let line = call_line(&call);
+        let line = call_summary(&call);
+        assert!(line.contains("run_command"), "{line}");
         assert!(line.contains("web"), "{line}");
         assert!(line.contains("df -h"), "{line}");
     }
 
     #[test]
-    fn a_call_that_is_not_run_command_shows_what_it_was() {
+    fn a_call_that_is_not_a_command_shows_what_it_was() {
         let call = ToolCall {
             id: "1".into(),
             name: "other".into(),
             arguments: "{".into(),
         };
-        let line = call_line(&call);
+        let line = call_summary(&call);
         assert!(line.contains("other"), "{line}");
     }
 
     #[test]
-    fn a_wait_call_shows_the_terminal_and_the_text() {
+    fn a_folded_wait_shows_the_terminal_and_the_text() {
         let call = ToolCall {
             id: "1".into(),
             name: "wait_for_output".into(),
             arguments: r#"{"terminal":"server","pattern":"Serving HTTP"}"#.into(),
         };
-        let line = call_line(&call);
+        let line = call_summary(&call);
         assert!(line.contains("server"), "{line}");
         assert!(line.contains("Serving HTTP"), "{line}");
+    }
+
+    #[test]
+    fn a_result_reads_back_its_duration_and_verdict() {
+        let facts = result_facts(
+            r#"{"status":"ok","elapsed_ms":1250,"risk":"R1","rule":"whitelist","reason":"allowed","truncated":true}"#,
+        );
+        assert_eq!(facts.elapsed_ms, Some(1250));
+        assert_eq!(facts.risk.as_deref(), Some("R1"));
+        assert_eq!(facts.rule.as_deref(), Some("whitelist"));
+        assert_eq!(facts.reason.as_deref(), Some("allowed"));
+        assert!(facts.truncated);
+        assert!(!facts.timed_out);
+    }
+
+    #[test]
+    fn a_wait_result_reads_its_seconds_as_milliseconds() {
+        let facts = result_facts(r#"{"status":"ok","waited":3}"#);
+        assert_eq!(facts.elapsed_ms, Some(3000));
     }
 
     #[test]

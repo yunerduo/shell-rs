@@ -138,6 +138,51 @@ assistant.composer.terminal.tip:
 assistant.streaming:
   zh-CN: 正在生成…
   en: Generating…
+assistant.context.usage:
+  zh-CN: 上下文 %{percent}% · %{used}/%{limit}
+  en: Context %{percent}% · %{used}/%{limit}
+assistant.context.warning:
+  zh-CN: 上下文已用 %{percent}%，接近窗口上限；建议新建对话或精简历史。
+  en: Context is %{percent}% full and near the window; start a new conversation or trim the history.
+assistant.thinking.title:
+  zh-CN: 思考过程
+  en: Thinking
+assistant.thinking.streaming:
+  zh-CN: 思考中…
+  en: Thinking…
+assistant.tool.running:
+  zh-CN: 运行中…
+  en: Running…
+assistant.tool.details.args:
+  zh-CN: 参数
+  en: Arguments
+assistant.tool.details.terminal:
+  zh-CN: 终端
+  en: Terminal
+assistant.tool.details.command:
+  zh-CN: 命令
+  en: Command
+assistant.tool.details.result:
+  zh-CN: 结果
+  en: Result
+assistant.tool.details.elapsed:
+  zh-CN: 耗时
+  en: Took
+assistant.tool.details.verdict:
+  zh-CN: 判定
+  en: Verdict
+assistant.tool.details.truncated:
+  zh-CN: 输出过长，已截断显示；完整结果仍保留在对话里。
+  en: The output was cut for display; the whole result stays in the conversation.
+assistant.tool.details.timed_out:
+  zh-CN: 等待超时，未匹配到目标文本。
+  en: The wait timed out before the text appeared.
+assistant.tool.elapsed_ms:
+  zh-CN: "%{ms} 毫秒"
+  en: "%{ms} ms"
+assistant.tool.elapsed_s:
+  zh-CN: "%{seconds} 秒"
+  en: "%{seconds} s"
 assistant.role.user:
   zh-CN: 你
   en: You
@@ -147,12 +192,6 @@ assistant.role.assistant:
 assistant.role.tool:
   zh-CN: 执行结果
   en: Result
-assistant.tool.calling:
-  zh-CN: "调用 %{alias}: %{command}"
-  en: "Calls %{alias}: %{command}"
-assistant.tool.calling_raw:
-  zh-CN: "调用 %{tool}: %{arguments}"
-  en: "Calls %{tool}: %{arguments}"
 assistant.tool.round_limit:
   zh-CN: 已连续调用 %{rounds} 轮，停止本次对话
   en: "Stopped after %{rounds} turns of calls"
@@ -261,9 +300,6 @@ assistant.tool.takeover.required:
 assistant.tool.takeover_closed:
   zh-CN: 你接管了 %{alias}，已停止注入
   en: "You took %{alias} back; the injection was stopped"
-assistant.tool.waiting_for:
-  zh-CN: 等待 %{alias} 出现「%{pattern}」
-  en: "Waiting on %{alias} for \"%{pattern}\""
 assistant.tool.wait_hit:
   zh-CN: 等到输出
   en: Output appeared
@@ -411,6 +447,15 @@ assistant.settings.models.max_tokens:
 assistant.settings.models.max_tokens.placeholder:
   zh-CN: 留空用服务商默认
   en: Blank for the provider's default
+assistant.settings.models.context_window:
+  zh-CN: 上下文窗口 tokens
+  en: Context window tokens
+assistant.settings.models.context_window.placeholder:
+  zh-CN: 留空按 128k 估算
+  en: Blank assumes 128k
+assistant.settings.models.context_window.hint:
+  zh-CN: 只用于对话里的上下文占用率显示，不会发给服务商。
+  en: Used only by the conversation's context usage display; it is not sent to the provider.
 assistant.settings.models.temperature:
   zh-CN: 温度（0–2）
   en: Temperature (0–2)

@@ -151,6 +151,9 @@ pub struct ChatMessage {
     /// wire format is text either way. A tool message's text is its JSON
     /// result.
     pub text: String,
+    /// The model's own reasoning for this turn, when the provider streamed
+    /// it. Shown in the conversation, never sent back.
+    pub reasoning: String,
     /// The calls the assistant made this turn.
     pub tool_calls: Vec<ToolCall>,
     /// For a tool message: the call it answers.
@@ -162,6 +165,7 @@ impl ChatMessage {
         Self {
             role: Role::User,
             text: text.into(),
+            reasoning: String::new(),
             tool_calls: Vec::new(),
             tool_call_id: None,
         }
@@ -171,6 +175,7 @@ impl ChatMessage {
         Self {
             role: Role::Assistant,
             text: text.into(),
+            reasoning: String::new(),
             tool_calls: Vec::new(),
             tool_call_id: None,
         }
@@ -182,6 +187,7 @@ impl ChatMessage {
         Self {
             role: Role::Assistant,
             text: text.into(),
+            reasoning: String::new(),
             tool_calls,
             tool_call_id: None,
         }
@@ -192,6 +198,7 @@ impl ChatMessage {
         Self {
             role: Role::Tool,
             text: text.into(),
+            reasoning: String::new(),
             tool_calls: Vec::new(),
             tool_call_id: Some(call_id.into()),
         }

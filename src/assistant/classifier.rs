@@ -166,7 +166,7 @@ impl Judge {
             match client::next_event(&self.handle.rx) {
                 None => break,
                 Some(StreamEvent::Delta(text)) => answer.push_str(&text),
-                Some(StreamEvent::ToolCalls(_)) => {}
+                Some(StreamEvent::Thinking(_)) | Some(StreamEvent::ToolCalls(_)) => {}
                 Some(StreamEvent::Done) => {
                     let elapsed = self.started.elapsed();
                     return Some(match parse(&answer) {

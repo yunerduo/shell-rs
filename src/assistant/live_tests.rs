@@ -76,7 +76,7 @@ fn ask_with(terminals: Vec<ToolTerminal>, prompt: &str) -> Vec<ToolCall> {
         match event {
             StreamEvent::ToolCalls(found) => calls.extend(found),
             StreamEvent::Failed(error) => panic!("the model call failed: {error:?}"),
-            StreamEvent::Delta(_) | StreamEvent::Done => {}
+            StreamEvent::Delta(_) | StreamEvent::Thinking(_) | StreamEvent::Done => {}
         }
     }
     println!("model={model} prompt={prompt:?} calls={calls:?}");
@@ -273,7 +273,7 @@ fn judge(command: &str) -> Option<Classified> {
         match event {
             StreamEvent::Delta(text) => answer.push_str(&text),
             StreamEvent::Failed(error) => panic!("the classifier call failed: {error:?}"),
-            StreamEvent::ToolCalls(_) | StreamEvent::Done => {}
+            StreamEvent::ToolCalls(_) | StreamEvent::Thinking(_) | StreamEvent::Done => {}
         }
     }
     let verdict = classifier::parse(&answer);

@@ -2,7 +2,7 @@
 //! the conversation itself. From P1 on it also runs what the user's policy
 //! allows, one command at a time, with a card for anything not whitelisted.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::mpsc::TryRecvError;
 use std::time::{Duration, Instant};
 
@@ -43,8 +43,8 @@ use super::protocol::ToolTerminal;
 use super::schedule::{self, ResumePlan, Schedule, ScheduleAction, ScheduleStore, ScheduleTarget};
 use super::sessions::{SessionEvent, Sessions};
 use super::tool_result::{
-    call_line, denied_result, tool_card_parts, tool_error, tool_result_body, unknown_terminal,
-    unsupported_result,
+    ResultFacts, call_parts, call_summary, denied_result, result_facts, tool_card_parts,
+    tool_error, tool_result_body, unknown_terminal, unsupported_result,
 };
 use super::wait::{self, Watcher};
 
@@ -157,6 +157,8 @@ struct ExecRun {
     approver: &'static str,
     level: &'static str,
     override_reason: Option<&'static str>,
+    /// When it was started, for the card's duration.
+    started: Instant,
     receiver: std::sync::mpsc::Receiver<ExecDetailResult>,
 }
 
@@ -169,6 +171,8 @@ struct InjectRun {
     approver: &'static str,
     level: &'static str,
     override_reason: Option<&'static str>,
+    /// When it was started, for the card's duration.
+    started: Instant,
     /// Kept here so the stop button and the user's own typing can send ^C.
     handle: RunHandle,
     receiver: std::sync::mpsc::Receiver<InjectMessage>,
@@ -246,6 +250,9 @@ pub struct AssistantPanel {
     bindings: Bindings,
     /// The roles loaded into this conversation, by id.
     roles: Vec<String>,
+    /// The thinking blocks and call cards the user opened, by call id or
+    /// `thinking-<index>`. Everything is folded until it is opened.
+    expanded: HashSet<String>,
     /// What the platform prompt adds for those roles and the skills on:
     /// rebuilt from the library whenever a turn is sent.
     conversation_note: String,
@@ -371,6 +378,7 @@ impl AssistantPanel {
             input,
             bindings: Bindings::default(),
             roles: Vec::new(),
+            expanded: HashSet::new(),
             conversation_note: String::new(),
             available: Vec::new(),
             sessions,
@@ -806,6 +814,7 @@ impl AssistantPanel {
         loop {
             match run.stream.rx.try_recv() {
                 Ok(StreamEvent::Delta(text)) => run.text.push_str(&text),
+                Ok(StreamEvent::Thinking(_)) => {}
                 Ok(StreamEvent::ToolCalls(list)) => {
                     calls = Some(list);
                     break;
@@ -1682,6 +1691,12 @@ impl AssistantPanel {
                         changed = true;
                     }
                 }
+                Some(StreamEvent::Thinking(text)) => {
+                    if let Some(message) = self.messages.last_mut() {
+                        message.reasoning.push_str(&text);
+                        changed = true;
+                    }
+                }
                 Some(StreamEvent::ToolCalls(calls)) => {
                     if let Some(message) = self.messages.last_mut() {
                         message.tool_calls.clone_from(&calls);
@@ -2332,6 +2347,7 @@ impl AssistantPanel {
             approver,
             level,
             override_reason,
+            started: Instant::now(),
             receiver,
         });
         cx.notify();
@@ -2589,6 +2605,30 @@ impl AssistantPanel {
         self.messages.push(ChatMessage::tool_result(call_id, body));
     }
 
+    /// Add how long it took and how the policy judged it to a result body.
+    /// The card's expanded view reads these; the model sees the same facts,
+    /// which are data, not instructions. A body that is not a JSON object
+    /// is left as it is.
+    fn annotate(body: String, elapsed: Duration, decision: &Decision) -> String {
+        let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&body) else {
+            return body;
+        };
+        let Some(object) = value.as_object_mut() else {
+            return body;
+        };
+        object.insert(
+            "elapsed_ms".to_string(),
+            serde_json::json!(elapsed.as_millis() as u64),
+        );
+        object.insert("risk".to_string(), serde_json::json!(decision.risk.name()));
+        object.insert("rule".to_string(), serde_json::json!(decision.rule.name()));
+        object.insert(
+            "reason".to_string(),
+            serde_json::json!(decision.rule.label().to_string()),
+        );
+        value.to_string()
+    }
+
     /// Write one decision to the trail. A failed write is a notice: the
     /// command the user approved still runs.
     #[allow(clippy::too_many_arguments)]
@@ -2635,6 +2675,7 @@ impl AssistantPanel {
             };
             let run = self.execs.remove(index);
             let (body, exit_code) = tool_result_body(result);
+            let body = Self::annotate(body, run.started.elapsed(), &run.decision);
             self.record(
                 &run.alias,
                 &run.decision,
@@ -2685,7 +2726,8 @@ impl AssistantPanel {
                 run.level,
                 run.override_reason,
             );
-            self.push_result(run.call_id, outcome.body());
+            let body = Self::annotate(outcome.body(), run.started.elapsed(), &run.decision);
+            self.push_result(run.call_id, body);
             if let Some(handle) = finished_handle {
                 self.backgrounds.push(BackgroundRun {
                     alias: run.alias,
@@ -2841,6 +2883,7 @@ impl AssistantPanel {
             approver,
             level,
             override_reason,
+            started: Instant::now(),
             handle,
             receiver,
             cancelled_by: None,
@@ -2903,6 +2946,7 @@ impl AssistantPanel {
             Some(id) => self.sessions.messages(id),
             None => Vec::new(),
         };
+        self.expanded.clear();
         self.queue.clear();
         self.pending.clear();
         self.waiting.clear();
@@ -3563,6 +3607,263 @@ impl AssistantPanel {
         card
     }
 
+    /// Fold or open a thinking block or a call card. The id is the call's,
+    /// or `thinking-<index>` for a turn's reasoning.
+    fn toggle_expanded(&mut self, id: String, cx: &mut Context<Self>) {
+        if !self.expanded.remove(&id) {
+            self.expanded.insert(id);
+        }
+        cx.notify();
+    }
+
+    /// What the model thought before it answered, folded to its first line
+    /// until the user opens it.
+    fn render_thinking(
+        &self,
+        index: usize,
+        message: &ChatMessage,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let border = cx.theme().border;
+        let key = format!("thinking-{index}");
+        let open = self.expanded.contains(&key);
+        let summary = message
+            .reasoning
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .map(|line| one_line(line, 80))
+            .unwrap_or_else(|| t!("assistant.thinking.streaming").to_string());
+        let toggle = key.clone();
+        let head = h_flex()
+            .id(("assistant-thinking", index))
+            .w_full()
+            .items_center()
+            .gap_2()
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.toggle_expanded(toggle.clone(), cx);
+            }))
+            .child(
+                Icon::new(if open {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                })
+                .xsmall()
+                .text_color(muted),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(t!("assistant.thinking.title")),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .flex_1()
+                    .min_w_0()
+                    .child(summary),
+            );
+        let mut block = v_flex()
+            .w_full()
+            .gap_1()
+            .p_2()
+            .rounded_md()
+            .border_1()
+            .border_color(border)
+            .child(head);
+        if open {
+            block = block.child(
+                div()
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_xs()
+                    .text_color(muted)
+                    .child(message.reasoning.clone()),
+            );
+        }
+        block.into_any_element()
+    }
+
+    /// One tool call: folded to what it is doing and where, opened to its
+    /// arguments, result, duration and the policy's verdict.
+    fn render_call_card(
+        &self,
+        index: usize,
+        position: usize,
+        call: &ToolCall,
+        result: Option<&ChatMessage>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let border = cx.theme().border;
+        let open = self.expanded.contains(&call.id);
+        let (summary, body) = match result {
+            Some(message) => tool_card_parts(&message.text),
+            None => (t!("assistant.tool.running").to_string(), String::new()),
+        };
+        let facts = result
+            .map(|message| result_facts(&message.text))
+            .unwrap_or_default();
+        let parts = call_parts(call);
+        let toggle = call.id.clone();
+        let head = h_flex()
+            .id(("assistant-call", index * 100 + position))
+            .w_full()
+            .items_center()
+            .gap_2()
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.toggle_expanded(toggle.clone(), cx);
+            }))
+            .child(
+                Icon::new(if open {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                })
+                .xsmall()
+                .text_color(muted),
+            )
+            .child(
+                div()
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_xs()
+                    .flex_1()
+                    .min_w_0()
+                    .child(call_summary(call)),
+            )
+            .child(div().text_xs().text_color(muted).child(summary.clone()));
+        let mut card = v_flex()
+            .w_full()
+            .gap_1()
+            .p_2()
+            .rounded_md()
+            .border_1()
+            .border_color(border)
+            .child(head);
+        if open {
+            let mut detail = v_flex().w_full().gap_1().pl_5().child(self.detail_row(
+                t!("assistant.tool.details.args"),
+                call.arguments.clone(),
+                true,
+                cx,
+            ));
+            if let Some(terminal) = parts.terminal {
+                detail = detail.child(self.detail_row(
+                    t!("assistant.tool.details.terminal"),
+                    terminal,
+                    false,
+                    cx,
+                ));
+            }
+            if let Some(command) = parts.detail {
+                detail = detail.child(self.detail_row(
+                    t!("assistant.tool.details.command"),
+                    command,
+                    true,
+                    cx,
+                ));
+            }
+            let mut outcome = summary;
+            if !body.is_empty() {
+                outcome.push('\n');
+                outcome.push_str(&body);
+            }
+            detail = detail.child(self.detail_row(
+                t!("assistant.tool.details.result"),
+                outcome,
+                true,
+                cx,
+            ));
+            if let Some(milliseconds) = facts.elapsed_ms {
+                detail = detail.child(self.detail_row(
+                    t!("assistant.tool.details.elapsed"),
+                    duration_text(milliseconds),
+                    false,
+                    cx,
+                ));
+            }
+            if let Some(verdict) = verdict_text(&facts) {
+                detail = detail.child(self.detail_row(
+                    t!("assistant.tool.details.verdict"),
+                    verdict,
+                    false,
+                    cx,
+                ));
+            }
+            if facts.truncated {
+                detail = detail.child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(t!("assistant.tool.details.truncated")),
+                );
+            }
+            if facts.timed_out {
+                detail = detail.child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(t!("assistant.tool.details.timed_out")),
+                );
+            }
+            card = card.child(detail);
+        }
+        card.into_any_element()
+    }
+
+    /// One labelled row of an opened card.
+    fn detail_row(
+        &self,
+        label: SharedString,
+        value: String,
+        mono: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        h_flex()
+            .w_full()
+            .items_start()
+            .gap_2()
+            .child(div().text_xs().text_color(muted).w(px(40.)).child(label))
+            .child(
+                div()
+                    .when(mono, |text| {
+                        text.font_family(cx.theme().mono_font_family.clone())
+                    })
+                    .text_xs()
+                    .flex_1()
+                    .min_w_0()
+                    .child(value),
+            )
+            .into_any_element()
+    }
+
+    /// A rough count of the tokens this conversation sends each round: the
+    /// messages, the standing prompt and the tool descriptions. It is an
+    /// estimate, which the display says; the window comes from the model
+    /// profile.
+    fn context_usage(&self, cx: &mut Context<Self>) -> (usize, usize) {
+        let assistant = self.settings.read(cx).settings().assistant.clone();
+        let mut chars = self.conversation_note.chars().count();
+        chars += assistant.selection().instruction.chars().count();
+        for message in &self.messages {
+            chars += message.text.chars().count() + message.reasoning.chars().count();
+            for call in &message.tool_calls {
+                chars += call.name.chars().count() + call.arguments.chars().count() + 8;
+            }
+        }
+        // The platform prompt and the tool schemas travel every time.
+        chars += 12_000;
+        (
+            chars / 4 + self.messages.len() * 4,
+            assistant.context_window() as usize,
+        )
+    }
+
     fn render_messages(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let streaming = self.stream.is_some();
@@ -3583,6 +3884,18 @@ impl AssistantPanel {
             );
         }
         for (index, message) in self.messages.iter().enumerate() {
+            // A result is drawn inside the call card it belongs to; only a
+            // result whose call is gone is shown on its own.
+            if message.role == chat::Role::Tool
+                && message.tool_call_id.as_deref().is_some_and(|id| {
+                    self.messages.iter().any(|other| {
+                        other.role == chat::Role::Assistant
+                            && other.tool_calls.iter().any(|call| call.id == id)
+                    })
+                })
+            {
+                continue;
+            }
             let role = match message.role {
                 chat::Role::User => t!("assistant.role.user"),
                 chat::Role::Assistant | chat::Role::System => t!("assistant.role.assistant"),
@@ -3606,7 +3919,9 @@ impl AssistantPanel {
                         );
                 }
                 chat::Role::Assistant
-                    if message.text.is_empty() && message.tool_calls.is_empty() =>
+                    if message.text.is_empty()
+                        && message.tool_calls.is_empty()
+                        && message.reasoning.is_empty() =>
                 {
                     if streaming {
                         turn = turn.child(
@@ -3618,20 +3933,21 @@ impl AssistantPanel {
                     }
                 }
                 chat::Role::Assistant => {
+                    if !message.reasoning.is_empty() {
+                        turn = turn.child(self.render_thinking(index, message, cx));
+                    }
                     if !message.text.is_empty() {
                         turn = turn.child(
                             TextView::markdown(("assistant-markdown", index), message.text.clone())
                                 .selectable(true),
                         );
                     }
-                    for call in &message.tool_calls {
-                        turn = turn.child(
-                            div()
-                                .font_family(cx.theme().mono_font_family.clone())
-                                .text_xs()
-                                .text_color(muted)
-                                .child(call_line(call)),
-                        );
+                    for (position, call) in message.tool_calls.iter().enumerate() {
+                        let result = self.messages.iter().find(|other| {
+                            other.role == chat::Role::Tool
+                                && other.tool_call_id.as_deref() == Some(call.id.as_str())
+                        });
+                        turn = turn.child(self.render_call_card(index, position, call, result, cx));
                     }
                 }
                 _ => {
@@ -3650,6 +3966,13 @@ impl AssistantPanel {
         let injecting = !self.injects.is_empty();
         let busy = self.busy();
         let empty = self.input.read(cx).value().trim().is_empty();
+        let (used, window) = self.context_usage(cx);
+        let percent = (used * 100).checked_div(window).unwrap_or(0).min(100);
+        let tone = if percent >= 95 {
+            cx.theme().danger
+        } else {
+            cx.theme().warning
+        };
         v_flex()
             .id("assistant-composer")
             .gap_1()
@@ -3711,6 +4034,15 @@ impl AssistantPanel {
                             .bordered(false)
                             .aria_label(t!("assistant.input.aria")),
                     )
+                    .when(percent >= 80, |card| {
+                        card.child(
+                            div()
+                                .id("assistant-context-warning")
+                                .text_xs()
+                                .text_color(tone)
+                                .child(t!("assistant.context.warning", percent = percent)),
+                        )
+                    })
                     .child(
                         h_flex()
                             .w_full()
@@ -3720,6 +4052,18 @@ impl AssistantPanel {
                             .child(self.render_role_menu(cx))
                             .child(self.render_model_menu(streaming || busy, cx))
                             .child(self.render_terminal_chip())
+                            .child(
+                                div()
+                                    .id("assistant-context")
+                                    .text_xs()
+                                    .text_color(if percent >= 80 { tone } else { muted })
+                                    .child(t!(
+                                        "assistant.context.usage",
+                                        percent = percent,
+                                        used = compact_tokens(used),
+                                        limit = compact_tokens(window)
+                                    )),
+                            )
                             .child(div().flex_1())
                             .child(if streaming {
                                 Button::new("assistant-stop")
@@ -4197,6 +4541,50 @@ impl Render for AssistantPanel {
                 panel.child(self.render_pending(cx))
             })
             .child(self.render_composer(cx))
+    }
+}
+
+/// Text on one line, cut to a readable length for a folded card.
+fn one_line(text: &str, limit: usize) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= limit {
+        return flat;
+    }
+    let mut cut: String = flat.chars().take(limit).collect();
+    cut.push('…');
+    cut
+}
+
+/// A duration for the opened card.
+fn duration_text(milliseconds: u64) -> String {
+    if milliseconds < 1000 {
+        t!("assistant.tool.elapsed_ms", ms = milliseconds).to_string()
+    } else {
+        t!(
+            "assistant.tool.elapsed_s",
+            seconds = format!("{:.1}", milliseconds as f64 / 1000.0)
+        )
+        .to_string()
+    }
+}
+
+/// The policy's verdict on a call: its risk, why, and the rule that matched.
+fn verdict_text(facts: &ResultFacts) -> Option<String> {
+    let risk = facts.risk.as_deref()?;
+    Some(match (facts.reason.as_deref(), facts.rule.as_deref()) {
+        (Some(reason), Some(rule)) => format!("{risk} · {reason} · {rule}"),
+        (Some(reason), None) => format!("{risk} · {reason}"),
+        (None, Some(rule)) => format!("{risk} · {rule}"),
+        (None, None) => risk.to_string(),
+    })
+}
+
+/// Thousands as the compact form a usage display uses.
+fn compact_tokens(value: usize) -> String {
+    if value >= 1000 {
+        format!("{:.1}k", value as f64 / 1000.0)
+    } else {
+        value.to_string()
     }
 }
 

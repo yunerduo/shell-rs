@@ -77,6 +77,9 @@ pub struct StreamRequest {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StreamEvent {
     Delta(String),
+    /// A fragment of the model's reasoning, shown in the conversation but
+    /// not sent back with the history.
+    Thinking(String),
     ToolCalls(Vec<ToolCall>),
     Done,
     Failed(ChatError),
@@ -367,6 +370,11 @@ fn stream_into(
                 SseChunk::Data(data) => match protocol::parse_event(request.protocol, &data)? {
                     ParsedEvent::Text(text) if !text.is_empty() => {
                         if tx.send(StreamEvent::Delta(text)).is_err() {
+                            return Err(ChatError::Cancelled);
+                        }
+                    }
+                    ParsedEvent::Thinking(text) => {
+                        if tx.send(StreamEvent::Thinking(text)).is_err() {
                             return Err(ChatError::Cancelled);
                         }
                     }

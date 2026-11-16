@@ -427,6 +427,9 @@ pub struct ModelProfile {
     pub instruction: String,
     /// The most tokens an answer may take; 0 means the provider's.
     pub max_tokens: u32,
+    /// How many tokens the model's context window holds; 0 means the
+    /// default. Only the usage display reads it.
+    pub context_window: u32,
     /// `None` leaves the service's default.
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
@@ -439,6 +442,13 @@ pub struct ModelProfile {
 /// The most models someone may configure, and the most stop sequences one
 /// model may name.
 pub const MODEL_LIMIT: usize = 20;
+
+/// How many tokens a model's context window holds when the profile does not
+/// say. Most current models are at least this large.
+pub const DEFAULT_CONTEXT_WINDOW: u32 = 128_000;
+
+/// The largest window a profile may declare.
+pub const CONTEXT_WINDOW_MAX: u32 = 2_000_000;
 const STOP_LIMIT: usize = 8;
 const STOP_LENGTH_LIMIT: usize = 64;
 const INSTRUCTION_LIMIT: usize = 2000;
@@ -453,6 +463,7 @@ impl Default for ModelProfile {
             model: String::new(),
             instruction: String::new(),
             max_tokens: 0,
+            context_window: 0,
             temperature: None,
             top_p: None,
             stop: Vec::new(),
@@ -489,6 +500,7 @@ impl ModelProfile {
             .collect();
         self.extra = clean_extra(&self.extra);
         self.max_tokens = self.max_tokens.clamp(0, 8192);
+        self.context_window = self.context_window.clamp(0, CONTEXT_WINDOW_MAX);
         self.temperature = self.temperature.filter(|value| (0.0..=2.0).contains(value));
         self.top_p = self.top_p.filter(|value| (0.0..=1.0).contains(value));
         self.stop = clean_stop(&self.stop);
@@ -712,6 +724,15 @@ impl AssistantSettings {
                 }
             }
         }
+    }
+
+    /// How many tokens the active model's context holds: the profile's
+    /// number, or the default when it does not say.
+    pub fn context_window(&self) -> u32 {
+        self.active_profile()
+            .map(|profile| profile.context_window)
+            .filter(|window| *window > 0)
+            .unwrap_or(DEFAULT_CONTEXT_WINDOW)
     }
 
     /// The account the active provider's key lives under.
