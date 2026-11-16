@@ -1243,7 +1243,7 @@ mod tests {
         let error = result.unwrap_err();
         assert_eq!(error.kind, crate::ssh::ExecErrorKind::HostKeyUnknown);
         assert!(
-            crate::ssh::describe_exec_error(&error).contains("请先在 Agree ShellAS 中连接一次")
+            crate::ssh::describe_exec_error(&error).contains("请先在 Agree ShellAs 中连接一次")
         );
         assert!(stdout.is_empty());
         // Nothing was trusted on the user's behalf.
