@@ -111,6 +111,10 @@ fn router(state: AppState) -> Router {
         .route("/api/v1/auth/logout", post(api::logout))
         .route("/api/v1/me", get(api::me))
         .route(
+            "/api/v0/events",
+            post(api::analytics_events).layer(DefaultBodyLimit::max(64 * 1024)),
+        )
+        .route(
             "/api/v1/sync",
             get(api::list_sync_versions).put(api::upload_snapshot),
         )

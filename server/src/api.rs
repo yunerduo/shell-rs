@@ -14,17 +14,17 @@ use axum::body::{Body, Bytes};
 use axum::extract::{ConnectInfo, Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use chrono::Utc;
+use chrono::{SecondsFormat, Utc};
 use futures_util::StreamExt as _;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt as _;
 use tokio_util::io::ReaderStream;
 
 use crate::auth;
 use crate::config::Config;
-use crate::db::{Db, Snapshot, User};
+use crate::db::{AnalyticsEvent, Db, Snapshot, User};
 use crate::error::{ApiError, ApiResult};
 use crate::util;
 
@@ -405,6 +405,147 @@ fn manifest_response(state: &AppState, channel: &str) -> ApiResult<Response> {
     Ok(response)
 }
 
+// ---- 匿名统计 ----
+
+/// 客户端上报时带的 App-Key，与 `src/analytics/mod.rs` 的 `APP_KEY` 一致。
+/// 不是秘密：每个发布版都带着它，它只允许写统计事件。
+pub const ANALYTICS_APP_KEY: &str = "A-US-1582708162";
+/// 一次请求最多的事件数，与客户端的批次一致。
+const ANALYTICS_BATCH_LIMIT: usize = 25;
+/// 每个地址每小时的请求上限：正常一天也就几个批次。
+const ANALYTICS_REQUESTS_PER_HOUR: usize = 120;
+/// 一条事件属性的上限，超过的整条丢掉。
+const ANALYTICS_PROPS_LIMIT: usize = 4 * 1024;
+
+/// 客户端发来的一条事件，字段与 Aptabase 的 REST 协议一致。
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct AnalyticsEventIn {
+    #[serde(default)]
+    event_name: String,
+    #[serde(default)]
+    session_id: String,
+    #[serde(default)]
+    timestamp: String,
+    #[serde(default)]
+    system_props: SystemPropsIn,
+    #[serde(default)]
+    props: Map<String, Value>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct SystemPropsIn {
+    #[serde(default)]
+    is_debug: bool,
+    #[serde(default)]
+    os_name: String,
+    #[serde(default)]
+    os_version: String,
+    #[serde(default)]
+    app_version: String,
+    #[serde(default)]
+    sdk_version: String,
+}
+
+/// `POST /api/v0/events`：收下匿名统计。没有账号，只有 App-Key；来源地址
+/// 和 User-Agent 不落库，只留下当天的摘要，用来区分设备。
+pub async fn analytics_events(
+    State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> ApiResult<StatusCode> {
+    let key = headers
+        .get("app-key")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    if !util::ct_eq(key, ANALYTICS_APP_KEY) {
+        return Err(ApiError::Unauthorized);
+    }
+    let ip = client_ip(&headers, addr);
+    if !state.limiter.allow(
+        format!("analytics:{ip}"),
+        ANALYTICS_REQUESTS_PER_HOUR,
+        Duration::from_secs(60 * 60),
+    ) {
+        return Err(ApiError::TooMany("上报太频繁，请稍后再试".into()));
+    }
+    let batch: Vec<AnalyticsEventIn> = serde_json::from_slice(&body)
+        .map_err(|_| ApiError::BadRequest("事件不是合法的 JSON 数组".into()))?;
+    if batch.len() > ANALYTICS_BATCH_LIMIT {
+        return Err(ApiError::BadRequest(format!(
+            "一次最多 {ANALYTICS_BATCH_LIMIT} 个事件"
+        )));
+    }
+    let events = prepare_events(batch, &device_id(&state, &headers, &ip)?, &util::now());
+    if !events.is_empty() {
+        state.db.insert_analytics_events(&events)?;
+    }
+    Ok(StatusCode::OK)
+}
+
+/// 来源地址与 User-Agent 在当天的盐下算出的摘要：同一天里认得出同一台
+/// 设备，认不出它是谁；第二天换了盐就接不上了。
+fn device_id(state: &AppState, headers: &HeaderMap, ip: &str) -> ApiResult<String> {
+    let day = Utc::now().format("%Y-%m-%d").to_string();
+    let salt = state.db.analytics_salt(&day)?;
+    let agent = headers
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    Ok(util::sha256_hex(
+        format!("{salt}\n{ip}\n{agent}").as_bytes(),
+    ))
+}
+
+/// 只留下形状对的事件：名字是短的标识符、时间能解析、属性是 JSON 对象
+/// 且不过大。其余安静地丢掉，不让一条坏数据拖垮整批。
+fn prepare_events(
+    batch: Vec<AnalyticsEventIn>,
+    device: &str,
+    received_at: &str,
+) -> Vec<AnalyticsEvent> {
+    batch
+        .into_iter()
+        .filter_map(|event| {
+            let name = event.event_name.trim();
+            let valid_name = !name.is_empty()
+                && name.len() <= 40
+                && name
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+            if !valid_name {
+                return None;
+            }
+            let occurred_at = chrono::DateTime::parse_from_rfc3339(event.timestamp.trim()).ok()?;
+            let props = serde_json::to_string(&event.props).ok()?;
+            if props.len() > ANALYTICS_PROPS_LIMIT {
+                return None;
+            }
+            Some(AnalyticsEvent {
+                name: name.to_string(),
+                session_id: clip(&event.session_id, 64),
+                device: device.to_string(),
+                occurred_at: occurred_at
+                    .to_utc()
+                    .to_rfc3339_opts(SecondsFormat::Secs, true),
+                received_at: received_at.to_string(),
+                app_version: clip(&event.system_props.app_version, 50),
+                os_name: clip(&event.system_props.os_name, 30),
+                os_version: clip(&event.system_props.os_version, 100),
+                sdk_version: clip(&event.system_props.sdk_version, 50),
+                is_debug: event.system_props.is_debug,
+                props,
+            })
+        })
+        .collect()
+}
+
+fn clip(text: &str, chars: usize) -> String {
+    text.chars().take(chars).collect()
+}
+
 // ---- 管理 ----
 
 pub async fn admin_upload(
@@ -642,6 +783,34 @@ mod tests {
         assert!(validate_file_name("ShellRS-0.1.19-windows-x86_64-setup.exe").is_ok());
         assert!(validate_file_name("..").is_err());
         assert!(validate_file_name("a/b").is_err());
+    }
+
+    #[test]
+    fn statistics_keep_only_well_formed_events() {
+        let batch: Vec<AnalyticsEventIn> = serde_json::from_str(
+            r#"[
+             {"timestamp":"2026-11-16T08:00:00.000Z","sessionId":"176000000012345678",
+              "eventName":"app_started",
+              "systemProps":{"isDebug":false,"osName":"Windows","osVersion":"10.0.22631",
+                             "appVersion":"0.1.19","sdkVersion":"shellrs@0.1.19"},
+              "props":{"arch":"x86_64","hosts":"1-5"}},
+             {"timestamp":"yesterday","eventName":"app_started"},
+             {"timestamp":"2026-11-16T08:00:00Z","eventName":"has spaces"},
+             {"timestamp":"2026-11-16T08:00:00Z","eventName":"app_active",
+              "systemProps":{"osName":"macOS"}}
+            ]"#,
+        )
+        .unwrap();
+        let events = prepare_events(batch, "device", "2026-11-16T09:00:00Z");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].name, "app_started");
+        assert_eq!(events[0].occurred_at, "2026-11-16T08:00:00Z");
+        assert_eq!(events[0].device, "device");
+        assert_eq!(events[0].os_name, "Windows");
+        assert!(events[0].props.contains(r#""arch":"x86_64""#));
+        assert_eq!(events[1].name, "app_active");
+        assert_eq!(events[1].os_name, "macOS");
+        assert_eq!(events[1].props, "{}");
     }
 
     #[test]

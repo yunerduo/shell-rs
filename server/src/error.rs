@@ -13,8 +13,13 @@ pub enum ApiError {
     Unauthorized,
     NotFound,
     Conflict(String),
-    Quota { used: i64, quota: i64 },
+    Quota {
+        used: i64,
+        quota: i64,
+    },
     TooLarge(String),
+    /// 同一个地址短时间内来得太多，隔一会儿再来。
+    TooMany(String),
     Internal(String),
 }
 
@@ -60,6 +65,7 @@ impl IntoResponse for ApiError {
                 Some((used, quota)),
             ),
             Self::TooLarge(message) => (StatusCode::PAYLOAD_TOO_LARGE, "too_large", message, None),
+            Self::TooMany(message) => (StatusCode::TOO_MANY_REQUESTS, "too_many", message, None),
             Self::Internal(message) => {
                 // 内部细节只进日志，不回给客户端。
                 tracing::error!(error = %message, "接口出错");

@@ -123,6 +123,7 @@ shellas-server publish \
 - 账号：注册、登录、退出、`/api/v1/me`；
 - 同步：`GET/PUT /api/v1/sync`、`GET/DELETE /api/v1/sync/{version}`；
 - 更新：`/update/v1/stable.json`、`/update/v1/beta.json`、`/releases/...`；
+- 匿名统计：`POST /api/v0/events`（Aptabase 协议，按 IP 限流，不存原始地址）；
 - 管理：`PUT /admin/v1/releases/{version}/{file}`、`PUT /admin/v1/manifest/{channel}`。
 
 同步内容由客户端加密，服务器只看得到密文：

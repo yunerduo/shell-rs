@@ -13,7 +13,7 @@ use thiserror::Error;
 use crate::util;
 
 /// 正在升级的库版本，见 [`migrate`]。
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Clone, Debug)]
 pub struct User {
@@ -34,6 +34,24 @@ pub struct Snapshot {
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub device: Option<String>,
+}
+
+/// 一条匿名统计事件，见 `api::analytics_events`。
+#[derive(Clone, Debug)]
+pub struct AnalyticsEvent {
+    pub name: String,
+    pub session_id: String,
+    /// 来源地址与 User-Agent 在当天的盐下算出的摘要：原始值不落库。
+    pub device: String,
+    pub occurred_at: String,
+    pub received_at: String,
+    pub app_version: String,
+    pub os_name: String,
+    pub os_version: String,
+    pub sdk_version: String,
+    pub is_debug: bool,
+    /// 事件的属性，原样存 JSON 文本。
+    pub props: String,
 }
 
 #[derive(Debug, Error)]
@@ -356,6 +374,58 @@ impl Db {
         let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
         rows.collect()
     }
+
+    /// 当天给设备摘要用的盐：第一次用时生成，第二天换一个，于是同一个
+    /// 地址跨天就认不回同一台设备。
+    pub fn analytics_salt(&self, day: &str) -> rusqlite::Result<String> {
+        let conn = self.conn();
+        let existing = conn
+            .query_row(
+                "SELECT salt FROM analytics_salts WHERE day = ?1",
+                [day],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(salt) = existing {
+            return Ok(salt);
+        }
+        let salt = util::random_salt();
+        conn.execute(
+            "INSERT INTO analytics_salts (day, salt) VALUES (?1, ?2)",
+            params![day, salt],
+        )?;
+        Ok(salt)
+    }
+
+    /// 一批统计事件一个事务写进去。
+    pub fn insert_analytics_events(&self, events: &[AnalyticsEvent]) -> rusqlite::Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        {
+            let mut statement = tx.prepare(
+                "INSERT INTO analytics_events
+                   (name, session_id, device, occurred_at, received_at, app_version,
+                    os_name, os_version, sdk_version, is_debug, props)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            )?;
+            for event in events {
+                statement.execute(params![
+                    event.name,
+                    event.session_id,
+                    event.device,
+                    event.occurred_at,
+                    event.received_at,
+                    event.app_version,
+                    event.os_name,
+                    event.os_version,
+                    event.sdk_version,
+                    event.is_debug,
+                    event.props,
+                ])?;
+            }
+        }
+        tx.commit()
+    }
 }
 
 fn user_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
@@ -370,51 +440,85 @@ fn user_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
     })
 }
 
+/// 按 `user_version` 一步步往上加：线上的库停在哪个版本都能就地升到最新。
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if version >= SCHEMA_VERSION {
         return Ok(());
     }
-    conn.execute_batch(
-        "BEGIN;
-         CREATE TABLE IF NOT EXISTS users (
-           id            INTEGER PRIMARY KEY,
-           username      TEXT NOT NULL UNIQUE,
-           email         TEXT UNIQUE,
-           password_hash TEXT NOT NULL,
-           quota_bytes   INTEGER NOT NULL,
-           sync_salt     TEXT NOT NULL,
-           created_at    TEXT NOT NULL
-         );
-         CREATE TABLE IF NOT EXISTS sessions (
-           token_hash   TEXT PRIMARY KEY,
-           user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-           created_at   TEXT NOT NULL,
-           last_used_at TEXT NOT NULL,
-           expires_at   TEXT NOT NULL,
-           device       TEXT
-         );
-         CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
-         CREATE TABLE IF NOT EXISTS snapshots (
-           id         INTEGER PRIMARY KEY,
-           user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-           version    INTEGER NOT NULL,
-           size       INTEGER NOT NULL,
-           sha256     TEXT NOT NULL,
-           created_at TEXT NOT NULL,
-           device     TEXT,
-           UNIQUE (user_id, version)
-         );
-         CREATE TABLE IF NOT EXISTS manifests (
-           channel      TEXT NOT NULL,
-           version      TEXT NOT NULL,
-           envelope     TEXT NOT NULL,
-           published_at TEXT NOT NULL,
-           PRIMARY KEY (channel, version)
-         );
-         PRAGMA user_version = 1;
-         COMMIT;",
-    )
+    if version < 1 {
+        conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE IF NOT EXISTS users (
+               id            INTEGER PRIMARY KEY,
+               username      TEXT NOT NULL UNIQUE,
+               email         TEXT UNIQUE,
+               password_hash TEXT NOT NULL,
+               quota_bytes   INTEGER NOT NULL,
+               sync_salt     TEXT NOT NULL,
+               created_at    TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS sessions (
+               token_hash   TEXT PRIMARY KEY,
+               user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+               created_at   TEXT NOT NULL,
+               last_used_at TEXT NOT NULL,
+               expires_at   TEXT NOT NULL,
+               device       TEXT
+             );
+             CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
+             CREATE TABLE IF NOT EXISTS snapshots (
+               id         INTEGER PRIMARY KEY,
+               user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+               version    INTEGER NOT NULL,
+               size       INTEGER NOT NULL,
+               sha256     TEXT NOT NULL,
+               created_at TEXT NOT NULL,
+               device     TEXT,
+               UNIQUE (user_id, version)
+             );
+             CREATE TABLE IF NOT EXISTS manifests (
+               channel      TEXT NOT NULL,
+               version      TEXT NOT NULL,
+               envelope     TEXT NOT NULL,
+               published_at TEXT NOT NULL,
+               PRIMARY KEY (channel, version)
+             );
+             PRAGMA user_version = 1;
+             COMMIT;",
+        )?;
+    }
+    if version < 2 {
+        // 匿名统计的事件，以及每天换一个的设备摘要盐。
+        conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE IF NOT EXISTS analytics_events (
+               id          INTEGER PRIMARY KEY,
+               name        TEXT NOT NULL,
+               session_id  TEXT NOT NULL,
+               device      TEXT NOT NULL,
+               occurred_at TEXT NOT NULL,
+               received_at TEXT NOT NULL,
+               app_version TEXT NOT NULL,
+               os_name     TEXT NOT NULL,
+               os_version  TEXT NOT NULL,
+               sdk_version TEXT NOT NULL,
+               is_debug    INTEGER NOT NULL,
+               props       TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS analytics_events_name
+               ON analytics_events(name, occurred_at);
+             CREATE INDEX IF NOT EXISTS analytics_events_day
+               ON analytics_events(occurred_at);
+             CREATE TABLE IF NOT EXISTS analytics_salts (
+               day  TEXT PRIMARY KEY,
+               salt TEXT NOT NULL
+             );
+             PRAGMA user_version = 2;
+             COMMIT;",
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -506,5 +610,69 @@ mod tests {
         db.create_session(user.id, "live", "2999-01-01T00:00:00Z", None)
             .unwrap();
         assert_eq!(db.session_user("live").unwrap().unwrap().username, "alice");
+    }
+
+    #[test]
+    fn the_analytics_salt_is_one_a_day_and_changes_between() {
+        let db = db();
+        let today = db.analytics_salt("2026-11-16").unwrap();
+        assert_eq!(db.analytics_salt("2026-11-16").unwrap(), today);
+        assert_ne!(db.analytics_salt("2026-11-17").unwrap(), today);
+    }
+
+    #[test]
+    fn analytics_events_are_stored_with_their_device_hash() {
+        let db = db();
+        db.insert_analytics_events(&[AnalyticsEvent {
+            name: "app_started".into(),
+            session_id: "176000000012345678".into(),
+            device: "a0b1".into(),
+            occurred_at: "2026-11-16T08:00:00Z".into(),
+            received_at: "2026-11-16T09:00:00Z".into(),
+            app_version: "0.1.19".into(),
+            os_name: "Windows".into(),
+            os_version: "10.0.22631".into(),
+            sdk_version: "shellrs@0.1.19".into(),
+            is_debug: false,
+            props: r#"{"arch":"x86_64"}"#.into(),
+        }])
+        .unwrap();
+        let conn = db.conn();
+        let (name, device, props): (String, String, String) = conn
+            .query_row(
+                "SELECT name, device, props FROM analytics_events",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "app_started");
+        assert_eq!(device, "a0b1");
+        assert_eq!(props, r#"{"arch":"x86_64"}"#);
+    }
+
+    #[test]
+    fn a_version_one_database_is_upgraded_in_place() {
+        // 线上停在 v1 的库只补统计表，原有数据原样留着。
+        let dir = std::env::temp_dir().join(format!("shellas-v1-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("shellas.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE);
+                 PRAGMA user_version = 1;",
+            )
+            .unwrap();
+        }
+        let db = Db::open(&path).unwrap();
+        let version: i64 = db
+            .conn()
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        db.analytics_salt("2026-11-16").unwrap();
+        db.insert_analytics_events(&[]).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
