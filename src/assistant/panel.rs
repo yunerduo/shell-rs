@@ -2,8 +2,10 @@
 //! the conversation itself. From P1 on it also runs what the user's policy
 //! allows, one command at a time, with a card for anything not whitelisted.
 
+use std::cell::Cell;
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::mpsc::TryRecvError;
 use std::time::{Duration, Instant};
 
@@ -13,7 +15,7 @@ use gpui_kit::component::{
     checkbox::Checkbox,
     h_flex,
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
-    menu::PopupMenuItem,
+    menu::{DropdownMenu as _, PopupMenuItem},
     scroll::ScrollableElement as _,
     text::TextView,
     v_flex,
@@ -87,6 +89,14 @@ const SCHEDULE_TIMEOUT_MAX: u64 = 600;
 /// How many model turns one scheduled answer may take. A report needs a
 /// look and an answer; more than that is a loop.
 const SCHEDULE_AI_ROUNDS: u32 = 4;
+
+/// How wide the composer card must be before its bottom row keeps the
+/// bound-terminal chip, and then the context readout. The terminal chip goes
+/// first because the header already names the bound terminals; the readout
+/// follows because it is the last thing worth reading there. Both are
+/// compared against the width the card was painted at, not the window.
+const COMPOSER_TERMINAL_WIDTH: f32 = 520.;
+const COMPOSER_CONTEXT_WIDTH: f32 = 420.;
 
 /// A call waiting for the user's answer. Its command is the one the card
 /// showed; the hash is checked again before it runs.
@@ -250,6 +260,10 @@ pub struct AssistantPanel {
     /// The thinking blocks and call cards the user opened, by call id or
     /// `thinking-<index>`. Everything is folded until it is opened.
     expanded: HashSet<String>,
+    /// The width the composer was last painted at. The bottom row drops the
+    /// terminal and then the usage readout as the panel narrows; the value
+    /// is measured, not guessed from the window.
+    composer_width: Rc<Cell<Option<Pixels>>>,
     /// What the platform prompt adds for those roles and the skills on:
     /// rebuilt from the library whenever a turn is sent.
     conversation_note: String,
@@ -378,6 +392,7 @@ impl AssistantPanel {
             bindings: Bindings::default(),
             roles: Vec::new(),
             expanded: HashSet::new(),
+            composer_width: Rc::default(),
             conversation_note: String::new(),
             available: Vec::new(),
             sessions,
@@ -3315,35 +3330,26 @@ impl AssistantPanel {
         cx.notify();
     }
 
-    /// The terminals this conversation may use, one entry per alias. Bound
-    /// aliases are chips; an alias whose terminal could not be identified
-    /// after a restart gets a line of its own with a one-step picker.
+    /// The terminals this conversation may use, one entry per alias, for the
+    /// header line: bound aliases are chips, and an alias whose terminal
+    /// could not be identified after a restart is warned about below.
     fn render_bindings(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let muted = theme.muted_foreground;
-        let border = theme.border;
         let success = theme.success;
         let danger = theme.danger;
         let accent = theme.accent;
         let radius = theme.radius;
 
-        let open: Vec<AssistantTerminal> = self
-            .available
-            .iter()
-            .filter(|terminal| !self.bindings.is_bound(&terminal.id))
-            .cloned()
-            .collect();
+        let open = self.open_terminals();
 
-        let mut strip = v_flex()
-            .id("assistant-bindings")
-            .border_b_1()
-            .border_color(border);
         let mut row = h_flex()
+            .id("assistant-bindings")
+            .flex_1()
+            .min_w_0()
             .flex_wrap()
             .items_center()
             .gap_1()
-            .px_2()
-            .py_1()
             .child(
                 div()
                     .text_xs()
@@ -3416,12 +3422,16 @@ impl AssistantPanel {
                 );
             }
         }
-        strip = strip.child(row);
+        row
+    }
 
-        if !self.bindings.pending().is_empty() {
-            strip = strip.child(self.render_pending_list(&open, cx));
-        }
-        strip
+    /// The terminals still open for binding: not bound yet.
+    fn open_terminals(&self) -> Vec<AssistantTerminal> {
+        self.available
+            .iter()
+            .filter(|terminal| !self.bindings.is_bound(&terminal.id))
+            .cloned()
+            .collect()
     }
 
     /// The aliases a restart could not place, as one line: how many are
@@ -4397,6 +4407,12 @@ impl AssistantPanel {
         } else {
             cx.theme().warning
         };
+        // The card's width was measured last frame; until then everything
+        // shows. The chip goes before the readout as the row narrows, in the
+        // order the card's own controls matter.
+        let width = self.composer_width.get().map(f32::from);
+        let show_terminal = width.is_none_or(|width| width >= COMPOSER_TERMINAL_WIDTH);
+        let show_context = width.is_none_or(|width| width >= COMPOSER_CONTEXT_WIDTH);
         v_flex()
             .id("assistant-composer")
             .gap_1()
@@ -4444,6 +4460,7 @@ impl AssistantPanel {
             .child(
                 v_flex()
                     .id("assistant-composer-card")
+                    .relative()
                     .gap_1()
                     .p_2()
                     .rounded(cx.theme().radius_lg)
@@ -4453,9 +4470,36 @@ impl AssistantPanel {
                     .on_drop(cx.listener(|this, paths: &ExternalPaths, _window, cx| {
                         this.attach_paths(paths.paths().to_vec(), cx);
                     }))
+                    // How wide the card was painted decides what the bottom
+                    // row keeps; a new width takes effect on the next frame.
+                    .child({
+                        let measured = self.composer_width.clone();
+                        let panel = cx.entity_id();
+                        canvas(
+                            move |bounds, window, _| {
+                                if measured.get() != Some(bounds.size.width) {
+                                    measured.set(Some(bounds.size.width));
+                                    window.on_next_frame(move |_, cx| cx.notify(panel));
+                                }
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .size_full()
+                    })
                     .when(!self.attachments.is_empty(), |card| {
                         card.child(self.render_attachments(cx))
                     })
+                    // Who answers sits above the text, left: on the bottom
+                    // row these two would push the send button out first.
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .gap_1()
+                            .child(self.render_mode_menu(cx))
+                            .child(self.render_role_menu(cx)),
+                    )
                     .child(
                         Textarea::new(&self.input)
                             .h(px(72.))
@@ -4489,22 +4533,22 @@ impl AssistantPanel {
                                         this.choose_files(window, cx)
                                     })),
                             )
-                            .child(self.render_mode_menu(cx))
-                            .child(self.render_role_menu(cx))
                             .child(self.render_model_menu(streaming || busy, cx))
-                            .child(self.render_terminal_chip())
-                            .child(
-                                div()
-                                    .id("assistant-context")
-                                    .text_xs()
-                                    .text_color(if percent >= 80 { tone } else { muted })
-                                    .child(t!(
-                                        "assistant.context.usage",
-                                        percent = percent,
-                                        used = compact_tokens(used),
-                                        limit = compact_tokens(window)
-                                    )),
-                            )
+                            .when(show_terminal, |row| row.child(self.render_terminal_chip()))
+                            .when(show_context, |row| {
+                                row.child(
+                                    div()
+                                        .id("assistant-context")
+                                        .text_xs()
+                                        .text_color(if percent >= 80 { tone } else { muted })
+                                        .child(t!(
+                                            "assistant.context.usage",
+                                            percent = percent,
+                                            used = compact_tokens(used),
+                                            limit = compact_tokens(window)
+                                        )),
+                                )
+                            })
                             .child(div().flex_1())
                             .child(if streaming {
                                 Button::new("assistant-stop")
@@ -4551,11 +4595,11 @@ impl AssistantPanel {
             } else {
                 t!("assistant.mode.restricted")
             })
-            .tooltip(t!("assistant.mode.tooltip"));
+            .tooltip(t!("assistant.mode.tooltip"))
+            .dropdown_caret(true);
         let button = if full { button.danger() } else { button };
         let panel = cx.entity();
-        DropdownButton::new("assistant-mode-menu")
-            .button(button)
+        button
             .dropdown_menu(move |menu, _, _| {
                 let restricted = panel.clone();
                 let whole = panel.clone();
@@ -4606,15 +4650,13 @@ impl AssistantPanel {
         let panel = cx.entity();
         let panel_for_default = panel.clone();
         let panel_for_configure = panel.clone();
-        DropdownButton::new("assistant-role-menu")
-            .button(
-                Button::new("assistant-role")
-                    .xsmall()
-                    .ghost()
-                    .icon(CatalogIcon::User)
-                    .label(label)
-                    .tooltip(tooltip),
-            )
+        Button::new("assistant-role")
+            .xsmall()
+            .ghost()
+            .icon(CatalogIcon::User)
+            .label(label)
+            .tooltip(tooltip)
+            .dropdown_caret(true)
             .dropdown_menu(move |menu, _, _| {
                 let mut menu = menu;
                 let empty = loaded.is_empty();
@@ -4672,20 +4714,18 @@ impl AssistantPanel {
             t!("assistant.model.default", model = provider_model)
         };
         let default_checked = assistant.active_model.is_empty();
-        DropdownButton::new("assistant-model-menu")
-            .button(
-                Button::new("assistant-model")
-                    .xsmall()
-                    .ghost()
-                    .icon(CatalogIcon::Cpu)
-                    .label(label)
-                    .tooltip(if locked {
-                        t!("assistant.model.locked")
-                    } else {
-                        t!("assistant.model.switch")
-                    })
-                    .disabled(locked),
-            )
+        Button::new("assistant-model")
+            .xsmall()
+            .ghost()
+            .icon(CatalogIcon::Cpu)
+            .label(label)
+            .tooltip(if locked {
+                t!("assistant.model.locked")
+            } else {
+                t!("assistant.model.switch")
+            })
+            .dropdown_caret(true)
+            .disabled(locked)
             .dropdown_menu(move |menu, _, _| {
                 let mut menu = menu;
                 if !configured {
@@ -4885,6 +4925,7 @@ impl Render for AssistantPanel {
         let muted = cx.theme().muted_foreground;
         let border = cx.theme().border;
         let danger = cx.theme().danger;
+        let open = self.open_terminals();
         v_flex()
             .id("assistant-panel")
             .size_full()
@@ -4896,39 +4937,19 @@ impl Render for AssistantPanel {
             }))
             .child(
                 h_flex()
-                    .justify_between()
                     .items_center()
                     .gap_1()
                     .px_2()
                     .py_1()
                     .border_b_1()
                     .border_color(border)
+                    // The terminals it may use share the line with the
+                    // actions: a row of their own cost the conversation a
+                    // strip for chips that are usually absent.
+                    .child(self.render_bindings(cx))
                     .child(
                         h_flex()
-                            .gap_1()
-                            .items_center()
-                            .min_w_0()
-                            .child(Icon::new(CatalogIcon::Bot).small())
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(t!("assistant.title")),
-                            )
-                            .when_some(self.notice.clone(), |header, notice| {
-                                header.child(
-                                    div()
-                                        .id("assistant-notice")
-                                        .test_support()
-                                        .min_w_0()
-                                        .truncate()
-                                        .text_xs()
-                                        .text_color(muted)
-                                        .child(notice),
-                                )
-                            }),
-                    )
-                    .child(
-                        h_flex()
+                            .flex_shrink_0()
                             .gap_1()
                             .child(
                                 Button::new("assistant-report")
@@ -4960,7 +4981,22 @@ impl Render for AssistantPanel {
                             ),
                     ),
             )
-            .child(self.render_bindings(cx))
+            .when_some(self.notice.clone(), |panel, notice| {
+                panel.child(
+                    div()
+                        .id("assistant-notice")
+                        .test_support()
+                        .px_2()
+                        .py_1()
+                        .truncate()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(notice),
+                )
+            })
+            .when(!self.bindings.pending().is_empty(), |panel| {
+                panel.child(self.render_pending_list(&open, cx))
+            })
             .child(self.render_sessions(cx))
             .when_some(self.full_access_card, |panel, since| {
                 panel.child(self.render_full_access_dialog(since, cx))

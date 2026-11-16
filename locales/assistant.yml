@@ -9,9 +9,6 @@ tools.kind.assistant:
 settings.sidebar_tools.assistant:
   zh-CN: 与模型对话，按命令策略在已绑定的终端上执行。
   en: Talk to a model and run commands on the bound terminals, under your command policy.
-assistant.title:
-  zh-CN: AI 助手
-  en: Assistant
 assistant.config.title:
   zh-CN: 助手设置
   en: Assistant settings
