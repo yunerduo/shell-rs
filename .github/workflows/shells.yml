@@ -1,4 +1,4 @@
-# `shellrs exec --terminal` against the shells it types into: bash 4.2 to
+# `shellas exec --terminal` against the shells it types into: bash 4.2 to
 # 5.2, dash, busybox ash and a bash started as sh, each in a container on a
 # real terminal (`terminal::run::tests::shells`); and ZMODEM against
 # lrzsz's `sz` and `rz`, on a terminal and through busybox's telnetd

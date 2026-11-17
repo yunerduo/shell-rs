@@ -1,42 +1,49 @@
-# 手动打包 macOS 安装包：Apple Silicon 与 Intel 各一份。
+# 出安装包：Windows（安装版与便携版）、Linux AppImage、macOS（Apple
+# Silicon 与 Intel 各一份）。
 #
-# 这是本 fork 的公益构建，没有购买 Apple 开发者证书，所以不签名、不公证。
-# 用户首次打开时需要右键 → 打开，或去掉隔离标记（下载页有说明）。
+# 这是本 fork 的公益构建，没有购买 Apple 开发者证书，所以 macOS 包不签名、
+# 不公证。用户首次打开时需要右键 → 打开，或去掉隔离标记（下载页有说明）。
 #
-# 推送 package-macos 分支即触发（见下面的 on）。产物在该次运行的
-# Artifacts 里：ShellRS-<版本>-macos-<架构>.app.zip（升级用）和 .dmg
-# （手动安装用）。之后用 `shellas-server publish` 把包和签名清单发到
-# shellas.agree.host。
+# 手动触发（Actions › package › Run workflow），或推到 `package-*` 分支。
+# 产物在该次运行的 Artifacts 里：ShellAs-<版本>-<平台>-<架构>.<扩展名>，
+# 之后用 `shellas-server publish` 把包和签名清单发到 shellas.agree.host。
+#
+# macOS 的两个架构都在 Intel 机器上交叉编译：GitHub 的 arm64 runner 常常
+# 排不上机器，会把任务判成 cancelled。
 name: package
 
 on:
-  # 手动触发的按钮只对默认分支上的 workflow 显示。这个文件在功能分支上，
-  # 所以日常用 package-macos 分支的 push 触发；等文件进了默认分支，
-  # Run workflow 按钮会自动出现。
   workflow_dispatch:
+    inputs:
+      version:
+        description: 版本号（留空用 Cargo.toml 里的）
+        required: false
   push:
-    branches: [package-macos]
+    branches: ["package-*"]
     paths:
       - Cargo.toml
       - Cargo.lock
       - rust-toolchain.toml
       - src/**
+      - crates/**
       - assets/**
       - locales/**
-      - packaging/macos/**
+      - packaging/**
+      - scripts/**
       - .github/workflows/package.yml
 
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+  SHELLAS_UPDATE_CHANNEL: stable
+
 jobs:
-  macos:
-    runs-on: macos-15
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [aarch64, x86_64]
-    timeout-minutes: 120
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - name: Version
@@ -47,43 +54,156 @@ jobs:
             version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  macos:
+    needs: version
+    runs-on: macos-15-intel
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [aarch64, x86_64]
+    timeout-minutes: 120
+    env:
+      ARCH: ${{ matrix.arch }}
+      VERSION: ${{ needs.version.outputs.version }}
+      SHELLAS_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
       - run: rustup toolchain install
       - run: rustup target add "${{ matrix.arch }}-apple-darwin"
       - uses: Swatinem/rust-cache@v2
         with:
           key: macos-unsigned-${{ matrix.arch }}
       - name: Build the app bundle
-        env:
-          ARCH: ${{ matrix.arch }}
-          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          export SHELLRS_BUILD_DATE=$(date -u +%Y-%m-%d)
-          cargo build --release --locked --bin shellrs --target "$ARCH-apple-darwin"
-          lipo "target/$ARCH-apple-darwin/release/shellrs" \
+          export SHELLAS_BUILD_DATE=$(date -u +%Y-%m-%d)
+          cargo build --release --locked --bin shellas --target "$ARCH-apple-darwin"
+          lipo "target/$ARCH-apple-darwin/release/shellas" \
             -verify_arch "${ARCH/aarch64/arm64}"
           packaging/macos/bundle.sh \
-            "target/$ARCH-apple-darwin/release/shellrs" "$VERSION" \
+            "target/$ARCH-apple-darwin/release/shellas" "$VERSION" \
             "$GITHUB_RUN_NUMBER" build
       - name: Package (unsigned)
-        env:
-          ARCH: ${{ matrix.arch }}
-          VERSION: ${{ steps.version.outputs.version }}
         run: |
           mkdir -p dist
           # 升级包：ditto 原样保留 .app 的结构与权限。
-          ditto -c -k --keepParent build/ShellRS.app \
-            "dist/ShellRS-$VERSION-macos-$ARCH.app.zip"
+          ditto -c -k --keepParent build/ShellAs.app \
+            "dist/ShellAs-$VERSION-macos-$ARCH.app.zip"
           # 首次安装：DMG 里带一个 Applications 快捷方式。
           mkdir -p "$RUNNER_TEMP/dmg"
-          cp -R build/ShellRS.app "$RUNNER_TEMP/dmg/"
+          cp -R build/ShellAs.app "$RUNNER_TEMP/dmg/"
           ln -s /Applications "$RUNNER_TEMP/dmg/Applications"
           size=$(( $(du -sm "$RUNNER_TEMP/dmg" | cut -f1) * 2 + 20 ))
-          hdiutil create -volname ShellRS -srcfolder "$RUNNER_TEMP/dmg" -ov \
+          hdiutil create -volname ShellAs -srcfolder "$RUNNER_TEMP/dmg" -ov \
             -fs HFS+ -size "${size}m" -format UDZO \
-            "dist/ShellRS-$VERSION-macos-$ARCH.dmg"
+            "dist/ShellAs-$VERSION-macos-$ARCH.dmg"
           shasum -a 256 dist/* > "dist/SHA256SUMS-macos-$ARCH.txt"
           ls -l dist
       - uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.arch }}-unsigned
+          path: dist/*
+
+  windows:
+    needs: version
+    runs-on: windows-2025
+    timeout-minutes: 120
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      SHELLAS_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: ilammy/setup-nasm@v1
+      - name: Build
+        shell: bash
+        run: |
+          export SHELLAS_BUILD_DATE=$(date -u +%Y-%m-%d)
+          cargo build --release --locked --bins
+      - name: Runtime
+        shell: pwsh
+        run: ./scripts/windows-runtime.ps1 target/release
+      - name: Installer
+        shell: pwsh
+        run: |
+          # windows-2025 ships Inno Setup 6.
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y }
+          & $iscc "/DAppVersion=$env:VERSION" "/DBuildDir=$env:GITHUB_WORKSPACE\target\release" `
+            "/O$env:GITHUB_WORKSPACE\dist" packaging\windows\shellas.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Portable
+        shell: pwsh
+        run: |
+          # The portable zip, also what a portable copy updates from: both
+          # programs at its root beside an empty data folder, which is what
+          # makes a copy portable. 7-Zip keeps the empty folder;
+          # Compress-Archive would drop it.
+          $folder = Join-Path $env:RUNNER_TEMP "portable"
+          New-Item -ItemType Directory -Force -Path (Join-Path $folder "data") | Out-Null
+          Copy-Item "target\release\shellas.exe", "target\release\shellas-cli.exe" $folder
+          $zip = "$env:GITHUB_WORKSPACE\dist\ShellAs-$env:VERSION-windows-x86_64-portable.zip"
+          Push-Location $folder
+          7z a -tzip -mx=9 $zip shellas.exe shellas-cli.exe data
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Pop-Location
+          # The first path listed is the archive itself.
+          $entries = 7z l -slt $zip | Select-String '^Path = ' |
+            ForEach-Object { $_.Line.Substring(7) } | Select-Object -Skip 1
+          if (Compare-Object @($entries) @('data', 'shellas-cli.exe', 'shellas.exe')) {
+            Write-Error "The portable zip holds: $($entries -join ', ')"
+            exit 1
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*
+
+  linux:
+    needs: version
+    # Built in Ubuntu 20.04 so the AppImage runs on its glibc (2.31) and
+    # later: Ubuntu 20.04, Debian 11, and the newer ones.
+    runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    timeout-minutes: 120
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      SHELLAS_COMMIT: ${{ github.sha }}
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl git file \
+            build-essential cmake clang pkg-config libfontconfig-dev \
+            libfreetype-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libx11-xcb-dev libxcb1-dev libvulkan-dev libdbus-1-dev libssl-dev
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: |
+          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - run: rustup toolchain install
+      # Its own cache: build scripts compiled on a newer glibc do not run here.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ubuntu-20.04
+      - name: Build
+        run: |
+          export SHELLAS_BUILD_DATE=$(date -u +%Y-%m-%d)
+          cargo build --release --locked --bin shellas
+      - name: AppImage
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/appimagetool" \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          # No FUSE on the runner: let the tool unpack itself.
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          APPIMAGETOOL="$RUNNER_TEMP/appimagetool" \
+            packaging/linux/appimage.sh target/release/shellas "$VERSION" dist
+          sha256sum dist/* > dist/SHA256SUMS-linux-x86_64.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
           path: dist/*

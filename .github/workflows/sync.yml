@@ -51,7 +51,7 @@ jobs:
           gw=$(find "$RUNNER_TEMP/vgw" -name versitygw -type f | head -1)
           "$gw" --port :7070 --iam-dir "$RUNNER_TEMP/vgw-iam" posix "$RUNNER_TEMP/vgw-data" &
           for _ in $(seq 50); do curl -s -o /dev/null http://127.0.0.1:7070 && break; sleep 0.2; done
-          SHELLRS_TEST_S3_ENDPOINT=http://127.0.0.1:7070 \
-          SHELLRS_TEST_S3_ACCESS_KEY="$ROOT_ACCESS_KEY" \
-          SHELLRS_TEST_S3_SECRET_KEY="$ROOT_SECRET_KEY" \
+          SHELLAS_TEST_S3_ENDPOINT=http://127.0.0.1:7070 \
+          SHELLAS_TEST_S3_ACCESS_KEY="$ROOT_ACCESS_KEY" \
+          SHELLAS_TEST_S3_SECRET_KEY="$ROOT_SECRET_KEY" \
             cargo test --locked -p shellrs-sync s3 -- --include-ignored

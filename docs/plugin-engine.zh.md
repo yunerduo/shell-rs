@@ -84,7 +84,7 @@
 4. **设置 / 持久化**
    - `AppSettings` 是 `serde(default)` 的 JSON，字段缺失即默认值；写入是「临时文件 + 原子替换」（`src/settings/model.rs:21-89`；`src/settings/store.rs:172-181`）。
    - 右栏相关设置：`sidebar_tools`（哪些工具显示）、`local_sidebar_tool`（本地终端上次显示的工具）、`sidebar_widths.right`（`src/settings/model.rs:36-49`）。
-   - 数据目录统一在 `src/app/paths.rs:30-81`，`settings.json` 与 `shellrs.db` 并列。
+   - 数据目录统一在 `src/app/paths.rs:30-81`，`settings.json` 与 `shellas.db` 并列。
 5. **国际化**
    - `rust_i18n::i18n!("locales", fallback = "zh-CN")` 在编译期把 34 个 yml 打进二进制（`src/lib.rs:48-49`；`locales/` 目录）。
    - `t!`/`tn!` 在展示时翻译，语言运行时可切换（`src/i18n.rs:1-13`、`72-109`）。
@@ -833,9 +833,9 @@ fn call(&self, plugin: &PluginId, api: ApiCall) -> Result<Reply, ApiError> {
 
 ```json
 {
-  "drag": { "type": "text/x-shellrs-host-id", "id": "host-row-3" },
+  "drag": { "type": "text/x-shellas-host-id", "id": "host-row-3" },
   "drop": {
-    "accepts": ["text/x-shellrs-host-id", "text/plain"],
+    "accepts": ["text/x-shellas-host-id", "text/plain"],
     "id": "group-drop"
   }
 }
@@ -845,7 +845,7 @@ fn call(&self, plugin: &PluginId, api: ApiCall) -> Result<Reply, ApiError> {
   - 仅允许 JSON 值（字符串/数字/布尔/对象/数组），序列化后 ≤ 64 KB；
   - 不允许二进制、文件句柄、凭据对象；
   - 宿主从不自动把主机密码/私钥放进载荷；插件本身也拿不到凭据（未授予 `host.credentials` 时）。
-- 类型字符串使用自定义 MIME 形式 `text/x-shellrs-*`；未知类型宿主拒绝投放。
+- 类型字符串使用自定义 MIME 形式 `text/x-shellas-*`；未知类型宿主拒绝投放。
 - 插件只能从自己的面板发起拖拽；v1 不允许插件向宿主主机列表/标签栏注入拖拽源。
 - 投放事件回传 `{type, payload, x, y, source}`；目标插件负责校验 payload 语义（例如 id 是否仍存在）。
 

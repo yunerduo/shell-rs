@@ -831,7 +831,7 @@ StreamEvent { TextDelta | ToolCallStart | ToolCallArgsDelta | ToolCallEnd | Usag
 - 只存系统钥匙串，使用现有 `KeychainSecretStore`（`src/secrets/keychain.rs:14-76`）。
 - 复用 `SecretRef::Credential { keychain_id }`，账号名形如 `credential:ai:<profile-id>`（`crates/shellrs-ssh/src/secret.rs:93-107`），不新增枚举变体。
 - 钥匙串调用可能阻塞，必须在后台线程执行（`keychain.rs:8-13`）。
-- 不写入 `settings.json`、`shellrs.db`、会话文件、审计文件、崩溃日志、匿名统计。
+- 不写入 `settings.json`、`shellas.db`、会话文件、审计文件、崩溃日志、匿名统计。
 - 请求头中的密钥不进入错误信息；`reqwest` 的错误只保留状态码与分类。
 - 删除服务商配置时同步删除钥匙串条目；删除失败要提示，不静默留下。
 - 钥匙串不可用时（例如 Linux 没有 Secret Service）：明确提示「无法安全保存密钥」，拒绝落盘明文；允许用户仅本次运行输入，退出即丢。
@@ -938,7 +938,7 @@ Schedule {
 约束：
 
 - 助手数据目录不进入现有同步体系，不上传匿名统计；
-- 不修改 `shellrs.db` 的表结构，避免与主机数据库迁移耦合；
+- 不修改 `shellas.db` 的表结构，避免与主机数据库迁移耦合；
 - 单进程内串行写；JSON 小文件用「临时文件 + 重命名」，JSONL 只追加；
 - 不记录完整请求体与密钥；调试日志默认关闭；
 - 会话与审计可能含敏感输出，界面需提示本地留存与保留期，并提供「一键清空」。

@@ -4,11 +4,11 @@ Git 提交信息一律使用中文，说明做了什么、为什么这么做，�
 
 ## 项目是什么
 
-ShellRS（crate 与二进制都叫 `shellrs`）是一个类似 Xshell / WinSCP 的 SSH 主机管理工具，基于 `gpui-kit` 0.6.1（GPUI + gpui-base + gpui-component）。界面文案有简体中文和英文两种（中文是源语言，文案在 `locales/`，经 `crate::i18n::t!`），标识符用英文。
+ShellAs（crate 与二进制都叫 `shellas`）是一个类似 Xshell / WinSCP 的 SSH 主机管理工具，基于 `gpui-kit` 0.6.1（GPUI + gpui-base + gpui-component）。界面文案有简体中文和英文两种（中文是源语言，文案在 `locales/`，经 `crate::i18n::t!`），标识符用英文。
 
 **保存的一项叫「主机」，代码里叫 `Host`。** 左侧列表里保存的一项（地址、端口、用户、认证方式）在界面上叫「主机」，量词用「台」，代码和数据库里一律叫 host（`Host`、`HostId`、`HostStore`、`host/` 模块、`hosts` 表）。它以前叫「会话」/ `Session`，界面、代码和表名都已改掉，新写的文案和标识符不要再用「会话」/ session 指它。填 IP / 域名的那个字段叫「地址」（`Host.address`、`hosts.address`），不叫「主机」（「主机密钥」「首次连接此主机」这些照旧）。SSH 协议里的 session 不在此列：「SSH 会话通道」、russh 的 `client::Session` / `server::Session`、`channel_open_session`、SFTP 会话照旧。
 
-主机和分组是**真实持久化**的，存在一个 SQLite 文件里（`~/Library/Application Support/shellrs/shellrs.db`，`SHELLRS_DATA_DIR` 可覆盖目录）。本地终端（`portable-pty` + `alacritty_terminal`）和 SSH 远程连接（`russh`）也都是真的。密码与私钥口令存在系统钥匙串里（`keyring`），**数据库里永远不出现秘密**。SFTP 双栏浏览与上传也已接入真实文件系统，支持断点续传；下载、目录同步和传输队列尚未实现。详见 `docs/manual.zh.md`。
+主机和分组是**真实持久化**的，存在一个 SQLite 文件里（`~/Library/Application Support/shellas/shellas.db`，`SHELLAS_DATA_DIR` 可覆盖目录）。本地终端（`portable-pty` + `alacritty_terminal`）和 SSH 远程连接（`russh`）也都是真的。密码与私钥口令存在系统钥匙串里（`keyring`），**数据库里永远不出现秘密**。SFTP 双栏浏览与上传也已接入真实文件系统，支持断点续传；下载、目录同步和传输队列尚未实现。详见 `docs/manual.zh.md`。
 
 已确认的产品决定：WinSCP 式双栏文件浏览器是每个主机独立的「SFTP」Dock 标签页；暂不做传输队列和 Dock 布局持久化；首次启动是空库，不预置任何分组或主机；分组支持任意层级嵌套，主机也可以不属于任何分组（渲染在树的根层级）；删除分组会连同其子分组和里面的主机一起删，删除前确认并写明数量。
 
@@ -31,8 +31,8 @@ scripts/build-ios.sh; scripts/build-android.sh   # 手机端的库和 Swift / Ko
 cargo clippy --all-targets -- -D warnings   # 必须无警告
 cargo fmt --check
 
-sqlite3 ~/Library/Application\ Support/shellrs/shellrs.db '.schema'   # 查落盘结果
-security find-generic-password -s shellrs -a "password:<user>@<host>:<port>"   # 查钥匙串条目
+sqlite3 ~/Library/Application\ Support/shellas/shellas.db '.schema'   # 查落盘结果
+security find-generic-password -s shellas -a "password:<user>@<host>:<port>"   # 查钥匙串条目
 cargo test -- --ignored                     # 会读写真实钥匙串的测试，默认跳过
 ```
 
@@ -42,11 +42,11 @@ cargo test -- --ignored                     # 会读写真实钥匙串的测试�
 
 ## 架构
 
-Cargo workspace：根包是桌面应用 `shellrs`，单个二进制 crate，带 `src/lib.rs`，这样 `tests/ui/` 能驱动生产环境的 `Workspace`；`crates/shellrs-sync` 是同步核心（MIT 许可，不依赖 GPUI 和应用，文件格式见它的 `FORMAT.md`）；`crates/shellrs-ssh` 是 SSH 核心（MIT 许可，桌面和手机共用：登录、通道、探测主机系统、SFTP 传输引擎；不依赖 GPUI 和应用，不产出文案）；`crates/shellrs-hosts` 是主机核心（MIT 许可，桌面和手机共用：模型、数据库、`HostData`、登录快照、`keys/` 里的私钥、秘密接口，以及同步的导出、应用记录和一轮 `run_round`；不依赖 GPUI 和应用，不产出文案）；`crates/shellrs-mobile` 是手机端的 UniFFI 接口（MIT 许可，包着 SSH 核心和主机核心：连接、主机、凭据和同步；不在 `default-members` 里，见它的 `README.md`）。模块按能力划分，将来可拆成独立 crate；功能模块不得依赖 `workspace`（窗口壳），也不得触碰彼此的内部实现。
+Cargo workspace：根包是桌面应用 `shellas`，单个二进制 crate，带 `src/lib.rs`，这样 `tests/ui/` 能驱动生产环境的 `Workspace`；`crates/shellrs-sync` 是同步核心（MIT 许可，不依赖 GPUI 和应用，文件格式见它的 `FORMAT.md`）；`crates/shellrs-ssh` 是 SSH 核心（MIT 许可，桌面和手机共用：登录、通道、探测主机系统、SFTP 传输引擎；不依赖 GPUI 和应用，不产出文案）；`crates/shellrs-hosts` 是主机核心（MIT 许可，桌面和手机共用：模型、数据库、`HostData`、登录快照、`keys/` 里的私钥、秘密接口，以及同步的导出、应用记录和一轮 `run_round`；不依赖 GPUI 和应用，不产出文案）；`crates/shellrs-mobile` 是手机端的 UniFFI 接口（MIT 许可，包着 SSH 核心和主机核心：连接、主机、凭据和同步；不在 `default-members` 里，见它的 `README.md`）。模块按能力划分，将来可拆成独立 crate；功能模块不得依赖 `workspace`（窗口壳），也不得触碰彼此的内部实现。
 
 `server/` 是 `shellas.agree.host` 上的官网、自建更新与云同步服务，独立 Cargo 项目（有自己的 `Cargo.lock`，根 `[workspace]` 已 `exclude`），不参与上面的构建、测试和 lint；设计见 `docs/shellas-service.zh.md`，部署与发布见 `server/README.md`。
 
-- `app/` — `actions.rs` 定义全部用户命令（`gpui_kit::actions!` 单元动作 + 携带 `HostId` / `GroupId` 的 `host_action!` / `group_action!` 动作）；`paths.rs` 解析数据目录（`SHELLRS_DATA_DIR` → Windows 便携版 `shellrs.exe` 旁边的 `data` → `dirs::data_dir()/shellrs`）与数据库路径；`mod.rs` 绑定快捷键、初始化 gpui-kit 并 `set_locale("zh-CN")`；`assets.rs` 用 `icon_assets!` 把额外的 Lucide 图标并入默认图标包——额外图标用 `CatalogIcon::*`，默认包用 `IconName::*`；`OS_ICONS` 另外嵌入 `assets/icons/os/*.svg`（各操作系统的真实 logo，取自 Simple Icons，CC0；Windows 那个是自己画的四格，Simple Icons 已下架），用 `Icon::default().path(os.icon_path())` 渲染。
+- `app/` — `actions.rs` 定义全部用户命令（`gpui_kit::actions!` 单元动作 + 携带 `HostId` / `GroupId` 的 `host_action!` / `group_action!` 动作）；`paths.rs` 解析数据目录（`SHELLAS_DATA_DIR` → Windows 便携版 `shellas.exe` 旁边的 `data` → `dirs::data_dir()/shellas`）与数据库路径；`mod.rs` 绑定快捷键、初始化 gpui-kit 并 `set_locale("zh-CN")`；`assets.rs` 用 `icon_assets!` 把额外的 Lucide 图标并入默认图标包——额外图标用 `CatalogIcon::*`，默认包用 `IconName::*`；`OS_ICONS` 另外嵌入 `assets/icons/os/*.svg`（各操作系统的真实 logo，取自 Simple Icons，CC0；Windows 那个是自己画的四格，Simple Icons 已下架），用 `Icon::default().path(os.icon_path())` 渲染。
 - `host/` — 重新导出 `crates/shellrs-hosts`：那里有 `model.rs`（Host / HostGroup / HostDraft / GroupDraft / `HostOs`；`Host.group` 与 `HostGroup.parent` 都是 `Option<GroupId>`，`Host.os` 是 `Option<HostOs>`）、`database.rs`（`HostDatabase`：rusqlite 连接、`PRAGMA user_version` 迁移、行与模型的映射）、`data.rs`（`HostData`，**内存是唯一事实来源**，写穿到数据库）。这里留 `store.rs`（`HostStore` 实体：包住 `HostData`，`Deref` 到它，写方法调完 `settle`）、`describe.rs`（label 和错误的文案）、`outline.rs`（纯函数：store → `TreeItem`，递归铺开嵌套分组；节点 id 形如 `g:<id>` / `s:<id>`；`group_options` 给表单提供按全路径标注的分组列表）、`host_panel.rs`（左侧 Dock 面板：搜索 + 树 + 右键菜单）、`host_dialog.rs`、`group_dialog.rs`（`GroupForm`、`open_group_dialog`、`confirm_delete_group`）。
 - `terminal/` — 本地终端是真的：`transport.rs`（字节流传输的 trait）、`local_pty.rs`（`portable-pty` 实现，跑在专用线程上）、`engine.rs`（驱动 `alacritty_terminal`，解析线程 + 16ms UI 轮询批量刷新）、`terminal_view.rs`（网格渲染、选区、输入编码）、`local_terminal_panel.rs`（⌘T 开的本地标签页）、`model.rs`。远程主机的传输在 `ssh/`，中间区的标签页是 `terminal_panel.rs`。共享 prompt 协议位于 `connection.rs`，`transport.rs` 通过 `TerminalPrompt` / `TerminalPromptKind` / `TerminalSecret` 重导出保持兼容。
 - `ssh/` — 重新导出 `crates/shellrs-ssh`（`SshConnector`、`probe` 探测远端系统、`HostOsProbe` 等都在那里），自己只留错误和问答的文案（`describe.rs`：核心只给类型化的错误链和问答，这里沿链逐节翻译、用「: 」连起来）、远程终端的传输（`transport.rs`）和测试连接。known_hosts 校验写 `<data_dir>/known_hosts`（**不碰** `~/.ssh/known_hosts`），认证链是 agent → publickey → password → keyboard-interactive。密码和私钥口令先查 `secrets`，查不到或被服务器拒绝才走 prompt 弹框；被拒绝时**不删**钥匙串条目，只在弹框说明里讲清原因。

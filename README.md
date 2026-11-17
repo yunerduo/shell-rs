@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/logo/shellrs.svg" width="96" alt="Agree ShellAS">
+  <img src="assets/logo/shellas.svg" width="96" alt="ShellAs">
 </p>
 
-<h1 align="center">Agree ShellAS</h1>
+<h1 align="center">ShellAs</h1>
 
 <p align="center">
   A high-performance, native, cross-platform SSH client written in Rust, with a GPU-rendered interface: Xshell-style host management, WinSCP-style SFTP and port forwarding, all in one window.
@@ -21,14 +21,14 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/en/main-dark.png">
-  <img src="docs/screenshots/en/main-light.png" alt="Agree ShellAS main window: a grouped host tree on the left, htop running in a remote terminal on the right, connection latency in the tab bar">
+  <img src="docs/screenshots/en/main-light.png" alt="ShellAs main window: a grouped host tree on the left, htop running in a remote terminal on the right, connection latency in the tab bar">
 </picture>
 
 ## About
 
-Agree ShellAS brings Xshell-style host management and tabbed terminals, a WinSCP-style dual-pane SFTP browser and SSH port forwarding together in one cross-platform app, which bastion hosts such as JumpServer can launch the way they launch Xshell and WinSCP. It is written in Rust, and its UI is built on GPUI, the GPU-accelerated UI framework of the Zed editor (through [gpui-kit](https://gpui-kit.com)). There is no Electron and no JVM.
+ShellAs brings Xshell-style host management and tabbed terminals, a WinSCP-style dual-pane SFTP browser and SSH port forwarding together in one cross-platform app, which bastion hosts such as JumpServer can launch the way they launch Xshell and WinSCP. It is written in Rust, and its UI is built on GPUI, the GPU-accelerated UI framework of the Zed editor (through [gpui-kit](https://gpui-kit.com)). There is no Electron and no JVM.
 
-Hosts, groups, credentials and forwarding rules live in a local SQLite database. Passwords and key passphrases go only into the system keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service); the database never holds a secret. Agree ShellAS also ships a `shellrs` command that lets AI agents such as Claude Code or Codex run commands and transfer files on your saved hosts without ever seeing a password.
+Hosts, groups, credentials and forwarding rules live in a local SQLite database. Passwords and key passphrases go only into the system keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service); the database never holds a secret. ShellAs also ships a `shellas` command that lets AI agents such as Claude Code or Codex run commands and transfer files on your saved hosts without ever seeing a password.
 
 ## Features
 
@@ -65,22 +65,22 @@ Hosts, groups, credentials and forwarding rules live in a local SQLite database.
 
 - A dual-pane browser modeled on WinSCP Commander: symmetric local and remote panes with WinSCP's columns, path labels, bookmarks and shortcuts (F5, F2, F7, F8…).
 - Upload and download by dragging or by shortcut, recursively. Start new transfers while one runs; they wait in a per-tab transfer queue.
-- Resumable transfers: data goes to a `.filepart` first, dropped connections are retried after 1, 3 and 10 seconds, and after a restart Agree ShellAS offers to resume the same transfer.
+- Resumable transfers: data goes to a `.filepart` first, dropped connections are retried after 1, 3 and 10 seconds, and after a restart ShellAs offers to resume the same transfer.
 - Delete (local items go to the Trash), rename, create, and change permissions (a 3×3 grid plus octal, optionally recursive).
 - Built-in editor: double-click a text file to edit it, ⌘S writes it back in place, after checking nobody else changed it; syntax highlighting for common formats. Images and Markdown can be previewed.
 - Each SFTP tab has its own connection and asks only for the SFTP subsystem, so no shell is needed on the server.
 
 **Opening from a bastion host**
 
-- Launched the way Xshell and WinSCP are: in the client of a bastion host such as JumpServer, set Agree ShellAS as the SSH or SFTP client. An `ssh://` link opens a terminal, an `sftp://` link an SFTP tab.
-- Understands Xshell's `-url` and `-newtab` and WinSCP's `/sessionname=`. When Agree ShellAS is already running, the link opens there.
+- Launched the way Xshell and WinSCP are: in the client of a bastion host such as JumpServer, set ShellAs as the SSH or SFTP client. An `ssh://` link opens a terminal, an `sftp://` link an SFTP tab.
+- Understands Xshell's `-url` and `-newtab` and WinSCP's `/sessionname=`. When ShellAs is already running, the link opens there.
 - What opens is an unsaved external connection: it stays out of the host list, keeps the link's password in memory only and goes away with its tabs. Each connection uses a single channel, so bastion hosts that allow no more still work. See the [user manual](docs/manual.md#opening-from-a-bastion-host-external-connections).
 
 **Port forwarding**
 
 - Local (`-L`), remote (`-R`) and dynamic (`-D`, SOCKS5 / SOCKS4) forwards.
 - The rule dialog draws a live diagram and a one-line explanation of where connections enter and where they go.
-- Every rule keeps its own SSH connection and reconnects three times after a drop; rules can start with Agree ShellAS.
+- Every rule keeps its own SSH connection and reconnects three times after a drop; rules can start with ShellAs.
 
 **Credentials**
 
@@ -89,12 +89,12 @@ Hosts, groups, credentials and forwarding rules live in a local SQLite database.
 
 **A CLI for AI agents**
 
-- `shellrs hosts` / `credentials` / `exec` / `upload` / `download` / `sync`: manage hosts and credentials, run commands, move and sync files. The running Agree ShellAS logs in on the command's behalf, so the command itself never reads a password or private key.
-- Install `shellrs` into your PATH and an Agent Skill for Claude Code, Codex, OpenCode or WorkBuddy from the settings page.
+- `shellas hosts` / `credentials` / `exec` / `upload` / `download` / `sync`: manage hosts and credentials, run commands, move and sync files. The running ShellAs logs in on the command's behalf, so the command itself never reads a password or private key.
+- Install `shellas` into your PATH and an Agent Skill for Claude Code, Codex, OpenCode or WorkBuddy from the settings page.
 
 **Security and updates**
 
-- Secrets stay in the system keychain. Host keys are recorded in Agree ShellAS's own `known_hosts`, never in `~/.ssh`.
+- Secrets stay in the system keychain. Host keys are recorded in ShellAs's own `known_hosts`, never in `~/.ssh`.
 - In-app updates: releases come from this fork's GitHub Releases over HTTPS, and each package is checked against the SHA-256 digest GitHub publishes for it. Updates download in the background and install on restart or quit. There are stable and beta channels, and an update check sends only the version, OS and CPU architecture.
 - Anonymous usage statistics: off by default. When you turn them on, they go to `shellas.agree.host` with only the version, OS, CPU architecture and how often each feature is used, never hosts, credentials, commands or any identifier. Turn them on or off in Settings › About.
 
@@ -126,37 +126,37 @@ Download from GitHub [Releases](https://github.com/yunerduo/shell-rs/releases). 
 
 | System | Package | Notes |
 | --- | --- | --- |
-| macOS 11+ (Apple Silicon) | `ShellRS-<version>-macos-aarch64.dmg` | Signed and notarized. Open the DMG and drag ShellRS into Applications |
-| macOS 11+ (Intel) | `ShellRS-<version>-macos-x86_64.dmg` | Signed and notarized. Open the DMG and drag ShellRS into Applications |
-| Windows x64 | `ShellRS-<version>-windows-x86_64-setup.exe` | Installs per user, no administrator rights needed. The installer is not signed yet; if SmartScreen stops it, choose "More info › Run anyway" |
-| Windows x64 (portable) | `ShellRS-<version>-windows-x86_64-portable.zip` | Unzip into a folder you can write to and run `shellrs.exe`; its data stays in the `data` folder beside it. See [Windows portable](docs/manual.md#windows-portable) |
-| Linux x64 | `ShellRS-<version>-linux-x86_64.AppImage` | `chmod +x` and run. Needs glibc 2.31 or newer (Ubuntu 20.04, Debian 11 and later) |
+| macOS 11+ (Apple Silicon) | `ShellAs-<version>-macos-aarch64.dmg` | Signed and notarized. Open the DMG and drag ShellAs into Applications |
+| macOS 11+ (Intel) | `ShellAs-<version>-macos-x86_64.dmg` | Signed and notarized. Open the DMG and drag ShellAs into Applications |
+| Windows x64 | `ShellAs-<version>-windows-x86_64-setup.exe` | Installs per user, no administrator rights needed. The installer is not signed yet; if SmartScreen stops it, choose "More info › Run anyway" |
+| Windows x64 (portable) | `ShellAs-<version>-windows-x86_64-portable.zip` | Unzip into a folder you can write to and run `shellas.exe`; its data stays in the `data` folder beside it. See [Windows portable](docs/manual.md#windows-portable) |
+| Linux x64 | `ShellAs-<version>-linux-x86_64.AppImage` | `chmod +x` and run. Needs glibc 2.31 or newer (Ubuntu 20.04, Debian 11 and later) |
 
-GitHub publishes a SHA-256 digest for every asset, and Agree ShellAS checks the package against it before installing.
+GitHub publishes a SHA-256 digest for every asset, and ShellAs checks the package against it before installing.
 
-Once installed, Agree ShellAS keeps itself up to date: it checks, downloads and verifies new versions in the background, then shows an icon in the top-right corner of the title bar; click it and choose "Restart to update", or just quit and the update is installed on the way out. Automatic updates are unavailable when Agree ShellAS runs from inside the DMG or outside the Applications folder, on Linux when it isn't run as the AppImage, or when the Windows portable copy's folder can't be written to.
+Once installed, ShellAs keeps itself up to date: it checks, downloads and verifies new versions in the background, then shows an icon in the top-right corner of the title bar; click it and choose "Restart to update", or just quit and the update is installed on the way out. Automatic updates are unavailable when ShellAs runs from inside the DMG or outside the Applications folder, on Linux when it isn't run as the AppImage, or when the Windows portable copy's folder can't be written to.
 
 ## Getting started
 
 1. Click "New host…" in the title bar (⌘N, or Ctrl+N on Windows and Linux) and fill in the address, port and login. Passwords go into the system keychain.
 2. Double-click a host to open a terminal. On the first connection you're asked to confirm the host key.
 3. Right-click a host and choose "Open SFTP", or click "SFTP" at the right of the terminal's tab bar. Drag files between the two panes to transfer them.
-4. The three icons after "Agree ShellAS" in the title bar switch the sidebar between hosts, port forwards and credentials.
+4. The three icons after "ShellAs" in the title bar switch the sidebar between hosts, port forwards and credentials.
 5. ⌘T (Ctrl+T) opens a local terminal. Drag a tab to the top, bottom, left or right edge of the tab area to split it.
 
 ## For AI agents
 
-In Settings › External CLI, turn on Enable external CLI, then install the `shellrs` command and the Agent Skills. Your agent can then use the hosts you have saved:
+In Settings › External CLI, turn on Enable external CLI, then install the `shellas` command and the Agent Skills. Your agent can then use the hosts you have saved:
 
 ```sh
-shellrs hosts list -q web                          # list hosts and their IDs
-shellrs exec <ID> "uptime && df -h"                # run a command; the exit code is the remote one
-shellrs upload <ID> ./dist/app.tar.gz /opt/app/    # upload
-shellrs download <ID> /var/log/syslog ./logs/      # download
-shellrs sync <ID> ./dist /opt/app --delete         # sync a folder, skipping unchanged files
+shellas hosts list -q web                          # list hosts and their IDs
+shellas exec <ID> "uptime && df -h"                # run a command; the exit code is the remote one
+shellas upload <ID> ./dist/app.tar.gz /opt/app/    # upload
+shellas download <ID> /var/log/syslog ./logs/      # download
+shellas sync <ID> ./dist /opt/app --delete         # sync a folder, skipping unchanged files
 ```
 
-The command hands each request to the running Agree ShellAS, which logs in with the saved settings and keychain. An unknown host or a missing password fails right away with a stable error code instead of a prompt that would hang the agent. See the [user manual](docs/manual.md#external-cli) for details.
+The command hands each request to the running ShellAs, which logs in with the saved settings and keychain. An unknown host or a missing password fails right away with a stable error code instead of a prompt that would hang the agent. See the [user manual](docs/manual.md#external-cli) for details.
 
 ## Building from source
 
@@ -199,9 +199,9 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-## Support Agree ShellAS
+## Support ShellAs
 
-If Agree ShellAS is useful to you, consider [sponsoring its development on GitHub](https://github.com/sponsors/since2006). Your support helps sustain ongoing maintenance, bug fixes and new features. Thank you for supporting Agree ShellAS!
+If ShellAs is useful to you, consider [sponsoring its development on GitHub](https://github.com/sponsors/since2006). Your support helps sustain ongoing maintenance, bug fixes and new features. Thank you for supporting ShellAs!
 
 ## Acknowledgements
 
@@ -211,8 +211,8 @@ If Agree ShellAS is useful to you, consider [sponsoring its development on GitHu
 - [keyring](https://crates.io/crates/keyring): the system keychain
 - [Simple Icons](https://simpleicons.org): the OS logos on host badges and the Docker logo in the right sidebar (CC0)
 - [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme): the SFTP lists' color icons (MIT)
-- [Termark](https://www.termark.app/), [WinSCP](https://winscp.net) and Xshell: the interaction designs Agree ShellAS follows
+- [Termark](https://www.termark.app/), [WinSCP](https://winscp.net) and Xshell: the interaction designs ShellAs follows
 
 ## License
 
-Agree ShellAS is licensed under the [GNU General Public License v3.0](LICENSE). You may use, modify and redistribute it, commercially or not, but any modified version you distribute must come with its complete source code under the GPL-3.0 as well. The sync core in [`crates/shellrs-sync`](crates/shellrs-sync) is licensed under the [MIT License](crates/shellrs-sync/LICENSE).
+ShellAs is licensed under the [GNU General Public License v3.0](LICENSE). You may use, modify and redistribute it, commercially or not, but any modified version you distribute must come with its complete source code under the GPL-3.0 as well. The sync core in [`crates/shellrs-sync`](crates/shellrs-sync) is licensed under the [MIT License](crates/shellrs-sync/LICENSE).

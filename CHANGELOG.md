@@ -2,19 +2,23 @@
 
 [简体中文](CHANGELOG.zh.md)
 
-One section per version, titled `## [version]`, optionally followed by a date. Each section is written in English here and in Chinese in [CHANGELOG.zh.md](CHANGELOG.zh.md), in the same change. The release workflow (`.github/workflows/release.yml`) takes the section with the tag’s version, as it is, for the GitHub release. The website’s changelog shows this file in English and Japanese and CHANGELOG.zh.md in Chinese (ShellRS’s update dialog opens it with What’s new). Written in Markdown, for users.
+One section per version, titled `## [version]`, optionally followed by a date. Each section is written in English here and in Chinese in [CHANGELOG.zh.md](CHANGELOG.zh.md), in the same change. The release workflow (`.github/workflows/release.yml`) takes the section with the tag’s version, as it is, for the GitHub release. The website’s changelog shows this file in English and Japanese and CHANGELOG.zh.md in Chinese (Agree ShellAs’s update dialog opens it with What’s new). Written in Markdown, for users.
+
+## [0.1.20]
+
+- From this version the data folder and database file names changed; data from older versions is not read.
 
 ## [0.1.19]
 
 ### Added
 
-- SSH hosts can fill in one-time codes (TOTP). In the host dialog’s Advanced, turn on Fill in one-time codes and enter the OTP secret: when the server asks for a code during keyboard-interactive login, ShellRS sends the current 6-digit code. With Prompt to match left empty, it recognizes the usual prompts, such as Verification code, OTP and MFA. Terminals, SFTP, port forwarding, the external CLI, Test connection and jump hosts all fill it in. The OTP secret is stored only in the system keychain and syncs with cloud sync.
+- SSH hosts can fill in one-time codes (TOTP). In the host dialog’s Advanced, turn on Fill in one-time codes and enter the OTP secret: when the server asks for a code during keyboard-interactive login, Agree ShellAs sends the current 6-digit code. With Prompt to match left empty, it recognizes the usual prompts, such as Verification code, OTP and MFA. Terminals, SFTP, port forwarding, the external CLI, Test connection and jump hosts all fill it in. The OTP secret is stored only in the system keychain and syncs with cloud sync.
 - Terminal background images: in Appearance, set one for light and one for dark, each with its own on switch and Transparency, and they follow the appearance. The image covers only the terminal; with split panes, each pane gets the whole image. ([#43](https://github.com/since2006/shell-rs/issues/43), [#113](https://github.com/since2006/shell-rs/issues/113))
-- A Show host details button right of the search box in the host list: each host shows user@address:port under its name, and its notes on another line if it has any. Click it again for names only. ShellRS remembers the setting. ([#116](https://github.com/since2006/shell-rs/issues/116))
+- A Show host details button right of the search box in the host list: each host shows user@address:port under its name, and its notes on another line if it has any. Click it again for names only. Agree ShellAs remembers the setting. ([#116](https://github.com/since2006/shell-rs/issues/116))
 
 ### Improved
 
-- A host that uses a credential can have its own username, so one private key logs in to servers with different usernames. Leave it empty to use the credential’s. ShellRS 0.1.18 and earlier still log these hosts in with the credential’s username. ([#112](https://github.com/since2006/shell-rs/issues/112))
+- A host that uses a credential can have its own username, so one private key logs in to servers with different usernames. Leave it empty to use the credential’s. Agree ShellAs 0.1.18 and earlier still log these hosts in with the credential’s username. ([#112](https://github.com/since2006/shell-rs/issues/112))
 - Highlighting comes with 11 preset rules, from the scheme a user shared in [#113](https://github.com/since2006/shell-rs/issues/113): errors, successes, warnings, IP and MAC addresses, sizes with units, dates and times, numbers and more, in colors that read well on the default light and dark backgrounds. If you hadn’t changed the three old examples, they’re replaced with the new presets; rules you changed stay.
 - The left and right sidebars can be dragged narrower (to 180 and 220), and the widths you set stay after restarting. Settings › General › Window › Sidebar widths restores the defaults.
 
@@ -27,15 +31,15 @@ One section per version, titled `## [version]`, optionally followed by a date. E
 
 ### Added
 
-- A menu bar on macOS, as in other Mac apps: ⌘H hides ShellRS, ⌥⌘H hides other apps and ⌘M minimizes the window. About ShellRS shows the version and a link to the website. ([#88](https://github.com/since2006/shell-rs/issues/88))
+- A menu bar on macOS, as in other Mac apps: ⌘H hides Agree ShellAs, ⌥⌘H hides other apps and ⌘M minimizes the window. About Agree ShellAs shows the version and a link to the website. ([#88](https://github.com/since2006/shell-rs/issues/88))
 - The compose pane remembers the commands you send. Press ↑ and ↓ to go back through them as in a terminal, up to the last 500.
 - Snippets are in the right sidebar next to local terminals too. Click one to type it into the local terminal.
 
 ### Improved
 
-- Snippet categories nest like host groups, and you can drag snippets and categories to reorder them. The list shows only names; hover over a snippet to see its command. Order and nesting sync with cloud sync; ShellRS 0.1.17 and earlier show every category at the top level, but don’t change the order or nesting elsewhere.
+- Snippet categories nest like host groups, and you can drag snippets and categories to reorder them. The list shows only names; hover over a snippet to see its command. Order and nesting sync with cloud sync; Agree ShellAs 0.1.17 and earlier show every category at the top level, but don’t change the order or nesting elsewhere.
 - On Windows and Linux, Close tab now defaults to Ctrl+Shift+W instead of Ctrl+W, as in Windows Terminal, so it works in a terminal too. Ctrl+W still goes to the shell. If you changed this shortcut, yours stays.
-- The Follow switch in the right sidebar’s Files is remembered per host: Files opened for that host later, also after restarting ShellRS, start the way you last set it.
+- The Follow switch in the right sidebar’s Files is remembered per host: Files opened for that host later, also after restarting Agree ShellAs, start the way you last set it.
 - The transfer queue scrolls to a new batch when it’s added.
 
 ## [0.1.17]
@@ -58,14 +62,14 @@ This release moves the desktop app's SSH connections, SFTP transfers, host and c
 
 ### Fixed
 
-- On macOS, waking from sleep or switching displays could crash ShellRS while the screen was temporarily unavailable.
-- On Windows without the Visual C++ Redistributable, such as Windows 11 LTSC, ShellRS didn’t start: “VCRUNTIME140.dll was not found”.
+- On macOS, waking from sleep or switching displays could crash Agree ShellAs while the screen was temporarily unavailable.
+- On Windows without the Visual C++ Redistributable, such as Windows 11 LTSC, Agree ShellAs didn’t start: “VCRUNTIME140.dll was not found”.
 
 ## [0.1.17-beta.1]
 
 ### Fixed
 
-- On Windows without the Visual C++ Redistributable, such as Windows 11 LTSC, ShellRS didn’t start: “VCRUNTIME140.dll was not found”.
+- On Windows without the Visual C++ Redistributable, such as Windows 11 LTSC, Agree ShellAs didn’t start: “VCRUNTIME140.dll was not found”.
 
 ## [0.1.16]
 
@@ -138,16 +142,16 @@ This release moves the desktop app's SSH connections, SFTP transfers, host and c
 
 ### Added
 
-- Projects in the right sidebar beside local terminals: keep local terminals in groups like hosts, and after reopening ShellRS carry on in the folders they were in.
-- Terminals in Projects keep their last 1,000 lines of output when closed or when ShellRS quits, and show them when opened again; you can turn this off in Settings.
+- Projects in the right sidebar beside local terminals: keep local terminals in groups like hosts, and after reopening Agree ShellAs carry on in the folders they were in.
+- Terminals in Projects keep their last 1,000 lines of output when closed or when Agree ShellAs quits, and show them when opened again; you can turn this off in Settings.
 - Shift+Enter takes a new line in programs that support it, such as Claude Code, in local and remote terminals.
 - Maximize window ⌃⌘↑ and Restore window ⌃⌘↓ shortcuts (macOS).
-- A system-wide Show or hide ShellRS shortcut that works from any app; it has no keys until you set them in Settings › Keyboard shortcuts.
+- A system-wide Show or hide Agree ShellAs shortcut that works from any app; it has no keys until you set them in Settings › Keyboard shortcuts.
 
 ### Improved
 
 - The right sidebar remembers for each host whether it’s open and which tool it shows: open Files on a host, and it opens by itself whenever you connect to that host.
-- In a terminal on Windows and Linux, Ctrl with a letter (such as tmux’s Ctrl+B) goes to the shell instead of triggering a ShellRS shortcut.
+- In a terminal on Windows and Linux, Ctrl with a letter (such as tmux’s Ctrl+B) goes to the shell instead of triggering a Agree ShellAs shortcut.
 - The mouse pointer is an I-beam over a terminal’s text.
 - A local terminal tab with a long title shows just the folder’s name.
 - A long tab name ends in “…” instead of making the tab very wide.
@@ -157,15 +161,15 @@ This release moves the desktop app's SSH connections, SFTP transfers, host and c
 
 - Box drawing such as the lines between tmux panes came apart into dashes in terminals.
 - On small screens, such as a laptop at 150% scaling, the window ran off the screen the first time it opened.
-- On Linux, GNOME and other desktops showed a generic app icon in the dock instead of ShellRS’s.
+- On Linux, GNOME and other desktops showed a generic app icon in the dock instead of Agree ShellAs’s.
 - When importing hosts, a long authentication name covered the Status column.
 
 ## [0.1.14-beta.4]
 
 ### Added
 
-- Projects in the right sidebar beside local terminals: keep local terminals in groups like hosts, and after reopening ShellRS carry on in the folders they were in.
-- Terminals in Projects keep their last 1,000 lines of output when closed or when ShellRS quits, and show them when opened again; you can turn this off in Settings.
+- Projects in the right sidebar beside local terminals: keep local terminals in groups like hosts, and after reopening Agree ShellAs carry on in the folders they were in.
+- Terminals in Projects keep their last 1,000 lines of output when closed or when Agree ShellAs quits, and show them when opened again; you can turn this off in Settings.
 
 ## [0.1.14-beta.3]
 
@@ -179,11 +183,11 @@ This release moves the desktop app's SSH connections, SFTP transfers, host and c
 ### Added
 
 - Maximize window ⌃⌘↑ and Restore window ⌃⌘↓ shortcuts (macOS).
-- A system-wide Show or hide ShellRS shortcut that works from any app; it has no keys until you set them in Settings › Keyboard shortcuts.
+- A system-wide Show or hide Agree ShellAs shortcut that works from any app; it has no keys until you set them in Settings › Keyboard shortcuts.
 
 ### Improved
 
-- In a terminal on Windows and Linux, Ctrl with a letter (such as tmux’s Ctrl+B) goes to the shell instead of triggering a ShellRS shortcut.
+- In a terminal on Windows and Linux, Ctrl with a letter (such as tmux’s Ctrl+B) goes to the shell instead of triggering a Agree ShellAs shortcut.
 
 ## [0.1.14-beta.1]
 
@@ -326,7 +330,7 @@ This release moves the desktop app's SSH connections, SFTP transfers, host and c
 
 ### Fixed
 
-- On Windows, some bastion hosts set to use ShellRS as their Xshell or WinSCP client said “Please use the official client”.
+- On Windows, some bastion hosts set to use Agree ShellAs as their Xshell or WinSCP client said “Please use the official client”.
 - Tabs connected to Windows hosts didn’t show the Windows icon.
 
 ## [0.1.10-beta.2]
@@ -337,7 +341,7 @@ This release moves the desktop app's SSH connections, SFTP transfers, host and c
 
 ### Fixed
 
-- On Windows, some bastion hosts set to use ShellRS as their Xshell or WinSCP client said “Please use the official client”.
+- On Windows, some bastion hosts set to use Agree ShellAs as their Xshell or WinSCP client said “Please use the official client”.
 
 ## [0.1.10-beta.1]
 
@@ -347,7 +351,7 @@ This release moves the desktop app's SSH connections, SFTP transfers, host and c
 
 ### Fixed
 
-- On Windows, some bastion hosts set to use ShellRS as their Xshell client said “Please use the official client”.
+- On Windows, some bastion hosts set to use Agree ShellAs as their Xshell client said “Please use the official client”.
 
 ## [0.1.9]
 
@@ -443,14 +447,14 @@ This release moves the desktop app's SSH connections, SFTP transfers, host and c
 
 ### Added
 
-- `shellrs exec --terminal` in the external CLI: runs a command in a terminal already open in ShellRS, for bastion hosts that allow logging in only once.
+- `shellrs exec --terminal` in the external CLI: runs a command in a terminal already open in Agree ShellAs, for bastion hosts that allow logging in only once.
 - A scrollbar on the right of the terminal, to drag through earlier output.
 
 ## [0.1.6-beta.1]
 
 ### Added
 
-- `shellrs exec --terminal` in the external CLI: runs a command in a terminal already open in ShellRS, for bastion hosts that allow logging in only once.
+- `shellrs exec --terminal` in the external CLI: runs a command in a terminal already open in Agree ShellAs, for bastion hosts that allow logging in only once.
 
 ## [0.1.5]
 
@@ -505,7 +509,7 @@ This release moves the desktop app's SSH connections, SFTP transfers, host and c
 - Web addresses in the terminal show as links; ⌘-click (Ctrl-click on other platforms) opens them in the browser.
 - Mouse support in the terminal: click and scroll in vim, htop and tmux.
 - What remote programs (such as tmux and vim) copy goes straight to this computer’s clipboard.
-- Terminal notifications: when a program asks for a notification or rings the bell while ShellRS isn’t in front, you get a system notification.
+- Terminal notifications: when a program asks for a notification or rings the bell while Agree ShellAs isn’t in front, you get a system notification.
 - `shellrs exec --json` in the external CLI: no more quoting trouble or garbled text in Windows PowerShell.
 
 ### Improved
@@ -531,7 +535,7 @@ This release moves the desktop app's SSH connections, SFTP transfers, host and c
 
 ## [0.1.0]
 
-The first public release of ShellRS.
+The first public release of Agree ShellAs.
 
 ### Added
 
@@ -541,7 +545,7 @@ The first public release of ShellRS.
 - Terminals: local terminals and multiple SSH terminals, with find, clear and latency.
 - The right sidebar: Monitor, Network, Processes, Services, Docker, History and Snippets for the current remote terminal.
 - SFTP: a WinSCP-style dual-pane file browser, with resumable uploads and downloads and a transfer queue.
-- Port forwarding: local, remote and dynamic, reconnecting after a drop, and able to start with ShellRS.
+- Port forwarding: local, remote and dynamic, reconnecting after a drop, and able to start with Agree ShellAs.
 - Opening from bastion hosts: open a terminal or SFTP with `ssh://` and `sftp://` links, as with Xshell and WinSCP, without saving the connection.
 - The external CLI: the `shellrs` command lets AI agents run commands and transfer files with the saved hosts.
 - Online updates: new versions are checked for and downloaded in the background, announced at the top right of the title bar, and installed on restart or quit.
@@ -550,8 +554,8 @@ The first public release of ShellRS.
 
 ### Added
 
-- Bastion hosts can open ShellRS’s SFTP with an `sftp://` link, as they open WinSCP.
-- When ShellRS is opened from a bastion host, the host sidebar on the left collapses and the terminal or SFTP fills the window.
+- Bastion hosts can open Agree ShellAs’s SFTP with an `sftp://` link, as they open WinSCP.
+- When Agree ShellAs is opened from a bastion host, the host sidebar on the left collapses and the terminal or SFTP fills the window.
 
 ## [0.1.0-beta.8]
 
@@ -563,7 +567,7 @@ The first public release of ShellRS.
 
 ### Fixed
 
-- Some bastion hosts couldn’t be reached: SSH servers such as Apache SSHD that have no curve25519 and offer only 2048-bit DH groups used to drop the connection during the handshake. Key exchange now matches OpenSSH’s defaults, with ECDH (NIST curves), and group exchange accepts 2048-bit groups: any server OpenSSH reaches with its defaults, ShellRS reaches too.
+- Some bastion hosts couldn’t be reached: SSH servers such as Apache SSHD that have no curve25519 and offer only 2048-bit DH groups used to drop the connection during the handshake. Key exchange now matches OpenSSH’s defaults, with ECDH (NIST curves), and group exchange accepts 2048-bit groups: any server OpenSSH reaches with its defaults, Agree ShellAs reaches too.
 - A failed connection says why, such as connection refused, timed out, or no algorithm in common with the server (listing the server’s), instead of only “Couldn’t establish an SSH connection. Check the address, port and host key”.
 - Docker: an image with several tags shows one row per tag; details and deletion apply to that row’s tag, and deleting removes only that tag. An image with a repository name but no tag shows as “repository:<none>” instead of being taken for “repository:latest”. Images with a registry address (such as `registry.example.com/app:1.0`) can now be deleted and inspected too.
 
@@ -571,7 +575,7 @@ The first public release of ShellRS.
 
 ### Added
 
-- Opening from bastion hosts: bastion hosts such as JumpServer can call ShellRS as they call Xshell (`ShellRS ssh://user@address:port`, or `-url ssh://… -newtab name`) to open a terminal tab to the host. It’s a temporary connection: it isn’t saved to the host list and goes away when its tabs close, and a password in the link stays in memory only. When ShellRS is already running, the link opens there instead of in another copy. The program to enter in the bastion host is `shellrs.exe` in the installation folder on Windows (by default `%LOCALAPPDATA%\Programs\ShellRS\shellrs.exe`), and `/Applications/ShellRS.app/Contents/MacOS/shellrs` on macOS.
+- Opening from bastion hosts: bastion hosts such as JumpServer can call Agree ShellAs as they call Xshell (`Agree ShellAs ssh://user@address:port`, or `-url ssh://… -newtab name`) to open a terminal tab to the host. It’s a temporary connection: it isn’t saved to the host list and goes away when its tabs close, and a password in the link stays in memory only. When Agree ShellAs is already running, the link opens there instead of in another copy. The program to enter in the bastion host is `shellrs.exe` in the installation folder on Windows (by default `%LOCALAPPDATA%\Programs\Agree ShellAs\shellrs.exe`), and `/Applications/Agree ShellAs.app/Contents/MacOS/shellrs` on macOS.
 - External CLI: `shellrs list` also lists temporary connections with tabs open (marked as temporary), so agents can run commands and transfer files with them.
 - External CLI: Agent Skills can be installed to WorkBuddy.
 
@@ -616,12 +620,12 @@ The first public release of ShellRS.
 
 ### Improved
 
-- macOS: the close button at the top left of the window now hides ShellRS in the background, with open connections, SFTP transfers and port forwarding running as before; click the Dock icon to get the window back with all its tabs. To quit, press ⌘Q or right-click the Dock icon and choose Quit. Before, after the window was closed, ShellRS stayed in the Dock but its window couldn’t be opened.
+- macOS: the close button at the top left of the window now hides Agree ShellAs in the background, with open connections, SFTP transfers and port forwarding running as before; click the Dock icon to get the window back with all its tabs. To quit, press ⌘Q or right-click the Dock icon and choose Quit. Before, after the window was closed, Agree ShellAs stayed in the Dock but its window couldn’t be opened.
 - The start page no longer repeats a hint when there are no recent connections.
 
 ## [0.1.0-beta.2]
 
-The first test release of ShellRS, on the Beta channel only, to try out installation and online updates. Later test releases arrive by online update.
+The first test release of Agree ShellAs, on the Beta channel only, to try out installation and online updates. Later test releases arrive by online update.
 
 ### Added
 
@@ -630,6 +634,6 @@ The first test release of ShellRS, on the Beta channel only, to try out installa
 - Connections: direct, through jump hosts, or through an HTTP / SOCKS5 proxy.
 - Terminals: local terminals and multiple SSH terminals, with find, clear and latency.
 - SFTP: a WinSCP-style dual-pane file browser, with resumable uploads and downloads and a transfer queue.
-- Port forwarding: local, remote and dynamic, reconnecting after a drop, and able to start with ShellRS.
+- Port forwarding: local, remote and dynamic, reconnecting after a drop, and able to start with Agree ShellAs.
 - The external CLI: the `shellrs` command lets AI agents run commands and transfer files with the saved hosts.
 - Online updates: new versions are checked for and downloaded in the background, announced at the top right of the title bar, and installed on restart or quit.
