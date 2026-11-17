@@ -21,8 +21,87 @@ const FAVICON_192: &[u8] = include_bytes!("../web/favicon-192.png");
 const FAVICON_512: &[u8] = include_bytes!("../web/favicon-512.png");
 const MANIFEST: &str = include_str!("../web/site.webmanifest");
 
-/// 页面里的 HTML 一律走这里，带上 CSP：没有脚本，外部资源一个都不加载。
+/// 页面里唯一的脚本：背景光斑跟随指针，截图点开看大图。
+/// 只做这两件事，不读页面内容，也不改文案。
+const SITE_JS: &str = r#"
+(() => {
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const glow = document.querySelector('.pointer-glow');
+  if (glow && !reduce.matches) {
+    let tx = window.innerWidth / 2;
+    let ty = window.innerHeight * 0.32;
+    let x = tx;
+    let y = ty;
+    let frame = 0;
+    let idle = 0;
+    const paint = () => {
+      x += (tx - x) * 0.12;
+      y += (ty - y) * 0.12;
+      glow.style.transform =
+        'translate3d(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px,0) translate(-50%,-50%)';
+      frame = Math.abs(tx - x) + Math.abs(ty - y) > 1 ? requestAnimationFrame(paint) : 0;
+    };
+    window.addEventListener('pointermove', (event) => {
+      const moved = Math.hypot(event.clientX - tx, event.clientY - ty);
+      tx = event.clientX;
+      ty = event.clientY;
+      glow.style.opacity = String(Math.min(0.6, 0.38 + moved / 500));
+      clearTimeout(idle);
+      idle = setTimeout(() => { glow.style.opacity = '0.38'; }, 240);
+      if (!frame) frame = requestAnimationFrame(paint);
+    }, { passive: true });
+  }
+
+  const shot = document.querySelector('.shot img');
+  if (shot) {
+    let box = null;
+    const close = () => {
+      if (!box) return;
+      const closing = box;
+      box = null;
+      closing.classList.remove('open');
+      document.body.classList.remove('lightbox-open');
+      document.body.style.paddingRight = '';
+      setTimeout(() => closing.remove(), 180);
+    };
+    const open = () => {
+      if (box) return;
+      box = document.createElement('div');
+      box.className = 'lightbox';
+      const image = document.createElement('img');
+      image.src = shot.currentSrc || shot.src;
+      image.alt = shot.alt;
+      box.appendChild(image);
+      box.addEventListener('click', (event) => {
+        if (event.target === box || event.target === image) close();
+      });
+      document.body.appendChild(box);
+      const gap = window.innerWidth - document.documentElement.clientWidth;
+      if (gap > 0) document.body.style.paddingRight = gap + 'px';
+      document.body.classList.add('lightbox-open');
+      requestAnimationFrame(() => box.classList.add('open'));
+    };
+    shot.addEventListener('click', () => {
+      if (box) close();
+      else open();
+    });
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') close();
+    });
+  }
+})();
+"#;
+
+/// 页面里的 HTML 一律走这里：脚本只允许带本次响应 nonce 的那一段，
+/// 外部资源一个都不加载。
 fn html(body: String) -> Response {
+    let nonce = util::random_token();
+    let body = body.replace("__CSP_NONCE__", &nonce);
+    let csp = format!(
+        "default-src 'self'; style-src 'self'; img-src 'self' data:; \
+         script-src 'nonce-{nonce}'; base-uri 'none'; form-action 'none'; \
+         frame-ancestors 'none'"
+    );
     let mut response = body.into_response();
     let head = response.headers_mut();
     head.insert(
@@ -31,10 +110,8 @@ fn html(body: String) -> Response {
     );
     head.insert(
         header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(
-            "default-src 'self'; style-src 'self'; img-src 'self' data:; \
-             script-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
-        ),
+        HeaderValue::from_str(&csp)
+            .unwrap_or_else(|_| HeaderValue::from_static("default-src 'none'")),
     );
     head.insert(
         header::X_CONTENT_TYPE_OPTIONS,
@@ -201,9 +278,10 @@ fn layout(title: &str, description: &str, active: &str, body: &str) -> String {
 <link rel="icon" href="/favicon-16.png" type="image/png" sizes="16x16">
 <link rel="apple-touch-icon" href="/favicon-180.png">
 <link rel="manifest" href="/site.webmanifest">
-<link rel="stylesheet" href="/assets/site.css?v=20261116222411">
+<link rel="stylesheet" href="/assets/site.css?v=20261117183407">
 </head>
 <body>
+<div class="pointer-glow" aria-hidden="true"></div>
 <header class="top">
   <a class="brand" href="/"><img src="/assets/logo.svg" alt="" width="30" height="30">ShellAs</a>
   <nav>
@@ -223,12 +301,14 @@ fn layout(title: &str, description: &str, active: &str, body: &str) -> String {
   </div>
   <p class="copyright">© 2026 ShellAs</p>
 </footer>
+<script nonce="__CSP_NONCE__">{}</script>
 </body>
 </html>"#,
         nav("/", "home", "首页"),
         nav("/#why", "", "功能"),
         nav("/download", "download", "下载"),
         nav("/changelog", "changelog", "更新日志"),
+        SITE_JS,
     )
 }
 
@@ -408,11 +488,11 @@ const HOME_INTRO: &str = r##"
     <a class="button" href="/download">下载</a>
     <a class="button ghost" href="#why">功能说明</a>
   </div>
-  <p class="version">v0.1.19 · Windows x64 · Linux x64</p>
+  <p class="version">v0.1.20 · Windows x64 · Linux x64</p>
 </section>
 
 <figure class="shot">
-  <img src="/assets/app.png?v=20261116222411" width="1589" height="797"
+  <img src="/assets/app.png?v=20261117183407" width="1589" height="797"
        alt="ShellAs 主界面：左侧是主机列表，中间是终端，右侧是 AI 助手面板">
   <figcaption>ShellAs 主界面：主机列表、终端和 AI 助手</figcaption>
 </figure>

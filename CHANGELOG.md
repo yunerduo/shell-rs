@@ -6,7 +6,11 @@ One section per version, titled `## [version]`, optionally followed by a date. E
 
 ## [0.1.20]
 
-- From this version the data folder and database file names changed; data from older versions is not read.
+- The product is now named Agree ShellAs; packages and executables use ShellAs / shellas.
+- From this version the data folder and database file names changed; data from older versions is not read. Back up the old `shellrs` data folder before upgrading.
+- Accounts, cloud sync and the built-in AI trial are new.
+- Hosts can be exported and imported, including Xshell `.xts` profiles.
+- Updates are now either recommended or required.
 
 ## [0.1.19]
 
