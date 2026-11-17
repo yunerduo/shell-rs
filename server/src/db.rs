@@ -8,12 +8,13 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use rusqlite::{Connection, OptionalExtension, params};
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::util;
 
 /// 正在升级的库版本，见 [`migrate`]。
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 8;
 
 #[derive(Clone, Debug)]
 pub struct User {
@@ -24,6 +25,71 @@ pub struct User {
     pub quota_bytes: i64,
     pub sync_salt: String,
     pub created_at: String,
+    /// 停用后不能登录、已有会话也立即失效（`session_user` 仍会查出来，
+    /// 由接口层统一拒绝）。
+    pub disabled: bool,
+}
+
+/// 后台用户管理列表里的一行，配额与用量一起带出来。
+#[derive(Clone, Debug)]
+pub struct UserRow {
+    pub id: i64,
+    pub username: String,
+    pub email: Option<String>,
+    pub quota_bytes: i64,
+    /// 快照与同步文档占用的总字节数。
+    pub used_bytes: i64,
+    /// 快照与同步文档的总个数。
+    pub versions: i64,
+    pub created_at: String,
+    pub disabled: bool,
+}
+
+/// 云端同步的一个文档：`settings` 是应用设置，`hosts` 是主机、分组和
+/// 凭据引用（秘密本身不上云）。内容是客户端加密后的密文，服务端不解析。
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct SyncDocument {
+    pub kind: String,
+    pub version: i64,
+    pub size: i64,
+    pub sha256: String,
+    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_version: Option<i64>,
+}
+
+/// 一个已经上传的安装包。`sha256` 在后台按需计算后回填。
+#[derive(Clone, Debug)]
+pub struct ReleasePackage {
+    #[allow(dead_code)] // 由调用方按版本查询，字段保留便于以后按包反查。
+    pub version: String,
+    pub file: String,
+    pub platform: String,
+    pub arch: String,
+    pub size: i64,
+    pub sha256: String,
+    pub downloads: i64,
+    pub uploaded_at: String,
+    pub withdrawn: bool,
+}
+
+/// 一次发布记录：同一个版本可以在 stable 和 beta 各发一次。
+#[derive(Clone, Debug)]
+pub struct ReleaseVersion {
+    pub version: String,
+    pub channel: String,
+    pub severity: String,
+    pub notes: String,
+    pub notes_url: String,
+    pub minimum_version: Option<String>,
+    pub rollout: f64,
+    pub published_at: String,
+    pub withdrawn: bool,
+    pub package_count: i64,
+    pub total_size: i64,
+    pub downloads: i64,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -54,8 +120,152 @@ pub struct AnalyticsEvent {
     pub props: String,
 }
 
+/// 后台管理员。与客户端用户完全分开：管理员不参与同步，也不走注册接口。
+#[derive(Clone, Debug)]
+pub struct AdminUser {
+    pub id: i64,
+    pub username: String,
+    pub password_hash: String,
+    /// `owner` / `publisher` / `viewer`，见 `admin.rs`。
+    pub role: String,
+    pub created_at: String,
+}
+
+/// 官网 `/changelog` 上的一条更新记录，后台可增删改。
+#[derive(Clone, Debug)]
+pub struct ChangelogEntry {
+    pub id: i64,
+    pub version: String,
+    pub channel: String,
+    pub severity: String,
+    pub title: String,
+    pub body: String,
+    pub published_at: String,
+    pub updated_at: String,
+}
+
+/// 一条已发布的清单，后台列表用。
+#[derive(Clone, Debug)]
+pub struct ManifestRow {
+    pub channel: String,
+    pub version: String,
+    pub envelope: String,
+    pub published_at: String,
+    pub withdrawn: bool,
+}
+
+/// 使用记录按某个维度聚合的一行。
+#[derive(Clone, Debug)]
+pub struct UsageRow {
+    pub key: String,
+    pub device_days: i64,
+    pub events: i64,
+}
+
+/// 内置 AI 的唯一一套上游配置。`api_key` 只存服务端，任何接口都不回传。
+#[derive(Clone, Debug)]
+pub struct AiSettings {
+    pub enabled: bool,
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    pub max_context_tokens: i64,
+    pub max_output_tokens: i64,
+    pub temperature: Option<f64>,
+    pub timeout_seconds: i64,
+    pub retry_count: i64,
+    pub daily_request_limit: i64,
+    pub daily_token_limit: i64,
+    pub max_concurrent_per_user: i64,
+    pub max_request_bytes: i64,
+    pub updated_at: String,
+}
+
+impl AiSettings {
+    /// 没有任何配置时的默认值；`enabled` 默认关闭，等管理员在后台打开。
+    pub fn defaults() -> Self {
+        Self {
+            enabled: false,
+            base_url: String::new(),
+            api_key: String::new(),
+            model: String::new(),
+            max_context_tokens: 32_000,
+            max_output_tokens: 4_096,
+            temperature: None,
+            timeout_seconds: 60,
+            retry_count: 1,
+            daily_request_limit: 200,
+            daily_token_limit: 0,
+            max_concurrent_per_user: 2,
+            max_request_bytes: 256 * 1024,
+            updated_at: String::new(),
+        }
+    }
+}
+
+/// 一个用户的今日用量：只有计数，没有内容。
+#[derive(Clone, Debug, Default)]
+pub struct AiUsage {
+    pub requests_today: i64,
+    pub tokens_today: i64,
+}
+
+/// 后台内置 AI 用量列表里的一行。
+#[derive(Clone, Debug)]
+pub struct AiUsageRow {
+    pub id: i64,
+    pub username: String,
+    pub account_disabled: bool,
+    pub ai_enabled: bool,
+    pub requests_today: i64,
+    pub tokens_today: i64,
+    pub requests_total: i64,
+    pub input_tokens_total: i64,
+    pub output_tokens_total: i64,
+    pub last_used_at: Option<String>,
+}
+
+/// 每日限额挡住请求时的原因，接口层据此给 429 与可读文案。
+#[derive(Debug, Error)]
+pub enum AiQuotaError {
+    #[error("今日请求次数已用完")]
+    Requests { used: i64, limit: i64 },
+    #[error("今日 token 已用完")]
+    Tokens { used: i64, limit: i64 },
+    #[error(transparent)]
+    Sql(#[from] rusqlite::Error),
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct UsageTotals {
+    pub events: i64,
+    /// 设备按天匿名，跨天认不出同一台，所以记「设备·天」。
+    pub device_days: i64,
+    pub sessions: i64,
+}
+
+#[derive(Clone, Debug)]
+pub struct RecentUsage {
+    pub name: String,
+    pub app_version: String,
+    pub os_name: String,
+    pub occurred_at: String,
+    pub is_debug: bool,
+}
+
 #[derive(Debug, Error)]
 pub enum SnapshotError {
+    #[error("配额已满")]
+    Quota { used: i64, quota: i64 },
+    #[error(transparent)]
+    Sql(#[from] rusqlite::Error),
+}
+
+/// 同步文档的写入结果。冲突时把服务端最新的那份带回去，客户端据此合并。
+#[derive(Debug, Error)]
+pub enum DocumentError {
+    #[error("版本冲突")]
+    Conflict { latest: Option<Box<SyncDocument>> },
     #[error("配额已满")]
     Quota { used: i64, quota: i64 },
     #[error(transparent)]
@@ -130,18 +340,131 @@ impl Db {
             quota_bytes,
             sync_salt: sync_salt.to_string(),
             created_at,
+            disabled: false,
         })
     }
 
     pub fn user_by_name(&self, username: &str) -> rusqlite::Result<Option<User>> {
         self.conn()
             .query_row(
-                "SELECT id, username, email, password_hash, quota_bytes, sync_salt, created_at
+                "SELECT id, username, email, password_hash, quota_bytes, sync_salt, created_at, disabled
                  FROM users WHERE username = ?1 COLLATE NOCASE",
                 [username],
                 user_row,
             )
             .optional()
+    }
+
+    pub fn user_by_id(&self, id: i64) -> rusqlite::Result<Option<User>> {
+        self.conn()
+            .query_row(
+                "SELECT id, username, email, password_hash, quota_bytes, sync_salt, created_at, disabled
+                 FROM users WHERE id = ?1",
+                [id],
+                user_row,
+            )
+            .optional()
+    }
+
+    /// 后台用户列表：带上配额、用量和版本数。
+    pub fn users(&self) -> rusqlite::Result<Vec<UserRow>> {
+        let conn = self.conn();
+        let mut statement = conn.prepare(
+            "SELECT u.id, u.username, u.email, u.quota_bytes, u.created_at, u.disabled,
+                    COALESCE((SELECT SUM(size) FROM snapshots WHERE user_id = u.id), 0)
+                      + COALESCE((SELECT SUM(size) FROM sync_documents WHERE user_id = u.id), 0),
+                    (SELECT COUNT(*) FROM snapshots WHERE user_id = u.id)
+                      + (SELECT COUNT(*) FROM sync_documents WHERE user_id = u.id)
+             FROM users u ORDER BY u.id",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(UserRow {
+                id: row.get(0)?,
+                username: row.get(1)?,
+                email: row.get(2)?,
+                quota_bytes: row.get(3)?,
+                created_at: row.get(4)?,
+                disabled: row.get(5)?,
+                used_bytes: row.get(6)?,
+                versions: row.get(7)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn set_user_quota(&self, id: i64, quota_bytes: i64) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE users SET quota_bytes = ?2 WHERE id = ?1",
+            params![id, quota_bytes],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_user_disabled(&self, id: i64, disabled: bool) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE users SET disabled = ?2 WHERE id = ?1",
+            params![id, disabled],
+        )?;
+        if disabled {
+            // 停用后已有令牌立刻失效，不用等过期。
+            self.conn()
+                .execute("DELETE FROM sessions WHERE user_id = ?1", [id])?;
+        }
+        Ok(())
+    }
+
+    /// 改口令并让该用户所有已登录会话立即失效。
+    pub fn set_user_password(&self, id: i64, password_hash: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE users SET password_hash = ?2 WHERE id = ?1",
+            params![id, password_hash],
+        )?;
+        self.conn()
+            .execute("DELETE FROM sessions WHERE user_id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// 该用户待验证的新邮箱；没有则为 `None`。
+    pub fn pending_email(&self, user_id: i64) -> rusqlite::Result<Option<String>> {
+        self.conn()
+            .query_row(
+                "SELECT email FROM user_email_changes WHERE user_id = ?1",
+                [user_id],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    /// 记下待验证的新邮箱，同一用户只保留最新的一条。
+    pub fn set_pending_email(&self, user_id: i64, email: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO user_email_changes (user_id, email, created_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(user_id) DO UPDATE SET
+               email = excluded.email,
+               created_at = excluded.created_at",
+            params![user_id, email, util::now()],
+        )?;
+        Ok(())
+    }
+
+    /// 邮箱是否已被别的用户占用（不区分大小写）。
+    pub fn email_taken_by_other(&self, user_id: i64, email: &str) -> rusqlite::Result<bool> {
+        let count: i64 = self.conn().query_row(
+            "SELECT COUNT(*) FROM users
+             WHERE email = ?1 COLLATE NOCASE AND id != ?2",
+            params![email, user_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    /// 删除用户；快照和文档的元数据由外键级联删掉，文件由调用方清理。
+    pub fn delete_user(&self, id: i64) -> rusqlite::Result<bool> {
+        Ok(self
+            .conn()
+            .execute("DELETE FROM users WHERE id = ?1", [id])?
+            > 0)
     }
 
     /// 令牌摘要对应的用户；顺手记一次使用时间，过期会话当场删掉。
@@ -150,12 +473,12 @@ impl Db {
         let found = conn
             .query_row(
                 "SELECT u.id, u.username, u.email, u.password_hash, u.quota_bytes,
-                        u.sync_salt, u.created_at, s.expires_at
+                        u.sync_salt, u.created_at, u.disabled, s.expires_at
                  FROM sessions s JOIN users u ON u.id = s.user_id
                  WHERE s.token_hash = ?1",
                 [token_hash],
                 |row| {
-                    let expires_at: String = row.get(7)?;
+                    let expires_at: String = row.get(8)?;
                     Ok((user_row(row)?, expires_at))
                 },
             )
@@ -233,9 +556,11 @@ impl Db {
             .optional()
     }
 
+    /// 快照与同步文档一共占了多少字节。
     pub fn used_bytes(&self, user_id: i64) -> rusqlite::Result<i64> {
         self.conn().query_row(
-            "SELECT COALESCE(SUM(size), 0) FROM snapshots WHERE user_id = ?1",
+            "SELECT COALESCE((SELECT SUM(size) FROM snapshots WHERE user_id = ?1), 0)
+                  + COALESCE((SELECT SUM(size) FROM sync_documents WHERE user_id = ?1), 0)",
             [user_id],
             |row| row.get(0),
         )
@@ -255,7 +580,8 @@ impl Db {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let used: i64 = tx.query_row(
-            "SELECT COALESCE(SUM(size), 0) FROM snapshots WHERE user_id = ?1",
+            "SELECT COALESCE((SELECT SUM(size) FROM snapshots WHERE user_id = ?1), 0)
+                  + COALESCE((SELECT SUM(size) FROM sync_documents WHERE user_id = ?1), 0)",
             [user_id],
             |row| row.get(0),
         )?;
@@ -333,6 +659,229 @@ impl Db {
         Ok(snapshot)
     }
 
+    // ---- 同步文档 ----
+
+    pub fn documents(&self, user_id: i64) -> rusqlite::Result<Vec<SyncDocument>> {
+        let conn = self.conn();
+        let mut statement = conn.prepare(
+            "SELECT kind, version, size, sha256, created_at, device, base_version
+             FROM sync_documents WHERE user_id = ?1
+             ORDER BY kind, version DESC",
+        )?;
+        let rows = statement.query_map([user_id], document_row)?;
+        rows.collect()
+    }
+
+    pub fn document(
+        &self,
+        user_id: i64,
+        kind: &str,
+        version: i64,
+    ) -> rusqlite::Result<Option<SyncDocument>> {
+        self.conn()
+            .query_row(
+                "SELECT kind, version, size, sha256, created_at, device, base_version
+                 FROM sync_documents WHERE user_id = ?1 AND kind = ?2 AND version = ?3",
+                params![user_id, kind, version],
+                document_row,
+            )
+            .optional()
+    }
+
+    /// 记一份新的同步文档。`base_version` 是客户端基于哪一版改的：
+    /// 服务端最新版变了就返回冲突，让客户端先合并再传。版本号按
+    /// `(用户, 文档)` 递增，只保留最新的 `keep` 份。
+    #[allow(clippy::too_many_arguments)] // 参数都是这次写入直接需要的，拆结构体反而绕。
+    pub fn add_document(
+        &self,
+        user_id: i64,
+        kind: &str,
+        size: i64,
+        sha256: &str,
+        base_version: Option<i64>,
+        device: Option<&str>,
+        quota: i64,
+        keep: i64,
+    ) -> Result<(SyncDocument, Vec<i64>), DocumentError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let latest = tx
+            .query_row(
+                "SELECT kind, version, size, sha256, created_at, device, base_version
+                 FROM sync_documents WHERE user_id = ?1 AND kind = ?2
+                 ORDER BY version DESC LIMIT 1",
+                params![user_id, kind],
+                document_row,
+            )
+            .optional()?;
+        let base_ok = match (&latest, base_version) {
+            (None, None) => true,
+            (Some(latest), Some(base)) => latest.version == base,
+            _ => false,
+        };
+        if !base_ok {
+            return Err(DocumentError::Conflict {
+                latest: latest.map(Box::new),
+            });
+        }
+        let used: i64 = tx.query_row(
+            "SELECT COALESCE((SELECT SUM(size) FROM snapshots WHERE user_id = ?1), 0)
+                  + COALESCE((SELECT SUM(size) FROM sync_documents WHERE user_id = ?1), 0)",
+            [user_id],
+            |row| row.get(0),
+        )?;
+        if used + size > quota {
+            return Err(DocumentError::Quota { used, quota });
+        }
+        let version = latest
+            .as_ref()
+            .map(|latest| latest.version + 1)
+            .unwrap_or(1);
+        let created_at = util::now();
+        tx.execute(
+            "INSERT INTO sync_documents
+               (user_id, kind, version, size, sha256, base_version, created_at, device)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                user_id,
+                kind,
+                version,
+                size,
+                sha256,
+                base_version,
+                created_at,
+                device
+            ],
+        )?;
+        let evicted: Vec<i64> = {
+            let mut statement = tx.prepare(
+                "SELECT version FROM sync_documents WHERE user_id = ?1 AND kind = ?2
+                 ORDER BY version DESC LIMIT -1 OFFSET ?3",
+            )?;
+            let rows =
+                statement.query_map(params![user_id, kind, keep.max(1)], |row| row.get(0))?;
+            rows.collect::<rusqlite::Result<Vec<i64>>>()?
+        };
+        for old in &evicted {
+            tx.execute(
+                "DELETE FROM sync_documents WHERE user_id = ?1 AND kind = ?2 AND version = ?3",
+                params![user_id, kind, old],
+            )?;
+        }
+        tx.commit()?;
+        Ok((
+            SyncDocument {
+                kind: kind.to_string(),
+                version,
+                size,
+                sha256: sha256.to_string(),
+                created_at,
+                device: device.map(str::to_string),
+                base_version,
+            },
+            evicted,
+        ))
+    }
+
+    pub fn delete_document(
+        &self,
+        user_id: i64,
+        kind: &str,
+        version: i64,
+    ) -> rusqlite::Result<Option<SyncDocument>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let found = tx
+            .query_row(
+                "SELECT kind, version, size, sha256, created_at, device, base_version
+                 FROM sync_documents WHERE user_id = ?1 AND kind = ?2 AND version = ?3",
+                params![user_id, kind, version],
+                document_row,
+            )
+            .optional()?;
+        if found.is_some() {
+            tx.execute(
+                "DELETE FROM sync_documents WHERE user_id = ?1 AND kind = ?2 AND version = ?3",
+                params![user_id, kind, version],
+            )?;
+        }
+        tx.commit()?;
+        Ok(found)
+    }
+
+    // ---- 登录失败锁定 ----
+    //
+    // 用户与管理员各用各的 scope（`user` / `admin`），两种登录互不影响：
+    // 拿用户入口刷口令只会锁住用户名，不会牵连后台账号。
+
+    /// 还在锁定中时返回解锁时间。
+    pub fn login_locked_at(&self, scope: &str, name: &str) -> rusqlite::Result<Option<String>> {
+        let locked_until: Option<String> = self
+            .conn()
+            .query_row(
+                "SELECT locked_until FROM login_lockouts WHERE scope = ?1 AND name = ?2",
+                params![scope, name],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(locked_until.filter(|until| !util::is_past(until)))
+    }
+
+    /// 记一次失败；达到 `max_failures` 就锁定 `lock_minutes` 分钟，
+    /// 返回解锁时间。
+    pub fn record_login_failure(
+        &self,
+        scope: &str,
+        name: &str,
+        max_failures: i64,
+        lock_minutes: i64,
+    ) -> rusqlite::Result<String> {
+        let conn = self.conn();
+        let now = util::now();
+        conn.execute(
+            "INSERT INTO login_lockouts (scope, name, failures, locked_until, updated_at)
+             VALUES (?1, ?2, 1, NULL, ?3)
+             ON CONFLICT(scope, name) DO UPDATE SET
+               failures = CASE
+                 WHEN login_lockouts.locked_until IS NOT NULL
+                   AND login_lockouts.locked_until > ?3
+                 THEN login_lockouts.failures
+                 ELSE login_lockouts.failures + 1
+               END,
+               updated_at = excluded.updated_at",
+            params![scope, name, now],
+        )?;
+        let failures: i64 = conn.query_row(
+            "SELECT failures FROM login_lockouts WHERE scope = ?1 AND name = ?2",
+            params![scope, name],
+            |row| row.get(0),
+        )?;
+        let locked_until = if failures >= max_failures {
+            let until = util::later_minutes(lock_minutes);
+            conn.execute(
+                "UPDATE login_lockouts SET locked_until = ?3, failures = 0
+                 WHERE scope = ?1 AND name = ?2",
+                params![scope, name, until],
+            )?;
+            until
+        } else {
+            String::new()
+        };
+        // 顺手清掉一个月没动过的记录，免得被任意用户名撑大。
+        let stale = util::days_ago(30);
+        let _ = conn.execute("DELETE FROM login_lockouts WHERE updated_at < ?1", [stale]);
+        Ok(locked_until)
+    }
+
+    pub fn clear_login_failures(&self, scope: &str, name: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "DELETE FROM login_lockouts WHERE scope = ?1 AND name = ?2",
+            params![scope, name],
+        )?;
+        Ok(())
+    }
+
     /// 存一个通道的签名清单（信封：清单原文 + minisign 签名）。
     pub fn put_manifest(
         &self,
@@ -342,11 +891,12 @@ impl Db {
         published_at: &str,
     ) -> rusqlite::Result<()> {
         self.conn().execute(
-            "INSERT INTO manifests (channel, version, envelope, published_at)
-             VALUES (?1, ?2, ?3, ?4)
+            "INSERT INTO manifests (channel, version, envelope, published_at, withdrawn)
+             VALUES (?1, ?2, ?3, ?4, 0)
              ON CONFLICT(channel, version) DO UPDATE SET
                envelope = excluded.envelope,
-               published_at = excluded.published_at",
+               published_at = excluded.published_at,
+               withdrawn = 0",
             params![channel, version, envelope, published_at],
         )?;
         Ok(())
@@ -356,23 +906,12 @@ impl Db {
     pub fn current_manifest(&self, channel: &str) -> rusqlite::Result<Option<String>> {
         self.conn()
             .query_row(
-                "SELECT envelope FROM manifests WHERE channel = ?1
+                "SELECT envelope FROM manifests WHERE channel = ?1 AND withdrawn = 0
                  ORDER BY published_at DESC, rowid DESC LIMIT 1",
                 [channel],
                 |row| row.get(0),
             )
             .optional()
-    }
-
-    /// 更新日志用：发布过的清单，新的在前。
-    pub fn manifest_history(&self) -> rusqlite::Result<Vec<(String, String)>> {
-        let conn = self.conn();
-        let mut statement = conn.prepare(
-            "SELECT channel, envelope FROM manifests
-             ORDER BY published_at DESC, rowid DESC LIMIT 200",
-        )?;
-        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
-        rows.collect()
     }
 
     /// 当天给设备摘要用的盐：第一次用时生成，第二天换一个，于是同一个
@@ -426,6 +965,591 @@ impl Db {
         }
         tx.commit()
     }
+
+    // ---- 后台管理员 ----
+
+    pub fn admin_count(&self) -> rusqlite::Result<i64> {
+        self.conn()
+            .query_row("SELECT COUNT(*) FROM admin_users", [], |row| row.get(0))
+    }
+
+    pub fn create_admin(
+        &self,
+        username: &str,
+        password_hash: &str,
+        role: &str,
+    ) -> rusqlite::Result<i64> {
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO admin_users (username, password_hash, role, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![username, password_hash, role, util::now()],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn admin_by_name(&self, username: &str) -> rusqlite::Result<Option<AdminUser>> {
+        self.conn()
+            .query_row(
+                "SELECT id, username, password_hash, role, created_at
+                 FROM admin_users WHERE username = ?1 COLLATE NOCASE",
+                [username],
+                admin_row,
+            )
+            .optional()
+    }
+
+    pub fn admin_by_id(&self, id: i64) -> rusqlite::Result<Option<AdminUser>> {
+        self.conn()
+            .query_row(
+                "SELECT id, username, password_hash, role, created_at
+                 FROM admin_users WHERE id = ?1",
+                [id],
+                admin_row,
+            )
+            .optional()
+    }
+
+    pub fn admins(&self) -> rusqlite::Result<Vec<AdminUser>> {
+        let conn = self.conn();
+        let mut statement = conn.prepare(
+            "SELECT id, username, password_hash, role, created_at
+             FROM admin_users ORDER BY id",
+        )?;
+        let rows = statement.query_map([], admin_row)?;
+        rows.collect()
+    }
+
+    pub fn owner_count(&self) -> rusqlite::Result<i64> {
+        self.conn().query_row(
+            "SELECT COUNT(*) FROM admin_users WHERE role = 'owner'",
+            [],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn update_admin_role(&self, id: i64, role: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE admin_users SET role = ?2 WHERE id = ?1",
+            params![id, role],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_admin(&self, id: i64) -> rusqlite::Result<bool> {
+        let removed = self
+            .conn()
+            .execute("DELETE FROM admin_users WHERE id = ?1", [id])?;
+        Ok(removed > 0)
+    }
+
+    pub fn create_admin_session(
+        &self,
+        admin_id: i64,
+        token_hash: &str,
+        expires_at: &str,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO admin_sessions (token_hash, admin_id, created_at, expires_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![token_hash, admin_id, util::now(), expires_at],
+        )?;
+        Ok(())
+    }
+
+    /// 续期一个仍然有效的会话，返回是否续上。
+    pub fn refresh_admin_session(
+        &self,
+        token_hash: &str,
+        expires_at: &str,
+    ) -> rusqlite::Result<bool> {
+        let updated = self.conn().execute(
+            "UPDATE admin_sessions SET expires_at = ?2
+             WHERE token_hash = ?1 AND expires_at > ?3",
+            params![token_hash, expires_at, util::now()],
+        )?;
+        Ok(updated > 0)
+    }
+
+    /// 令牌摘要对应的管理员；过期会话当场删掉。
+    pub fn admin_session(&self, token_hash: &str) -> rusqlite::Result<Option<AdminUser>> {
+        let conn = self.conn();
+        let found = conn
+            .query_row(
+                "SELECT a.id, a.username, a.password_hash, a.role, a.created_at, s.expires_at
+                 FROM admin_sessions s JOIN admin_users a ON a.id = s.admin_id
+                 WHERE s.token_hash = ?1",
+                [token_hash],
+                |row| {
+                    let expires_at: String = row.get(5)?;
+                    Ok((admin_row(row)?, expires_at))
+                },
+            )
+            .optional()?;
+        let Some((admin, expires_at)) = found else {
+            return Ok(None);
+        };
+        if util::is_past(&expires_at) {
+            conn.execute(
+                "DELETE FROM admin_sessions WHERE token_hash = ?1",
+                [token_hash],
+            )?;
+            return Ok(None);
+        }
+        Ok(Some(admin))
+    }
+
+    pub fn delete_admin_session(&self, token_hash: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "DELETE FROM admin_sessions WHERE token_hash = ?1",
+            [token_hash],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_admin_sessions(&self, admin_id: i64) -> rusqlite::Result<()> {
+        self.conn()
+            .execute("DELETE FROM admin_sessions WHERE admin_id = ?1", [admin_id])?;
+        Ok(())
+    }
+
+    pub fn set_admin_password(&self, admin_id: i64, password_hash: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE admin_users SET password_hash = ?2 WHERE id = ?1",
+            params![admin_id, password_hash],
+        )?;
+        Ok(())
+    }
+
+    // ---- 更新记录 ----
+
+    pub fn manifest_rows(&self, limit: i64) -> rusqlite::Result<Vec<ManifestRow>> {
+        let conn = self.conn();
+        let mut statement = conn.prepare(
+            "SELECT channel, version, envelope, published_at, withdrawn FROM manifests
+             ORDER BY published_at DESC, rowid DESC LIMIT ?1",
+        )?;
+        let rows = statement.query_map([limit], |row| {
+            Ok(ManifestRow {
+                channel: row.get(0)?,
+                version: row.get(1)?,
+                envelope: row.get(2)?,
+                published_at: row.get(3)?,
+                withdrawn: row.get(4)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    // ---- 安装包与发布记录 ----
+
+    /// 登记一个安装包。`sha256` 为空表示还没算，保留库里已有的摘要。
+    pub fn upsert_package(
+        &self,
+        version: &str,
+        file: &str,
+        platform: &str,
+        arch: &str,
+        size: i64,
+        sha256: &str,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO release_packages
+               (version, file, platform, arch, size, sha256, downloads, uploaded_at, withdrawn)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, 0)
+             ON CONFLICT(version, file) DO UPDATE SET
+               platform = excluded.platform,
+               arch = excluded.arch,
+               size = excluded.size,
+               sha256 = CASE WHEN excluded.sha256 <> ''
+                             THEN excluded.sha256
+                             ELSE release_packages.sha256 END,
+               uploaded_at = excluded.uploaded_at,
+               withdrawn = 0",
+            params![version, file, platform, arch, size, sha256, util::now()],
+        )?;
+        Ok(())
+    }
+
+    pub fn package(&self, version: &str, file: &str) -> rusqlite::Result<Option<ReleasePackage>> {
+        self.conn()
+            .query_row(
+                "SELECT version, file, platform, arch, size, sha256, downloads,
+                        uploaded_at, withdrawn
+                 FROM release_packages WHERE version = ?1 AND file = ?2",
+                params![version, file],
+                package_row,
+            )
+            .optional()
+    }
+
+    pub fn packages(&self, version: &str) -> rusqlite::Result<Vec<ReleasePackage>> {
+        let conn = self.conn();
+        let mut statement = conn.prepare(
+            "SELECT version, file, platform, arch, size, sha256, downloads,
+                    uploaded_at, withdrawn
+             FROM release_packages WHERE version = ?1 ORDER BY file",
+        )?;
+        let rows = statement.query_map([version], package_row)?;
+        rows.collect()
+    }
+
+    /// 下载次数加一；返回是否确实有过这条记录。
+    pub fn increment_download(&self, version: &str, file: &str) -> rusqlite::Result<bool> {
+        let updated = self.conn().execute(
+            "UPDATE release_packages SET downloads = downloads + 1
+             WHERE version = ?1 AND file = ?2",
+            params![version, file],
+        )?;
+        Ok(updated > 0)
+    }
+
+    pub fn set_packages_withdrawn(&self, version: &str, withdrawn: bool) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE release_packages SET withdrawn = ?2 WHERE version = ?1",
+            params![version, withdrawn],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_manifest_withdrawn(
+        &self,
+        channel: &str,
+        version: &str,
+        withdrawn: bool,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE manifests SET withdrawn = ?3 WHERE channel = ?1 AND version = ?2",
+            params![channel, version, withdrawn],
+        )?;
+        Ok(())
+    }
+
+    /// 记一次发布（同一版本可以在不同通道各记一条），发布即恢复为可用。
+    #[allow(clippy::too_many_arguments)]
+    pub fn put_release_version(
+        &self,
+        version: &str,
+        channel: &str,
+        severity: &str,
+        notes: &str,
+        notes_url: &str,
+        minimum_version: Option<&str>,
+        rollout: f64,
+        published_at: &str,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO release_versions
+               (version, channel, severity, notes, notes_url, minimum_version,
+                rollout, published_at, withdrawn)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)
+             ON CONFLICT(version, channel) DO UPDATE SET
+               severity = excluded.severity,
+               notes = excluded.notes,
+               notes_url = excluded.notes_url,
+               minimum_version = excluded.minimum_version,
+               rollout = excluded.rollout,
+               published_at = excluded.published_at,
+               withdrawn = 0",
+            params![
+                version,
+                channel,
+                severity,
+                notes,
+                notes_url,
+                minimum_version,
+                rollout,
+                published_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn release_version(
+        &self,
+        version: &str,
+        channel: &str,
+    ) -> rusqlite::Result<Option<ReleaseVersion>> {
+        self.conn()
+            .query_row(
+                "SELECT rv.version, rv.channel, rv.severity, rv.notes, rv.notes_url,
+                        rv.minimum_version, rv.rollout, rv.published_at, rv.withdrawn,
+                        (SELECT COUNT(*) FROM release_packages p WHERE p.version = rv.version),
+                        (SELECT COALESCE(SUM(size), 0) FROM release_packages p
+                          WHERE p.version = rv.version),
+                        (SELECT COALESCE(SUM(downloads), 0) FROM release_packages p
+                          WHERE p.version = rv.version)
+                 FROM release_versions rv
+                 WHERE rv.version = ?1 AND rv.channel = ?2",
+                params![version, channel],
+                release_version_row,
+            )
+            .optional()
+    }
+
+    pub fn release_versions(&self, limit: i64) -> rusqlite::Result<Vec<ReleaseVersion>> {
+        let conn = self.conn();
+        let mut statement = conn.prepare(
+            "SELECT rv.version, rv.channel, rv.severity, rv.notes, rv.notes_url,
+                    rv.minimum_version, rv.rollout, rv.published_at, rv.withdrawn,
+                    (SELECT COUNT(*) FROM release_packages p WHERE p.version = rv.version),
+                    (SELECT COALESCE(SUM(size), 0) FROM release_packages p
+                      WHERE p.version = rv.version),
+                    (SELECT COALESCE(SUM(downloads), 0) FROM release_packages p
+                      WHERE p.version = rv.version)
+             FROM release_versions rv
+             ORDER BY rv.published_at DESC, rv.rowid DESC LIMIT ?1",
+        )?;
+        let rows = statement.query_map([limit], release_version_row)?;
+        rows.collect()
+    }
+
+    pub fn set_release_withdrawn(
+        &self,
+        version: &str,
+        channel: &str,
+        withdrawn: bool,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE release_versions SET withdrawn = ?3
+             WHERE version = ?1 AND channel = ?2",
+            params![version, channel, withdrawn],
+        )?;
+        Ok(())
+    }
+
+    /// 这个版本还有几个通道在发（用来决定安装包是否跟着一起撤下）。
+    pub fn active_release_channels(&self, version: &str) -> rusqlite::Result<i64> {
+        self.conn().query_row(
+            "SELECT COUNT(*) FROM release_versions
+             WHERE version = ?1 AND withdrawn = 0",
+            [version],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn changelog_entries(&self) -> rusqlite::Result<Vec<ChangelogEntry>> {
+        let conn = self.conn();
+        let mut statement = conn.prepare(
+            "SELECT id, version, channel, severity, title, body, published_at, updated_at
+             FROM changelog ORDER BY published_at DESC, id DESC",
+        )?;
+        let rows = statement.query_map([], changelog_row)?;
+        rows.collect()
+    }
+
+    pub fn changelog_entry(&self, id: i64) -> rusqlite::Result<Option<ChangelogEntry>> {
+        self.conn()
+            .query_row(
+                "SELECT id, version, channel, severity, title, body, published_at, updated_at
+                 FROM changelog WHERE id = ?1",
+                [id],
+                changelog_row,
+            )
+            .optional()
+    }
+
+    /// 发布时写入更新记录：已有版本保留后台编辑过的正文，只同步通道与分级。
+    pub fn changelog_from_publish(
+        &self,
+        version: &str,
+        channel: &str,
+        severity: &str,
+        body: &str,
+        published_at: &str,
+    ) -> rusqlite::Result<()> {
+        let now = util::now();
+        self.conn().execute(
+            "INSERT INTO changelog (version, channel, severity, title, body, published_at, updated_at)
+             VALUES (?1, ?2, ?3, '', ?4, ?5, ?6)
+             ON CONFLICT(version) DO UPDATE SET
+               channel = excluded.channel,
+               severity = excluded.severity,
+               published_at = excluded.published_at,
+               updated_at = excluded.updated_at",
+            params![version, channel, severity, body, published_at, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn create_changelog(
+        &self,
+        version: &str,
+        channel: &str,
+        severity: &str,
+        title: &str,
+        body: &str,
+        published_at: &str,
+    ) -> rusqlite::Result<i64> {
+        let conn = self.conn();
+        let now = util::now();
+        conn.execute(
+            "INSERT INTO changelog (version, channel, severity, title, body, published_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![version, channel, severity, title, body, published_at, now],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    // 一条更新记录就是这些字段，拆成结构体反而多一层搬运。
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_changelog(
+        &self,
+        id: i64,
+        version: &str,
+        channel: &str,
+        severity: &str,
+        title: &str,
+        body: &str,
+        published_at: &str,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE changelog SET version = ?2, channel = ?3, severity = ?4, title = ?5,
+                    body = ?6, published_at = ?7, updated_at = ?8
+             WHERE id = ?1",
+            params![
+                id,
+                version,
+                channel,
+                severity,
+                title,
+                body,
+                published_at,
+                util::now()
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_changelog(&self, id: i64) -> rusqlite::Result<bool> {
+        let removed = self
+            .conn()
+            .execute("DELETE FROM changelog WHERE id = ?1", [id])?;
+        Ok(removed > 0)
+    }
+
+    // ---- 使用记录聚合 ----
+
+    pub fn usage_totals(&self, since: &str) -> rusqlite::Result<UsageTotals> {
+        self.conn().query_row(
+            "SELECT COUNT(*),
+                    COUNT(DISTINCT device || '|' || substr(occurred_at, 1, 10)),
+                    COUNT(DISTINCT session_id)
+             FROM analytics_events WHERE substr(occurred_at, 1, 10) >= ?1",
+            [since],
+            |row| {
+                Ok(UsageTotals {
+                    events: row.get(0)?,
+                    device_days: row.get(1)?,
+                    sessions: row.get(2)?,
+                })
+            },
+        )
+    }
+
+    /// 每天的事件数与「设备·天」数。
+    pub fn usage_daily(&self, since: &str) -> rusqlite::Result<Vec<UsageRow>> {
+        let conn = self.conn();
+        let mut statement = conn.prepare(
+            "SELECT substr(occurred_at, 1, 10) AS day,
+                    COUNT(DISTINCT device) AS devices, COUNT(*) AS events
+             FROM analytics_events WHERE substr(occurred_at, 1, 10) >= ?1
+             GROUP BY day ORDER BY day",
+        )?;
+        let rows = statement.query_map([since], |row| {
+            Ok(UsageRow {
+                key: row.get(0)?,
+                device_days: row.get(1)?,
+                events: row.get(2)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    fn usage_breakdown(&self, since: &str, column: &str) -> rusqlite::Result<Vec<UsageRow>> {
+        let conn = self.conn();
+        // 列名只来自本文件的常量，不接外部输入。
+        let sql = format!(
+            "SELECT {column} AS key, COUNT(DISTINCT device) AS devices, COUNT(*) AS events
+             FROM analytics_events WHERE substr(occurred_at, 1, 10) >= ?1
+             GROUP BY key ORDER BY devices DESC, events DESC LIMIT 50"
+        );
+        let mut statement = conn.prepare(&sql)?;
+        let rows = statement.query_map([since], |row| {
+            Ok(UsageRow {
+                key: row.get(0)?,
+                device_days: row.get(1)?,
+                events: row.get(2)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn usage_versions(&self, since: &str) -> rusqlite::Result<Vec<UsageRow>> {
+        self.usage_breakdown(since, "app_version")
+    }
+
+    pub fn usage_platforms(&self, since: &str) -> rusqlite::Result<Vec<UsageRow>> {
+        self.usage_breakdown(since, "os_name")
+    }
+
+    pub fn usage_top_events(&self, since: &str, limit: i64) -> rusqlite::Result<Vec<UsageRow>> {
+        let conn = self.conn();
+        let mut statement = conn.prepare(
+            "SELECT name, 0, COUNT(*) AS events FROM analytics_events
+             WHERE substr(occurred_at, 1, 10) >= ?1
+             GROUP BY name ORDER BY events DESC LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![since, limit], |row| {
+            Ok(UsageRow {
+                key: row.get(0)?,
+                device_days: row.get(1)?,
+                events: row.get(2)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn usage_recent(&self, limit: i64) -> rusqlite::Result<Vec<RecentUsage>> {
+        let conn = self.conn();
+        let mut statement = conn.prepare(
+            "SELECT name, app_version, os_name, occurred_at, is_debug
+             FROM analytics_events ORDER BY occurred_at DESC LIMIT ?1",
+        )?;
+        let rows = statement.query_map([limit], |row| {
+            Ok(RecentUsage {
+                name: row.get(0)?,
+                app_version: row.get(1)?,
+                os_name: row.get(2)?,
+                occurred_at: row.get(3)?,
+                is_debug: row.get(4)?,
+            })
+        })?;
+        rows.collect()
+    }
+}
+
+fn admin_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AdminUser> {
+    Ok(AdminUser {
+        id: row.get(0)?,
+        username: row.get(1)?,
+        password_hash: row.get(2)?,
+        role: row.get(3)?,
+        created_at: row.get(4)?,
+    })
+}
+
+fn changelog_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChangelogEntry> {
+    Ok(ChangelogEntry {
+        id: row.get(0)?,
+        version: row.get(1)?,
+        channel: row.get(2)?,
+        severity: row.get(3)?,
+        title: row.get(4)?,
+        body: row.get(5)?,
+        published_at: row.get(6)?,
+        updated_at: row.get(7)?,
+    })
 }
 
 fn user_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
@@ -437,7 +1561,317 @@ fn user_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
         quota_bytes: row.get(4)?,
         sync_salt: row.get(5)?,
         created_at: row.get(6)?,
+        disabled: row.get(7)?,
     })
+}
+
+fn document_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SyncDocument> {
+    Ok(SyncDocument {
+        kind: row.get(0)?,
+        version: row.get(1)?,
+        size: row.get(2)?,
+        sha256: row.get(3)?,
+        created_at: row.get(4)?,
+        device: row.get(5)?,
+        base_version: row.get(6)?,
+    })
+}
+
+fn package_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReleasePackage> {
+    Ok(ReleasePackage {
+        version: row.get(0)?,
+        file: row.get(1)?,
+        platform: row.get(2)?,
+        arch: row.get(3)?,
+        size: row.get(4)?,
+        sha256: row.get(5)?,
+        downloads: row.get(6)?,
+        uploaded_at: row.get(7)?,
+        withdrawn: row.get(8)?,
+    })
+}
+
+fn release_version_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReleaseVersion> {
+    Ok(ReleaseVersion {
+        version: row.get(0)?,
+        channel: row.get(1)?,
+        severity: row.get(2)?,
+        notes: row.get(3)?,
+        notes_url: row.get(4)?,
+        minimum_version: row.get(5)?,
+        rollout: row.get(6)?,
+        published_at: row.get(7)?,
+        withdrawn: row.get(8)?,
+        package_count: row.get(9)?,
+        total_size: row.get(10)?,
+        downloads: row.get(11)?,
+    })
+}
+
+// ---- 内置 AI ----
+
+impl Db {
+    pub fn ai_settings(&self) -> rusqlite::Result<Option<AiSettings>> {
+        self.conn()
+            .query_row(
+                "SELECT enabled, base_url, api_key, model, max_context_tokens,
+                        max_output_tokens, temperature, timeout_seconds, retry_count,
+                        daily_request_limit, daily_token_limit, max_concurrent_per_user,
+                        max_request_bytes, updated_at
+                 FROM ai_settings WHERE id = 1",
+                [],
+                |row| {
+                    Ok(AiSettings {
+                        enabled: row.get(0)?,
+                        base_url: row.get(1)?,
+                        api_key: row.get(2)?,
+                        model: row.get(3)?,
+                        max_context_tokens: row.get(4)?,
+                        max_output_tokens: row.get(5)?,
+                        temperature: row.get(6)?,
+                        timeout_seconds: row.get(7)?,
+                        retry_count: row.get(8)?,
+                        daily_request_limit: row.get(9)?,
+                        daily_token_limit: row.get(10)?,
+                        max_concurrent_per_user: row.get(11)?,
+                        max_request_bytes: row.get(12)?,
+                        updated_at: row.get(13)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    pub fn save_ai_settings(&self, settings: &AiSettings) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO ai_settings (
+               id, enabled, base_url, api_key, model, max_context_tokens,
+               max_output_tokens, temperature, timeout_seconds, retry_count,
+               daily_request_limit, daily_token_limit, max_concurrent_per_user,
+               max_request_bytes, updated_at
+             ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+             ON CONFLICT(id) DO UPDATE SET
+               enabled = excluded.enabled,
+               base_url = excluded.base_url,
+               api_key = excluded.api_key,
+               model = excluded.model,
+               max_context_tokens = excluded.max_context_tokens,
+               max_output_tokens = excluded.max_output_tokens,
+               temperature = excluded.temperature,
+               timeout_seconds = excluded.timeout_seconds,
+               retry_count = excluded.retry_count,
+               daily_request_limit = excluded.daily_request_limit,
+               daily_token_limit = excluded.daily_token_limit,
+               max_concurrent_per_user = excluded.max_concurrent_per_user,
+               max_request_bytes = excluded.max_request_bytes,
+               updated_at = excluded.updated_at",
+            params![
+                settings.enabled,
+                settings.base_url,
+                settings.api_key,
+                settings.model,
+                settings.max_context_tokens,
+                settings.max_output_tokens,
+                settings.temperature,
+                settings.timeout_seconds,
+                settings.retry_count,
+                settings.daily_request_limit,
+                settings.daily_token_limit,
+                settings.max_concurrent_per_user,
+                settings.max_request_bytes,
+                settings.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// 库里还没有配置时，用环境变量播种一次。只播种地址、Key 与模型，
+    /// 总开关保持关闭；之后数据库是运行期的唯一事实来源。
+    pub fn seed_ai_settings(
+        &self,
+        base_url: &str,
+        api_key: &str,
+        model: &str,
+    ) -> rusqlite::Result<bool> {
+        if self.ai_settings()?.is_some() {
+            return Ok(false);
+        }
+        let mut settings = AiSettings::defaults();
+        settings.base_url = base_url.trim().trim_end_matches('/').to_string();
+        settings.api_key = api_key.trim().to_string();
+        settings.model = model.trim().to_string();
+        settings.updated_at = util::now();
+        self.save_ai_settings(&settings)?;
+        Ok(true)
+    }
+
+    /// 没有单独设置过的用户默认开启；行不存在就是开启。
+    pub fn ai_user_enabled(&self, user_id: i64) -> rusqlite::Result<bool> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT enabled FROM ai_user_settings WHERE user_id = ?1",
+                [user_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(true))
+    }
+
+    pub fn set_ai_user_enabled(&self, user_id: i64, enabled: bool) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO ai_user_settings (user_id, enabled, updated_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(user_id) DO UPDATE SET
+               enabled = excluded.enabled, updated_at = excluded.updated_at",
+            params![user_id, enabled, util::now()],
+        )?;
+        Ok(())
+    }
+
+    pub fn ai_usage(&self, user_id: i64, day: &str) -> rusqlite::Result<AiUsage> {
+        self.conn().query_row(
+            "SELECT
+               COALESCE((SELECT requests FROM ai_usage_daily WHERE user_id = ?1 AND day = ?2), 0),
+               COALESCE((SELECT input_tokens + output_tokens FROM ai_usage_daily
+                         WHERE user_id = ?1 AND day = ?2), 0)",
+            params![user_id, day],
+            |row| {
+                Ok(AiUsage {
+                    requests_today: row.get(0)?,
+                    tokens_today: row.get(1)?,
+                })
+            },
+        )
+    }
+
+    /// 接受一次请求：先看今日限额，再同时给当天和累计的请求数 +1。
+    /// 上游失败也照算，避免失败重试变成免费额度。
+    pub fn ai_claim_request(
+        &self,
+        user_id: i64,
+        day: &str,
+        request_limit: i64,
+        token_limit: i64,
+    ) -> Result<AiUsage, AiQuotaError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let (requests, tokens): (i64, i64) = tx
+            .query_row(
+                "SELECT requests, input_tokens + output_tokens FROM ai_usage_daily
+                 WHERE user_id = ?1 AND day = ?2",
+                params![user_id, day],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?
+            .unwrap_or((0, 0));
+        if request_limit > 0 && requests >= request_limit {
+            return Err(AiQuotaError::Requests {
+                used: requests,
+                limit: request_limit,
+            });
+        }
+        if token_limit > 0 && tokens >= token_limit {
+            return Err(AiQuotaError::Tokens {
+                used: tokens,
+                limit: token_limit,
+            });
+        }
+        let now = util::now();
+        tx.execute(
+            "INSERT INTO ai_usage_daily (user_id, day, requests) VALUES (?1, ?2, 1)
+             ON CONFLICT(user_id, day) DO UPDATE SET requests = requests + 1",
+            params![user_id, day],
+        )?;
+        tx.execute(
+            "INSERT INTO ai_usage (user_id, requests, last_used_at) VALUES (?1, 1, ?2)
+             ON CONFLICT(user_id) DO UPDATE SET
+               requests = requests + 1, last_used_at = excluded.last_used_at",
+            params![user_id, now],
+        )?;
+        tx.commit()?;
+        drop(conn);
+        Ok(self.ai_usage(user_id, day)?)
+    }
+
+    /// 请求结束后补记 token；真实值优先，没有真实值就是调用方的估算。
+    pub fn ai_record_tokens(
+        &self,
+        user_id: i64,
+        day: &str,
+        input_tokens: i64,
+        output_tokens: i64,
+    ) -> rusqlite::Result<()> {
+        let input_tokens = input_tokens.max(0);
+        let output_tokens = output_tokens.max(0);
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO ai_usage_daily (user_id, day, input_tokens, output_tokens)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(user_id, day) DO UPDATE SET
+               input_tokens = input_tokens + excluded.input_tokens,
+               output_tokens = output_tokens + excluded.output_tokens",
+            params![user_id, day, input_tokens, output_tokens],
+        )?;
+        tx.execute(
+            "INSERT INTO ai_usage (user_id, input_tokens, output_tokens)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(user_id) DO UPDATE SET
+               input_tokens = input_tokens + excluded.input_tokens,
+               output_tokens = output_tokens + excluded.output_tokens",
+            params![user_id, input_tokens, output_tokens],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// 后台用量列表：按最近使用时间排序，只含计数，不含任何内容。
+    pub fn ai_usage_rows(
+        &self,
+        search: &str,
+        limit: i64,
+        offset: i64,
+        day: &str,
+    ) -> rusqlite::Result<(i64, Vec<AiUsageRow>)> {
+        let pattern = format!("%{}%", search.trim());
+        let conn = self.conn();
+        let total: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM users u
+             WHERE ?1 = '%%' OR u.username LIKE ?1 OR u.email LIKE ?1",
+            [&pattern],
+            |row| row.get(0),
+        )?;
+        let mut statement = conn.prepare(
+            "SELECT u.id, u.username, u.disabled, COALESCE(s.enabled, 1),
+                    COALESCE(d.requests, 0), COALESCE(d.input_tokens + d.output_tokens, 0),
+                    COALESCE(t.requests, 0), COALESCE(t.input_tokens, 0),
+                    COALESCE(t.output_tokens, 0), t.last_used_at
+             FROM users u
+             LEFT JOIN ai_user_settings s ON s.user_id = u.id
+             LEFT JOIN ai_usage_daily d ON d.user_id = u.id AND d.day = ?2
+             LEFT JOIN ai_usage t ON t.user_id = u.id
+             WHERE ?1 = '%%' OR u.username LIKE ?1 OR u.email LIKE ?1
+             ORDER BY COALESCE(t.last_used_at, '') DESC, u.id
+             LIMIT ?3 OFFSET ?4",
+        )?;
+        let rows = statement.query_map(params![pattern, day, limit, offset], |row| {
+            Ok(AiUsageRow {
+                id: row.get(0)?,
+                username: row.get(1)?,
+                account_disabled: row.get(2)?,
+                ai_enabled: row.get(3)?,
+                requests_today: row.get(4)?,
+                tokens_today: row.get(5)?,
+                requests_total: row.get(6)?,
+                input_tokens_total: row.get(7)?,
+                output_tokens_total: row.get(8)?,
+                last_used_at: row.get(9)?,
+            })
+        })?;
+        let rows = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok((total, rows))
+    }
 }
 
 /// 按 `user_version` 一步步往上加：线上的库停在哪个版本都能就地升到最新。
@@ -514,11 +1948,324 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
                day  TEXT PRIMARY KEY,
                salt TEXT NOT NULL
              );
+             CREATE TABLE IF NOT EXISTS manifests (
+               channel      TEXT NOT NULL,
+               version      TEXT NOT NULL,
+               envelope     TEXT NOT NULL,
+               published_at TEXT NOT NULL,
+               PRIMARY KEY (channel, version)
+             );
              PRAGMA user_version = 2;
              COMMIT;",
         )?;
     }
+    if version < 3 {
+        // 后台管理员、后台会话，以及可在后台维护的更新记录。
+        conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE IF NOT EXISTS admin_users (
+               id            INTEGER PRIMARY KEY,
+               username      TEXT NOT NULL UNIQUE,
+               password_hash TEXT NOT NULL,
+               created_at    TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS admin_sessions (
+               token_hash TEXT PRIMARY KEY,
+               admin_id   INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+               created_at TEXT NOT NULL,
+               expires_at TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS admin_sessions_admin
+               ON admin_sessions(admin_id);
+             CREATE TABLE IF NOT EXISTS changelog (
+               id           INTEGER PRIMARY KEY,
+               version      TEXT NOT NULL UNIQUE,
+               channel      TEXT NOT NULL,
+               level        TEXT NOT NULL DEFAULT 'suggested',
+               title        TEXT NOT NULL DEFAULT '',
+               body         TEXT NOT NULL DEFAULT '',
+               published_at TEXT NOT NULL,
+               updated_at   TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS changelog_published
+               ON changelog(published_at);
+             PRAGMA user_version = 3;
+             COMMIT;",
+        )?;
+        // 老库里的发布记录回填成更新记录，页面内容与升级前一致。
+        backfill_changelog(conn)?;
+    }
+    if version < 4 {
+        // 后台角色：owner 全权、publisher 管发布与更新记录、viewer 只读。
+        conn.execute_batch(
+            "BEGIN;
+             ALTER TABLE admin_users ADD COLUMN role TEXT NOT NULL DEFAULT 'owner';
+             PRAGMA user_version = 4;
+             COMMIT;",
+        )?;
+    }
+    if version < 5 {
+        // 更新分级按客户端字段名统一成 severity，旧的 suggested 归到 recommended。
+        conn.execute_batch(
+            "BEGIN;
+             ALTER TABLE changelog RENAME COLUMN level TO severity;
+             UPDATE changelog SET severity =
+               CASE WHEN severity = 'required' THEN 'required' ELSE 'recommended' END;
+             PRAGMA user_version = 5;
+             COMMIT;",
+        )?;
+    }
+    if version < 6 {
+        // 用户停用、后台可撤下的清单、按 settings/hosts 分开的同步文档，
+        // 安装包与发布记录，以及用户/管理员各自独立的登录失败锁定。
+        conn.execute_batch(
+            "BEGIN;
+             ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE manifests ADD COLUMN withdrawn INTEGER NOT NULL DEFAULT 0;
+             CREATE TABLE IF NOT EXISTS sync_documents (
+               id           INTEGER PRIMARY KEY,
+               user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+               kind         TEXT NOT NULL,
+               version      INTEGER NOT NULL,
+               size         INTEGER NOT NULL,
+               sha256       TEXT NOT NULL,
+               base_version INTEGER,
+               created_at   TEXT NOT NULL,
+               device       TEXT,
+               UNIQUE (user_id, kind, version)
+             );
+             CREATE INDEX IF NOT EXISTS sync_documents_user
+               ON sync_documents(user_id, kind, version);
+             CREATE TABLE IF NOT EXISTS release_packages (
+               version     TEXT NOT NULL,
+               file        TEXT NOT NULL,
+               platform    TEXT NOT NULL DEFAULT '',
+               arch        TEXT NOT NULL DEFAULT '',
+               size        INTEGER NOT NULL DEFAULT 0,
+               sha256      TEXT NOT NULL DEFAULT '',
+               downloads   INTEGER NOT NULL DEFAULT 0,
+               uploaded_at TEXT NOT NULL,
+               withdrawn   INTEGER NOT NULL DEFAULT 0,
+               PRIMARY KEY (version, file)
+             );
+             CREATE TABLE IF NOT EXISTS release_versions (
+               version          TEXT NOT NULL,
+               channel          TEXT NOT NULL,
+               severity         TEXT NOT NULL DEFAULT 'recommended',
+               notes            TEXT NOT NULL DEFAULT '',
+               notes_url        TEXT NOT NULL DEFAULT '',
+               minimum_version  TEXT,
+               rollout          REAL NOT NULL DEFAULT 1.0,
+               published_at     TEXT NOT NULL,
+               withdrawn        INTEGER NOT NULL DEFAULT 0,
+               PRIMARY KEY (version, channel)
+             );
+             CREATE INDEX IF NOT EXISTS release_versions_published
+               ON release_versions(published_at);
+             CREATE TABLE IF NOT EXISTS login_lockouts (
+               scope        TEXT NOT NULL,
+               name         TEXT NOT NULL,
+               failures     INTEGER NOT NULL DEFAULT 0,
+               locked_until TEXT,
+               updated_at   TEXT NOT NULL,
+               PRIMARY KEY (scope, name)
+             );
+             PRAGMA user_version = 6;
+             COMMIT;",
+        )?;
+        // 已经发过的版本补一条发布记录，后台一上来就能看到历史。
+        backfill_release_versions(conn)?;
+    }
+    if version < 7 {
+        // 内置 AI：一套上游配置、单用户开关、累计与按天的用量计数。
+        // 只存计数与时间，不存任何对话正文。
+        conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE IF NOT EXISTS ai_settings (
+               id                     INTEGER PRIMARY KEY CHECK (id = 1),
+               enabled                INTEGER NOT NULL DEFAULT 0,
+               base_url               TEXT NOT NULL DEFAULT '',
+               api_key                TEXT NOT NULL DEFAULT '',
+               model                  TEXT NOT NULL DEFAULT '',
+               max_context_tokens     INTEGER NOT NULL DEFAULT 32000,
+               max_output_tokens      INTEGER NOT NULL DEFAULT 4096,
+               temperature            REAL,
+               timeout_seconds        INTEGER NOT NULL DEFAULT 60,
+               retry_count            INTEGER NOT NULL DEFAULT 1,
+               daily_request_limit    INTEGER NOT NULL DEFAULT 200,
+               daily_token_limit      INTEGER NOT NULL DEFAULT 0,
+               max_concurrent_per_user INTEGER NOT NULL DEFAULT 2,
+               max_request_bytes      INTEGER NOT NULL DEFAULT 262144,
+               updated_at             TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS ai_user_settings (
+               user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+               enabled    INTEGER NOT NULL DEFAULT 1,
+               updated_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS ai_usage (
+               user_id       INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+               requests      INTEGER NOT NULL DEFAULT 0,
+               input_tokens  INTEGER NOT NULL DEFAULT 0,
+               output_tokens INTEGER NOT NULL DEFAULT 0,
+               last_used_at  TEXT
+             );
+             CREATE TABLE IF NOT EXISTS ai_usage_daily (
+               user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+               day           TEXT NOT NULL,
+               requests      INTEGER NOT NULL DEFAULT 0,
+               input_tokens  INTEGER NOT NULL DEFAULT 0,
+               output_tokens INTEGER NOT NULL DEFAULT 0,
+               PRIMARY KEY (user_id, day)
+             );
+             CREATE INDEX IF NOT EXISTS ai_usage_daily_day
+               ON ai_usage_daily(day);
+             PRAGMA user_version = 7;
+             COMMIT;",
+        )?;
+    }
+    if version < 8 {
+        // 待验证的新邮箱：还没有邮件通道，先只记录，验证通过前不改
+        // `users.email`。一个用户同时只保留一条待验证记录。
+        conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE IF NOT EXISTS user_email_changes (
+               user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+               email      TEXT NOT NULL,
+               created_at TEXT NOT NULL
+             );
+             PRAGMA user_version = 8;
+             COMMIT;",
+        )?;
+    }
     Ok(())
+}
+
+/// 把已有清单里的版本号、更新说明搬进 `changelog`，已有的行不覆盖。
+fn backfill_changelog(conn: &Connection) -> rusqlite::Result<()> {
+    let mut statement = conn.prepare(
+        "SELECT channel, version, envelope, published_at FROM manifests
+         ORDER BY published_at DESC, rowid DESC",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+        ))
+    })?;
+    let mut manifests = Vec::new();
+    for row in rows {
+        manifests.push(row?);
+    }
+    drop(statement);
+    for (channel, version, envelope, published_at) in manifests {
+        let Some(manifest) = parse_envelope(&envelope) else {
+            continue;
+        };
+        // 老清单只有 level（suggested），新清单是 severity；统一归到两个值。
+        let severity = manifest
+            .get("severity")
+            .and_then(Value::as_str)
+            .or_else(|| manifest.get("level").and_then(Value::as_str))
+            .map(|value| {
+                if value == "required" {
+                    "required"
+                } else {
+                    "recommended"
+                }
+            })
+            .unwrap_or("recommended")
+            .to_string();
+        let notes = manifest
+            .get("notes")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        conn.execute(
+            "INSERT INTO changelog (version, channel, level, title, body, published_at, updated_at)
+             VALUES (?1, ?2, ?3, '', ?4, ?5, ?5)
+             ON CONFLICT(version) DO NOTHING",
+            params![version, channel, severity, notes, published_at],
+        )?;
+    }
+    Ok(())
+}
+
+/// 把已经发过的清单补成发布记录，后台的升级记录一上来就有历史。
+fn backfill_release_versions(conn: &Connection) -> rusqlite::Result<()> {
+    let rows: Vec<(String, String, String, String, bool)> = {
+        let mut statement = conn.prepare(
+            "SELECT channel, version, envelope, published_at, withdrawn FROM manifests
+             ORDER BY published_at",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for (channel, version, envelope, published_at, withdrawn) in rows {
+        let Some(manifest) = parse_envelope(&envelope) else {
+            continue;
+        };
+        let severity = manifest
+            .get("severity")
+            .or_else(|| manifest.get("level"))
+            .and_then(Value::as_str)
+            .map(|severity| {
+                if severity == crate::release::SEVERITY_REQUIRED {
+                    crate::release::SEVERITY_REQUIRED
+                } else {
+                    crate::release::SEVERITY_RECOMMENDED
+                }
+            })
+            .unwrap_or(crate::release::SEVERITY_RECOMMENDED);
+        let notes = manifest.get("notes").and_then(Value::as_str).unwrap_or("");
+        let notes_url = manifest
+            .get("notes_url")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let minimum_version = manifest
+            .get("minimum_version")
+            .and_then(Value::as_str)
+            .filter(|version| !version.is_empty());
+        let rollout = manifest
+            .get("rollout")
+            .and_then(Value::as_f64)
+            .unwrap_or(1.0);
+        conn.execute(
+            "INSERT INTO release_versions
+               (version, channel, severity, notes, notes_url, minimum_version,
+                rollout, published_at, withdrawn)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(version, channel) DO NOTHING",
+            params![
+                version,
+                channel,
+                severity,
+                notes,
+                notes_url,
+                minimum_version,
+                rollout,
+                published_at,
+                withdrawn
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// 信封里的清单原文。迁移时用，解析不了就跳过这一条。
+fn parse_envelope(envelope: &str) -> Option<Value> {
+    let envelope: Value = serde_json::from_str(envelope).ok()?;
+    serde_json::from_str(envelope.get("manifest")?.as_str()?).ok()
 }
 
 #[cfg(test)]
@@ -540,6 +2287,38 @@ mod tests {
         user(&db);
         assert!(db.user_by_name("ALICE").unwrap().is_some());
         assert!(db.user_by_name("bob").unwrap().is_none());
+    }
+
+    #[test]
+    fn a_pending_email_keeps_the_primary_one() {
+        let db = db();
+        let alice = user(&db);
+        let _bob = db
+            .create_user(
+                "bob",
+                Some("bob@example.com"),
+                "$argon2id$hash",
+                "salt",
+                1024,
+            )
+            .unwrap();
+        assert_eq!(db.pending_email(alice.id).unwrap(), None);
+        assert!(
+            db.email_taken_by_other(alice.id, "BOB@example.com")
+                .unwrap()
+        );
+        assert!(
+            !db.email_taken_by_other(alice.id, "carol@example.com")
+                .unwrap()
+        );
+        db.set_pending_email(alice.id, "first@example.com").unwrap();
+        db.set_pending_email(alice.id, "second@example.com")
+            .unwrap();
+        assert_eq!(
+            db.pending_email(alice.id).unwrap().as_deref(),
+            Some("second@example.com")
+        );
+        assert_eq!(db.user_by_id(alice.id).unwrap().unwrap().email, None);
     }
 
     #[test]
@@ -597,7 +2376,89 @@ mod tests {
             db.current_manifest("stable").unwrap().as_deref(),
             Some("new")
         );
+        // 撤下最新版后自动退回上一版，而不是让通道空着。
+        db.set_manifest_withdrawn("stable", "0.2.0", true).unwrap();
+        assert_eq!(
+            db.current_manifest("stable").unwrap().as_deref(),
+            Some("old")
+        );
         assert_eq!(db.current_manifest("beta").unwrap(), None);
+    }
+
+    #[test]
+    fn documents_need_the_latest_base_and_keep_versions_apart() {
+        let db = db();
+        let user = user(&db);
+        let (first, evicted) = db
+            .add_document(user.id, "settings", 10, "a", None, None, 1024, 2)
+            .unwrap();
+        assert_eq!(first.version, 1);
+        assert!(evicted.is_empty());
+        let (second, _) = db
+            .add_document(user.id, "settings", 10, "b", Some(1), None, 1024, 2)
+            .unwrap();
+        assert_eq!(second.version, 2);
+        // 客户端还拿着第 1 版来传，服务端已经到第 2 版，必须让它先合并。
+        assert!(matches!(
+            db.add_document(user.id, "settings", 10, "c", Some(1), None, 1024, 2),
+            Err(DocumentError::Conflict { latest: Some(latest) }) if latest.version == 2
+        ));
+        // settings 与 hosts 各是一条独立的版本链。
+        let (hosts, _) = db
+            .add_document(user.id, "hosts", 10, "h", None, None, 1024, 2)
+            .unwrap();
+        assert_eq!(hosts.version, 1);
+        assert_eq!(db.used_bytes(user.id).unwrap(), 30);
+        let (third, evicted) = db
+            .add_document(user.id, "settings", 10, "c", Some(2), None, 1024, 2)
+            .unwrap();
+        assert_eq!(third.version, 3);
+        assert_eq!(evicted, vec![1]);
+    }
+
+    #[test]
+    fn login_lockouts_are_independent_per_scope() {
+        let db = db();
+        assert!(
+            db.record_login_failure("user", "alice", 2, 15)
+                .unwrap()
+                .is_empty()
+        );
+        let until = db.record_login_failure("user", "alice", 2, 15).unwrap();
+        assert!(!until.is_empty());
+        assert!(db.login_locked_at("user", "alice").unwrap().is_some());
+        // 用户入口被锁不会牵连后台管理员。
+        assert!(db.login_locked_at("admin", "alice").unwrap().is_none());
+        db.clear_login_failures("user", "alice").unwrap();
+        assert!(db.login_locked_at("user", "alice").unwrap().is_none());
+    }
+
+    #[test]
+    fn packages_keep_metadata_and_download_counts() {
+        let db = db();
+        db.upsert_package("0.1.0", "a.dmg", "macos", "aarch64", 100, "hash")
+            .unwrap();
+        assert!(db.increment_download("0.1.0", "a.dmg").unwrap());
+        let package = db.package("0.1.0", "a.dmg").unwrap().unwrap();
+        assert_eq!(package.downloads, 1);
+        assert_eq!(package.sha256, "hash");
+        db.put_release_version(
+            "0.1.0",
+            "stable",
+            "recommended",
+            "notes",
+            "https://example.com/changelog#v0.1.0",
+            None,
+            1.0,
+            "2026-11-16T00:00:00Z",
+        )
+        .unwrap();
+        let records = db.release_versions(10).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].package_count, 1);
+        assert_eq!(records[0].downloads, 1);
+        db.set_packages_withdrawn("0.1.0", true).unwrap();
+        assert!(db.package("0.1.0", "a.dmg").unwrap().unwrap().withdrawn);
     }
 
     #[test]
@@ -632,7 +2493,7 @@ mod tests {
             app_version: "0.1.19".into(),
             os_name: "Windows".into(),
             os_version: "10.0.22631".into(),
-            sdk_version: "shellrs@0.1.19".into(),
+            sdk_version: "shellas@0.1.19".into(),
             is_debug: false,
             props: r#"{"arch":"x86_64"}"#.into(),
         }])
@@ -674,5 +2535,67 @@ mod tests {
         db.analytics_salt("2026-11-16").unwrap();
         db.insert_analytics_events(&[]).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ai_settings_are_seeded_once_and_keep_admin_changes() {
+        let db = db();
+        assert!(db.ai_settings().unwrap().is_none());
+        assert!(
+            db.seed_ai_settings("http://example.test/v1/", "key", "model-a")
+                .unwrap()
+        );
+        let settings = db.ai_settings().unwrap().unwrap();
+        assert_eq!(settings.base_url, "http://example.test/v1");
+        assert_eq!(settings.model, "model-a");
+        assert_eq!(settings.daily_request_limit, 200);
+        assert_eq!(settings.max_concurrent_per_user, 2);
+        assert!(!settings.enabled);
+
+        // 第二次启动不再覆盖后台改过的值。
+        assert!(
+            !db.seed_ai_settings("http://other.test/v1", "key2", "model-b")
+                .unwrap()
+        );
+        let settings = db.ai_settings().unwrap().unwrap();
+        assert_eq!(settings.base_url, "http://example.test/v1");
+        assert_eq!(settings.model, "model-a");
+    }
+
+    #[test]
+    fn ai_claims_count_down_to_the_daily_limit() {
+        let db = db();
+        let user = user(&db);
+        let day = "2026-11-17";
+        let usage = db.ai_claim_request(user.id, day, 2, 0).unwrap();
+        assert_eq!(usage.requests_today, 1);
+        db.ai_record_tokens(user.id, day, 10, 5).unwrap();
+        let usage = db.ai_claim_request(user.id, day, 2, 50).unwrap();
+        assert_eq!(usage.requests_today, 2);
+        assert_eq!(usage.tokens_today, 15);
+        assert!(matches!(
+            db.ai_claim_request(user.id, day, 2, 50),
+            Err(AiQuotaError::Requests { used: 2, limit: 2 })
+        ));
+        assert!(matches!(
+            db.ai_claim_request(user.id, day, 0, 10),
+            Err(AiQuotaError::Tokens {
+                used: 15,
+                limit: 10
+            })
+        ));
+    }
+
+    #[test]
+    fn ai_user_switch_defaults_on_and_is_visible_in_the_list() {
+        let db = db();
+        let user = user(&db);
+        assert!(db.ai_user_enabled(user.id).unwrap());
+        db.set_ai_user_enabled(user.id, false).unwrap();
+        assert!(!db.ai_user_enabled(user.id).unwrap());
+        let (total, rows) = db.ai_usage_rows("", 10, 0, "2026-11-17").unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(rows[0].username, "alice");
+        assert!(!rows[0].ai_enabled);
     }
 }

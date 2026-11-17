@@ -1,4 +1,7 @@
 target
 data
 check.log
-*.json
+.env
+admin-ui/node_modules
+admin-ui/dist
+admin-ui/.eslintcache

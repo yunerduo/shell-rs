@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-only"
 publish = false
-description = "Agree ShellAS 的官网、自建更新与端到端加密云同步服务"
+description = "Agree ShellAs 的官网、自建更新与端到端加密云同步服务"
 
 # 独立于仓库根 workspace：自己的锁文件、自己的发布节奏。
 # 部署见同目录 README.md。
@@ -25,7 +25,7 @@ minisign = "0.7"
 pulldown-cmark = "0.13"
 rand = "0.9"
 # 发布子命令把安装包和清单推到服务器。
-reqwest = { version = "0.13", features = ["blocking"] }
+reqwest = { version = "0.13", features = ["blocking", "json", "stream"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

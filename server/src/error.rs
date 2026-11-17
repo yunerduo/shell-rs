@@ -11,6 +11,10 @@ pub type ApiResult<T> = Result<T, ApiError>;
 pub enum ApiError {
     BadRequest(String),
     Unauthorized,
+    /// 账号或口令不对。与「请先登录」分开，便于后台登录页显示原因。
+    Credentials(String),
+    /// 登录了但角色不够。
+    Forbidden(String),
     NotFound,
     Conflict(String),
     Quota {
@@ -20,6 +24,10 @@ pub enum ApiError {
     TooLarge(String),
     /// 同一个地址短时间内来得太多，隔一会儿再来。
     TooMany(String),
+    /// 失败次数太多，账号被临时锁定。
+    Locked(String),
+    /// 接口位置留好了，功能还没开放。
+    NotImplemented(String),
     Internal(String),
 }
 
@@ -51,6 +59,8 @@ impl IntoResponse for ApiError {
                 "请先登录".to_string(),
                 None,
             ),
+            Self::Credentials(message) => (StatusCode::UNAUTHORIZED, "credentials", message, None),
+            Self::Forbidden(message) => (StatusCode::FORBIDDEN, "forbidden", message, None),
             Self::NotFound => (
                 StatusCode::NOT_FOUND,
                 "not_found",
@@ -66,6 +76,13 @@ impl IntoResponse for ApiError {
             ),
             Self::TooLarge(message) => (StatusCode::PAYLOAD_TOO_LARGE, "too_large", message, None),
             Self::TooMany(message) => (StatusCode::TOO_MANY_REQUESTS, "too_many", message, None),
+            Self::Locked(message) => (StatusCode::TOO_MANY_REQUESTS, "locked", message, None),
+            Self::NotImplemented(message) => (
+                StatusCode::NOT_IMPLEMENTED,
+                "not_implemented",
+                message,
+                None,
+            ),
             Self::Internal(message) => {
                 // 内部细节只进日志，不回给客户端。
                 tracing::error!(error = %message, "接口出错");

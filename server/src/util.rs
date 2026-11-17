@@ -13,7 +13,20 @@ pub fn now() -> String {
 
 /// 一个 RFC 3339 时间往后推 `days` 天。
 pub fn later(days: i64) -> String {
-    let at = Utc::now() + chrono::Duration::days(days);
+    format_at(Utc::now() + chrono::Duration::days(days))
+}
+
+/// 从现在往后推 `minutes` 分钟。
+pub fn later_minutes(minutes: i64) -> String {
+    format_at(Utc::now() + chrono::Duration::minutes(minutes))
+}
+
+/// 从现在往前推 `days` 天，用来清理过期的登录失败记录。
+pub fn days_ago(days: i64) -> String {
+    format_at(Utc::now() - chrono::Duration::days(days))
+}
+
+fn format_at(at: DateTime<Utc>) -> String {
     at.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 

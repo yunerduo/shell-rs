@@ -2,8 +2,9 @@
 //!
 //! 私钥只在这台发布机器上，服务器拿到的是已经签好的信封。清单格式与
 //! 客户端 `src/update/manifest.rs` 一致，trusted comment 是
-//! `shellrs-manifest <channel> <version>`。
+//! `shellas-manifest <channel> <version>`。
 
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -11,16 +12,11 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::Args;
-use serde_json::{Map, json};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 
-/// 一个平台的包：升级用的资产，和给人手动装的安装包可以是同一个文件。
-struct Package {
-    platform: &'static str,
-    file: String,
-    asset: bool,
-    installer: bool,
-}
+use crate::release::{self, FileInfo, SEVERITY_RECOMMENDED};
+use crate::signing;
 
 #[derive(Args)]
 pub struct PublishArgs {
@@ -33,6 +29,9 @@ pub struct PublishArgs {
     /// 通道：stable 或 beta
     #[arg(long, default_value = "stable")]
     pub channel: String,
+    /// 更新分级：recommended（建议）或 required（强制）
+    #[arg(long, default_value = SEVERITY_RECOMMENDED)]
+    pub severity: String,
     /// 更新说明的 Markdown 文件
     #[arg(long)]
     pub notes: Option<PathBuf>,
@@ -57,8 +56,11 @@ pub struct PublishArgs {
 }
 
 pub fn run(args: PublishArgs) -> Result<()> {
-    if args.channel != "stable" && args.channel != "beta" {
+    if !release::valid_channel(&args.channel) {
         bail!("通道只有 stable 和 beta");
+    }
+    if !release::valid_severity(&args.severity) {
+        bail!("更新分级只有 recommended 和 required");
     }
     if !args.dist.is_dir() {
         bail!("找不到安装包目录 {}", args.dist.display());
@@ -71,10 +73,9 @@ pub fn run(args: PublishArgs) -> Result<()> {
         .trim_end_matches('/')
         .to_string();
 
-    let packages = packages(&args.version);
-    let mut assets = Map::new();
-    let mut installers = Map::new();
+    let mut found = BTreeMap::new();
     let mut uploads = Vec::new();
+    let packages = release::packages(&args.version);
     for package in &packages {
         let path = args.dist.join(&package.file);
         if !path.is_file() {
@@ -83,25 +84,19 @@ pub fn run(args: PublishArgs) -> Result<()> {
         }
         let size = path.metadata()?.len();
         let sha256 = sha256_of(&path)?;
-        let url = format!("{base}/releases/{}/{}", args.version, package.file);
-        if package.asset {
-            assets.insert(
-                package.platform.to_string(),
-                json!({ "urls": [url.clone()], "size": size, "sha256": sha256 }),
-            );
-        }
-        if package.installer {
-            installers.insert(package.platform.to_string(), json!(url));
-        }
         println!(
             "{}  {}  {}",
             package.file,
             crate::util::format_bytes(size),
             &sha256[..16]
         );
+        found.insert(package.file.clone(), FileInfo { size, sha256 });
         uploads.push(path);
     }
-    if assets.is_empty() {
+    if !packages
+        .iter()
+        .any(|package| package.asset && found.contains_key(&package.file))
+    {
         bail!("dist 里没有可发布的安装包");
     }
 
@@ -111,18 +106,19 @@ pub fn run(args: PublishArgs) -> Result<()> {
         None => String::new(),
     };
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    let manifest = json!({
-        "schema": 1,
-        "channel": args.channel,
-        "version": args.version,
-        "published_at": now,
-        "minimum_version": null,
-        "rollout": 1.0,
-        "notes": notes,
-        "notes_url": format!("{base}/changelog#{}", args.version),
-        "assets": assets,
-        "installers": installers,
-    });
+    let notes_url = format!("{base}/changelog#v{}", args.version);
+    let manifest = release::build_manifest(
+        &base,
+        &args.channel,
+        &args.version,
+        &args.severity,
+        &notes,
+        Some(&notes_url),
+        None,
+        1.0,
+        &now,
+        &found,
+    );
     let manifest_text = serde_json::to_string_pretty(&manifest)?;
     let signature = sign(&args, &manifest_text)?;
     let envelope = serde_json::to_string_pretty(&json!({
@@ -170,60 +166,6 @@ pub fn run(args: PublishArgs) -> Result<()> {
     Ok(())
 }
 
-fn packages(version: &str) -> Vec<Package> {
-    let setup = format!("ShellRS-{version}-windows-x86_64-setup.exe");
-    let portable = format!("ShellRS-{version}-windows-x86_64-portable.zip");
-    let mac_arm = format!("ShellRS-{version}-macos-aarch64.app.zip");
-    let mac_intel = format!("ShellRS-{version}-macos-x86_64.app.zip");
-    let dmg_arm = format!("ShellRS-{version}-macos-aarch64.dmg");
-    let dmg_intel = format!("ShellRS-{version}-macos-x86_64.dmg");
-    let linux = format!("ShellRS-{version}-linux-x86_64.AppImage");
-    vec![
-        Package {
-            platform: "windows-x86_64",
-            file: setup,
-            asset: true,
-            installer: true,
-        },
-        Package {
-            platform: "windows-x86_64-portable",
-            file: portable,
-            asset: true,
-            installer: true,
-        },
-        Package {
-            platform: "macos-aarch64",
-            file: mac_arm,
-            asset: true,
-            installer: false,
-        },
-        Package {
-            platform: "macos-aarch64",
-            file: dmg_arm,
-            asset: false,
-            installer: true,
-        },
-        Package {
-            platform: "macos-x86_64",
-            file: mac_intel,
-            asset: true,
-            installer: false,
-        },
-        Package {
-            platform: "macos-x86_64",
-            file: dmg_intel,
-            asset: false,
-            installer: true,
-        },
-        Package {
-            platform: "linux-x86_64",
-            file: linux,
-            asset: true,
-            installer: true,
-        },
-    ]
-}
-
 fn sha256_of(path: &Path) -> Result<String> {
     let mut file = BufReader::new(File::open(path)?);
     let mut hasher = Sha256::new();
@@ -239,35 +181,32 @@ fn sha256_of(path: &Path) -> Result<String> {
 }
 
 fn sign(args: &PublishArgs, manifest: &str) -> Result<String> {
-    if !args.minisign_key.is_file() {
-        bail!("找不到 minisign 私钥 {}", args.minisign_key.display());
+    match signing::sign(
+        &args.minisign_key,
+        args.minisign_password.as_deref(),
+        &args.channel,
+        &args.version,
+        manifest,
+    ) {
+        Ok(signature) => Ok(signature),
+        Err(_) if args.minisign_password.is_none() => {
+            // 私钥带口令：交互式发布时问一次，CI 里用 MINISIGN_PASSWORD。
+            print!("minisign 私钥口令：");
+            std::io::stdout().flush()?;
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line)?;
+            let password = line.trim_end().to_string();
+            signing::sign(
+                &args.minisign_key,
+                Some(&password),
+                &args.channel,
+                &args.version,
+                manifest,
+            )
+            .context("私钥口令不对")
+        }
+        Err(error) => Err(error),
     }
-    let secret =
-        match minisign::SecretKey::from_file(&args.minisign_key, args.minisign_password.clone()) {
-            Ok(secret) => secret,
-            Err(_) if args.minisign_password.is_none() => {
-                // 私钥带口令：交互式发布时问一次，CI 里用 MINISIGN_PASSWORD。
-                print!("minisign 私钥口令：");
-                std::io::stdout().flush()?;
-                let mut line = String::new();
-                std::io::stdin().read_line(&mut line)?;
-                let password = line.trim_end().to_string();
-                minisign::SecretKey::from_file(&args.minisign_key, Some(password))
-                    .context("私钥口令不对")?
-            }
-            Err(error) => {
-                return Err(anyhow::Error::new(error).context("读取 minisign 私钥失败"));
-            }
-        };
-    let comment = format!("shellrs-manifest {} {}", args.channel, args.version);
-    let signature = minisign::sign(
-        None,
-        &secret,
-        manifest.as_bytes(),
-        Some(&comment),
-        Some("signature from Agree ShellAS update key"),
-    )?;
-    Ok(signature.into_string())
 }
 
 fn check(response: reqwest::blocking::Response, what: &str) -> Result<()> {
@@ -277,20 +216,4 @@ fn check(response: reqwest::blocking::Response, what: &str) -> Result<()> {
     let status = response.status();
     let body = response.text().unwrap_or_default();
     bail!("{what}失败：HTTP {status} {body}");
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_package_names_match_the_build() {
-        let names: Vec<String> = packages("0.1.19")
-            .into_iter()
-            .map(|package| package.file)
-            .collect();
-        assert!(names.contains(&"ShellRS-0.1.19-windows-x86_64-setup.exe".to_string()));
-        assert!(names.contains(&"ShellRS-0.1.19-macos-aarch64.dmg".to_string()));
-        assert!(names.contains(&"ShellRS-0.1.19-linux-x86_64.AppImage".to_string()));
-    }
 }

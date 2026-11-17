@@ -12,6 +12,14 @@ use crate::util;
 
 const CSS: &str = include_str!("../web/site.css");
 const LOGO: &str = include_str!("../web/logo.svg");
+const APP_PNG: &[u8] = include_bytes!("../web/app.png");
+const FAVICON_ICO: &[u8] = include_bytes!("../web/favicon.ico");
+const FAVICON_16: &[u8] = include_bytes!("../web/favicon-16.png");
+const FAVICON_32: &[u8] = include_bytes!("../web/favicon-32.png");
+const FAVICON_180: &[u8] = include_bytes!("../web/favicon-180.png");
+const FAVICON_192: &[u8] = include_bytes!("../web/favicon-192.png");
+const FAVICON_512: &[u8] = include_bytes!("../web/favicon-512.png");
+const MANIFEST: &str = include_str!("../web/site.webmanifest");
 
 /// 页面里的 HTML 一律走这里，带上 CSP：没有脚本，外部资源一个都不加载。
 fn html(body: String) -> Response {
@@ -40,18 +48,23 @@ fn html(body: String) -> Response {
 }
 
 pub async fn home() -> Response {
+    let body = format!("{HOME_INTRO}{FEATURE_SECTIONS}{DOWNLOAD_CTA}");
     html(layout(
         "SSH 主机管理与文件传输",
-        "Agree ShellAS 是一个免费开源的 SSH 客户端：真终端、主机管理、SFTP 双栏，可选端到端加密的云同步。",
-        "",
-        HOME,
+        "ShellAs 是一个免费开源的 SSH 客户端，支持终端、主机管理和 SFTP 双栏文件传输，可选端到端加密的云同步。",
+        "home",
+        &body,
     ))
+}
+
+pub async fn features() -> Response {
+    axum::response::Redirect::permanent("/#why").into_response()
 }
 
 pub async fn download(State(state): State<AppState>) -> Response {
     html(layout(
         "下载",
-        "下载 Agree ShellAS：Windows、macOS、Linux。",
+        "下载 ShellAs：Windows、macOS、Linux。",
         "download",
         &download_page(&state),
     ))
@@ -60,7 +73,7 @@ pub async fn download(State(state): State<AppState>) -> Response {
 pub async fn changelog(State(state): State<AppState>) -> Response {
     html(layout(
         "更新日志",
-        "Agree ShellAS 每个版本改了什么。",
+        "ShellAs 的版本更新记录。",
         "changelog",
         &changelog_page(&state),
     ))
@@ -106,6 +119,59 @@ pub async fn logo() -> Response {
     response
 }
 
+pub async fn app_image() -> Response {
+    let mut response = APP_PNG.into_response();
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=86400"),
+    );
+    response
+}
+
+/// 站点图标与 manifest：编译进二进制的静态字节，一天缓存。
+fn site_asset(bytes: &'static [u8], content_type: &'static str) -> Response {
+    let mut response = bytes.into_response();
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=86400"),
+    );
+    response
+}
+
+pub async fn favicon_ico() -> Response {
+    site_asset(FAVICON_ICO, "image/x-icon")
+}
+
+pub async fn favicon_16() -> Response {
+    site_asset(FAVICON_16, "image/png")
+}
+
+pub async fn favicon_32() -> Response {
+    site_asset(FAVICON_32, "image/png")
+}
+
+pub async fn favicon_180() -> Response {
+    site_asset(FAVICON_180, "image/png")
+}
+
+pub async fn favicon_192() -> Response {
+    site_asset(FAVICON_192, "image/png")
+}
+
+pub async fn favicon_512() -> Response {
+    site_asset(FAVICON_512, "image/png")
+}
+
+pub async fn manifest() -> Response {
+    site_asset(MANIFEST.as_bytes(), "application/manifest+json")
+}
+
 pub async fn robots() -> Response {
     let mut response =
         "User-agent: *\nDisallow: /api/\nDisallow: /admin/\nDisallow: /releases/\n".into_response();
@@ -127,143 +193,237 @@ fn layout(title: &str, description: &str, active: &str, body: &str) -> String {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} · Agree ShellAS</title>
+<title>{title} · ShellAs</title>
 <meta name="description" content="{description}">
+<link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/assets/site.css">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="icon" href="/favicon-16.png" type="image/png" sizes="16x16">
+<link rel="apple-touch-icon" href="/favicon-180.png">
+<link rel="manifest" href="/site.webmanifest">
+<link rel="stylesheet" href="/assets/site.css?v=20261116222411">
 </head>
 <body>
 <header class="top">
-  <a class="brand" href="/"><img src="/assets/logo.svg" alt="" width="30" height="30">Agree ShellAS</a>
+  <a class="brand" href="/"><img src="/assets/logo.svg" alt="" width="30" height="30">ShellAs</a>
   <nav>
     {}
     {}
     {}
-    <a href="https://github.com/yunerduo/shell-rs" rel="noopener">GitHub</a>
+    {}
   </nav>
 </header>
 <main>
 {body}
 </main>
 <footer class="bottom">
-  <div>
-    <strong>Agree ShellAS</strong>
-    <span>免费开源，基于 ShellRS，GPL-3.0。</span>
+  <div class="foot-main">
+    <p class="foot-brand"><strong>ShellAs</strong> 免费开源，GPL-3.0。</p>
+    <p class="credit">基于 <a href="https://shellrs.com/zh" rel="noopener">ShellRS</a></p>
   </div>
-  <div class="foot-links">
-    <a href="/download">下载</a>
-    <a href="/changelog">更新日志</a>
-    <a href="https://github.com/yunerduo/shell-rs" rel="noopener">源代码</a>
-  </div>
+  <p class="copyright">© 2026 ShellAs</p>
 </footer>
 </body>
 </html>"#,
-        nav("/#features", "features", "功能"),
+        nav("/", "home", "首页"),
+        nav("/#why", "", "功能"),
         nav("/download", "download", "下载"),
         nav("/changelog", "changelog", "更新日志"),
     )
 }
 
-const HOME: &str = r##"
-<section class="hero">
-  <div class="hero-copy">
-    <p class="eyebrow">SSH 客户端 · 主机管理 · SFTP</p>
-    <h1>把服务器<br>装进一个窗口</h1>
-    <p class="lede">
-      Agree ShellAS 是一个免费开源的 SSH 工具。连接、文件、密钥放在一处，
-      本地优先，云同步可选且端到端加密。
-    </p>
-    <div class="actions">
-      <a class="button" href="/download">下载</a>
-      <a class="button ghost" href="#features">看看能做什么</a>
-    </div>
-    <p class="small">Windows · macOS · Linux，x86_64。ARM 版本稍后提供。</p>
-  </div>
-  <div class="hero-art" aria-hidden="true">
-    <div class="window">
-      <div class="window-bar">
-        <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
-        <span class="window-title">web-01 · 终端</span>
-      </div>
-      <div class="window-body">
-        <div class="terminal">
-          <p><span class="user">deploy@web-01</span><span class="muted">:~$</span> ssh prod-db</p>
-          <p class="muted">Connected · Ubuntu 24.04.1 LTS · 12 ms</p>
-          <p><span class="user">deploy@prod-db</span><span class="muted">:~$</span> systemctl status nginx</p>
-          <p class="ok">● nginx.service - A high performance web server</p>
-          <p class="ok">     Active: active (running)</p>
-          <p><span class="user">deploy@prod-db</span><span class="muted">:~$</span> <span class="caret"></span></p>
-        </div>
-        <aside class="sftp">
-          <div class="sftp-head">远程 · /var/www</div>
-          <div class="sftp-row folder">app/</div>
-          <div class="sftp-row folder">static/</div>
-          <div class="sftp-row">deploy.sh</div>
-          <div class="sftp-row">nginx.conf</div>
-          <div class="sftp-tag">上传中 · 62%</div>
-        </aside>
-      </div>
-    </div>
+const FEATURE_SECTIONS: &str = r##"
+<section id="why" class="section">
+  <p class="kicker">为什么选 ShellAs</p>
+  <h2>Xshell 和 WinSCP，合进一个原生窗口</h2>
+  <div class="grid">
+    <article>
+      <h3>原生，GPU 绘制</h3>
+      <p>Rust 编写，界面基于 GPUI，终端也由 GPU 绘制。</p>
+    </article>
+    <article>
+      <h3>一个窗口干完</h3>
+      <p>终端、SFTP 和端口转发并排，标签可以拖成分栏。</p>
+    </article>
+    <article>
+      <h3>秘密只进钥匙串</h3>
+      <p>密码和私钥口令存系统钥匙串，数据库里没有。</p>
+    </article>
   </div>
 </section>
 
-<section id="features" class="section">
-  <h2>一件事做完整</h2>
-  <p class="lede">不是把十种协议都塞进来，而是把 SSH 和文件传输做顺。</p>
+<section class="section">
+  <p class="kicker">SFTP</p>
+  <h2>像 WinSCP 一样的 SFTP</h2>
+  <p class="lede">左边本地、右边远程，沿用熟悉的多选和拖放；上传断了能接着传。</p>
+  <div class="grid two">
+    <article>
+      <h3>断点续传</h3>
+      <p>断线或重启之后，从已经传完的位置继续。</p>
+    </article>
+    <article>
+      <h3>删除进废纸篓</h3>
+      <p>本地删除走系统废纸篓，不跟随符号链接。</p>
+    </article>
+  </div>
+</section>
+
+<section class="section">
+  <p class="kicker">右侧栏</p>
+  <h2>终端旁边，就是服务器的状态</h2>
+  <p class="lede">系统监控、进程、systemd 服务、Docker、GPU 和网络连接跟着当前终端显示，读取都走这条终端的 SSH 连接。</p>
   <div class="grid">
     <article>
-      <h3>真终端</h3>
-      <p>完整的终端模拟，多标签、选区、缩放和搜索。本地终端和远程会话是同一套体验。</p>
+      <h3>系统监控</h3>
+      <p>CPU、内存和网速定时刷新。</p>
     </article>
     <article>
-      <h3>主机管理</h3>
-      <p>分组可以嵌套，主机可以不属于任何分组。搜索、最近连接、系统标记，找一台机器不用翻笔记。</p>
+      <h3>进程和服务</h3>
+      <p>结束进程，启停、重启和设置 systemd 服务。</p>
     </article>
     <article>
-      <h3>SFTP 双栏</h3>
-      <p>左边本地、右边远程，像 WinSCP 一样对着看。上传支持断点续传和冲突确认。</p>
+      <h3>Docker 和 GPU</h3>
+      <p>查看容器、镜像、卷和网络，也能看 GPU 占用。</p>
+    </article>
+  </div>
+</section>
+
+<section class="section">
+  <p class="kicker">端口转发</p>
+  <h2>看得懂的端口转发</h2>
+  <p class="lede">本地、远程和动态转发，每条都有连接示意图，一句话说清从哪进、到哪去。</p>
+  <div class="grid two">
+    <article>
+      <h3>-L / -R / -D</h3>
+      <p>本地、远程和动态转发，动态转发支持 SOCKS5 和 SOCKS4。</p>
     </article>
     <article>
-      <h3>秘密进钥匙串</h3>
-      <p>密码和私钥口令保存在系统钥匙串，数据库里永远不出现秘密。</p>
+      <h3>断线自动重连</h3>
+      <p>连接掉了自动重试，重试次数用完再报失败。</p>
+    </article>
+  </div>
+</section>
+
+<section class="section">
+  <p class="kicker">分栏</p>
+  <h2>终端和文件，并排查看</h2>
+  <p class="lede">把标签拖到任意一边，左右或上下分栏：上面看部署输出，下面看文件传到哪。</p>
+</section>
+
+<section class="section">
+  <p class="kicker">还有这些</p>
+  <h2>为服务器太多的人准备</h2>
+  <div class="grid">
+    <article>
+      <h3>跳板和代理</h3>
+      <p>把已保存的主机串成多级跳板，也可以走 HTTP、SOCKS5 代理。</p>
     </article>
     <article>
-      <h3>本地优先</h3>
-      <p>主机和分组存在本机 SQLite 里，离线也能用。云同步是可选项，不是前提。</p>
+      <h3>共用凭据</h3>
+      <p>密码和密钥凭据多台主机共用一条，也能当场生成 Ed25519 密钥。</p>
     </article>
     <article>
-      <h3>可选云同步</h3>
-      <p>换一台电脑，登录后自动拉回主机、分组和 AI 配置。加密在客户端完成。</p>
+      <h3>从堡垒机打开</h3>
+      <p>JumpServer 等堡垒机的 ssh://、sftp:// 链接直接打开终端或 SFTP，连接不保存。</p>
     </article>
+    <article>
+      <h3>认得你的服务器</h3>
+      <p>连上后识别远程系统并标出徽章；分组可以多层嵌套，也能搜索。</p>
+    </article>
+    <article>
+      <h3>签名的在线更新</h3>
+      <p>更新清单经 minisign 签名，安装包按 SHA-256 校验，后台下载，重启时安装。</p>
+    </article>
+    <article>
+      <h3>独立的 known_hosts</h3>
+      <p>信任新主机密钥前先问你，记录和 ~/.ssh 分开保存。</p>
+    </article>
+  </div>
+</section>
+
+<section class="section">
+  <p class="kicker">AI 助手</p>
+  <h2>多出来的 AI 助手</h2>
+  <p class="lede">连接 OpenAI 或 Anthropic 兼容的模型，在绑定的终端里读日志、查进程、执行命令。遇到报错可以直接把输出交给它，改什么、为什么改都写在对话里。</p>
+  <div class="grid two">
+    <article>
+      <h3>逐条确认</h3>
+      <p>受限模式下每条命令批准后才执行；完全访问跳过确认，黑名单仍拦截。</p>
+    </article>
+    <article>
+      <h3>只动绑定的终端</h3>
+      <p>只能使用你绑定的终端；命令、输出和待审项记入对话和审计记录。</p>
+    </article>
+    <article>
+      <h3>角色和定时任务</h3>
+      <p>角色在对话里用 @ 载入；定时任务无人值守时，写操作进待审。</p>
+    </article>
+    <article>
+      <h3>API Key 存钥匙串</h3>
+      <p>模型的 API Key 存在系统钥匙串，不写进配置、数据库和日志。</p>
+    </article>
+  </div>
+</section>
+
+<section class="section">
+  <div class="split">
+    <div>
+      <p class="kicker">给 AI Agent 用</p>
+      <h2>让 Agent 用上你保存的主机</h2>
+      <p class="lede">启用外部 CLI 后，Claude Code、Codex、OpenCode、WorkBuddy 可以通过 shellas 使用你保存的主机。</p>
+      <p class="muted">ShellAs 代为登录，Agent 拿不到密码；陌生主机或缺密码时直接返回错误码，不弹框。</p>
+    </div>
+    <pre><code><span class="c"># 列出保存的主机</span>
+shellas hosts list
+
+<span class="c"># 执行命令，退出码就是远程命令的退出码</span>
+shellas exec &lt;ID&gt; "uptime &amp;&amp; df -h"
+
+<span class="c"># 传文件，不用交出密码</span>
+shellas upload &lt;ID&gt; ./dist /opt/app</code></pre>
   </div>
 </section>
 
 <section class="section split">
   <div>
-    <h2>同步是加密的，服务器解不开</h2>
-    <p class="lede">
-      登录口令在你的电脑上用 Argon2id 派生出同步密钥，快照用 AES-256-GCM
-      加密后才上传。服务器只保存密文和摘要，所以即使服务器被拿走，
-      里面的内容也读不出来。
-    </p>
-    <p class="muted">
-      代价是：忘记登录口令，云上的备份也就解不开了。请把口令记在自己的密码管理器里。
-    </p>
+    <p class="kicker">同步</p>
+    <h2>云同步的加密方式</h2>
+    <p class="lede">同步密钥由登录口令经 Argon2id 派生，快照用 AES-256-GCM 加密后上传，服务器只存密文。</p>
+    <p class="muted">忘记登录口令，云上的备份无法恢复。</p>
   </div>
   <div class="note-card">
     <h3>服务器密码默认不同步</h3>
-    <p>
-      同步设置里有一项「同步服务器密码」，默认不勾选。只有你手动勾上，
-      密码才会随快照一起加密上传。
-    </p>
-    <p class="small">主机地址、端口、用户名、分组和 AI 配置默认同步。</p>
+    <p>勾选「同步服务器密码」后才随快照加密上传。</p>
+    <p class="small">主机地址、端口、用户名、分组、凭据和代码片段默认同步。</p>
   </div>
 </section>
+"##;
 
+const HOME_INTRO: &str = r##"
+<section class="hero">
+  <p class="eyebrow">&gt; 开源 · GPL-3.0</p>
+  <h1>Agree ShellAs</h1>
+  <p class="lede">用 Rust 编写、由 GPU 渲染的原生跨平台 SSH 客户端：Xshell 式主机管理、WinSCP 式 SFTP、端口转发，外加一个能执行命令的 AI 助手。</p>
+  <div class="actions">
+    <a class="button" href="/download">下载</a>
+    <a class="button ghost" href="#why">功能说明</a>
+  </div>
+  <p class="version">v0.1.19 · Windows x64 · Linux x64</p>
+</section>
+
+<figure class="shot">
+  <img src="/assets/app.png?v=20261116222411" width="1589" height="797"
+       alt="ShellAs 主界面：左侧是主机列表，中间是终端，右侧是 AI 助手面板">
+  <figcaption>ShellAs 主界面：主机列表、终端和 AI 助手</figcaption>
+</figure>
+"##;
+
+const DOWNLOAD_CTA: &str = r##"
 <section class="section cta">
-  <h2>现在就可以用</h2>
-  <p class="lede">下载安装包，不需要注册。要跨设备同步时再注册账号。</p>
-  <a class="button" href="/download">前往下载</a>
+  <p class="kicker">下载</p>
+  <h2>免费开源，Windows 和 Linux 都能用</h2>
+  <p class="lede">安装包不需要注册。</p>
+  <a class="button" href="/download">下载安装包</a>
 </section>
 "##;
 
@@ -271,14 +431,13 @@ const MACOS_HELP: &str = r#"
 <section class="section help">
   <h2>macOS：首次打开需要手动放行</h2>
   <p class="lede">
-    这是一个公益项目，没有购买 Apple 开发者证书，所以安装包没有签名和公证。
-    系统会提示「无法验证开发者」或「已损坏」，按下面的任一方式打开即可。
+    如果 macOS 提示「无法验证开发者」或「已损坏」，按下面任一方式打开即可。
   </p>
   <div class="grid two">
     <article>
       <h3>方式一：右键打开</h3>
       <ol>
-        <li>打开 DMG，把 Agree ShellAS 拖进「应用程序」。</li>
+        <li>打开 DMG，把 ShellAs 拖进「应用程序」。</li>
         <li>在「应用程序」里按住 Control 点按图标，选「打开」。</li>
         <li>弹窗里再点一次「打开」，之后就能正常双击启动。</li>
       </ol>
@@ -286,8 +445,8 @@ const MACOS_HELP: &str = r#"
     <article>
       <h3>方式二：去掉隔离标记</h3>
       <p>如果提示「已损坏，无法打开」，打开「终端」执行：</p>
-      <pre><code>xattr -dr com.apple.quarantine "/Applications/ShellRS.app"</code></pre>
-      <p>然后再打开应用。也可以到「系统设置 › 隐私与安全性」底部点「仍要打开」。</p>
+      <pre><code>xattr -dr com.apple.quarantine "/Applications/ShellAs.app"</code></pre>
+      <p>然后在「系统设置 › 隐私与安全性」底部点「仍要打开」。</p>
     </article>
   </div>
 </section>
@@ -297,8 +456,7 @@ const WINDOWS_HELP: &str = r#"
 <section class="section help">
   <h2>Windows：SmartScreen 提示</h2>
   <p class="lede">
-    安装包没有购买代码签名证书。首次运行时 Windows 可能提示「已保护你的电脑」，
-    点「更多信息」→「仍要运行」即可。
+    如果 Windows 提示「已保护你的电脑」，点「更多信息」→「仍要运行」即可。
   </p>
 </section>
 "#;
@@ -306,9 +464,9 @@ const WINDOWS_HELP: &str = r#"
 const LINUX_HELP: &str = r#"
 <section class="section help">
   <h2>Linux：AppImage</h2>
-  <p class="lede">下载后给它执行权限，然后直接运行。系统里需要 Vulkan 或 OpenGL 的图形驱动。</p>
-  <pre><code>chmod +x ShellRS-*-linux-x86_64.AppImage
-./ShellRS-*-linux-x86_64.AppImage</code></pre>
+  <p class="lede">下载后赋予执行权限，然后直接运行。系统需要 Vulkan 或 OpenGL 图形驱动。</p>
+  <pre><code>chmod +x ShellAs-*-linux-x86_64.AppImage
+./ShellAs-*-linux-x86_64.AppImage</code></pre>
   <p class="small">没有 FUSE 的系统可以加 <code>--appimage-extract-and-run</code>。</p>
 </section>
 "#;
@@ -326,8 +484,6 @@ struct ManifestInfo {
     version: String,
     #[serde(default)]
     published_at: Option<String>,
-    #[serde(default)]
-    notes: String,
     #[serde(default)]
     assets: BTreeMap<String, AssetInfo>,
     #[serde(default)]
@@ -357,7 +513,7 @@ fn download_page(state: &AppState) -> String {
         return format!(
             r#"<section class="narrow">
   <h1>下载</h1>
-  <p class="lede">第一个版本还在准备中。发布后这里会出现各平台的安装包。</p>
+  <p class="lede">还没有发布版本。发布后这里会显示安装包。</p>
 </section>
 {MACOS_HELP}
 {WINDOWS_HELP}
@@ -400,13 +556,13 @@ fn download_page(state: &AppState) -> String {
     let rows = [
         row(
             "Windows 10 / 11（x64）",
-            "安装程序，当前用户安装，不需要管理员权限",
+            "安装程序，按当前用户安装，不需要管理员权限",
             "windows-x86_64",
             installers.get("windows-x86_64").map(String::as_str),
         ),
         row(
             "Windows 便携版（x64）",
-            "解压即用，配置放在同目录的 data 文件夹",
+            "解压即用，配置保存在程序旁的 data 目录",
             "windows-x86_64-portable",
             installers
                 .get("windows-x86_64-portable")
@@ -414,19 +570,19 @@ fn download_page(state: &AppState) -> String {
         ),
         row(
             "macOS · Apple Silicon",
-            "适用于 M1 / M2 / M3 / M4，DMG 安装包",
+            "M1 及更新机型，DMG 安装包",
             "macos-aarch64",
             installers.get("macos-aarch64").map(String::as_str),
         ),
         row(
             "macOS · Intel",
-            "适用于 x86_64 的 Mac，DMG 安装包",
+            "Intel 机型，DMG 安装包",
             "macos-x86_64",
             installers.get("macos-x86_64").map(String::as_str),
         ),
         row(
             "Linux（x86_64）",
-            "AppImage，下载后 chmod +x 直接运行",
+            "AppImage，chmod +x 后直接运行",
             "linux-x86_64",
             installers.get("linux-x86_64").map(String::as_str),
         ),
@@ -435,8 +591,7 @@ fn download_page(state: &AppState) -> String {
 
     format!(
         r#"<section class="narrow">
-  <p class="eyebrow">下载</p>
-  <h1>Agree ShellAS</h1>
+  <h1>下载 ShellAs</h1>
   <p class="lede">{version_line}</p>
   <div class="download-list">{rows}</div>
   <p class="small">ARM 版本（Linux aarch64、Windows on ARM）暂未提供。</p>
@@ -448,56 +603,55 @@ fn download_page(state: &AppState) -> String {
 }
 
 fn changelog_page(state: &AppState) -> String {
-    let history = match state.db.manifest_history() {
-        Ok(history) => history,
+    let entries = match state.db.changelog_entries() {
+        Ok(entries) => entries,
         Err(error) => {
             tracing::error!(error = %error, "读取更新日志失败");
             return "<section class=\"narrow\"><h1>更新日志</h1><p class=\"lede\">暂时读不到发布记录。</p></section>".to_string();
         }
     };
-    let mut seen = std::collections::HashSet::new();
-    let mut entries = String::new();
-    for (channel, envelope) in history {
-        let Some(manifest) = manifest_of(&envelope) else {
-            continue;
-        };
-        if manifest.version.is_empty() || !seen.insert(manifest.version.clone()) {
-            continue;
+    let mut rendered = String::new();
+    for entry in entries {
+        let version = util::escape_html(&entry.version);
+        let date = entry.published_at.get(..10).unwrap_or("");
+        let mut badges = String::new();
+        if entry.channel == "beta" {
+            badges.push_str("<span class=\"badge\">测试版</span>");
         }
-        let version = util::escape_html(&manifest.version);
-        let date = manifest
-            .published_at
-            .as_deref()
-            .and_then(|at| at.get(..10))
-            .unwrap_or("");
-        let badge = if channel == "beta" {
-            "<span class=\"badge\">测试版</span>"
+        if entry.severity == crate::release::SEVERITY_REQUIRED {
+            badges.push_str("<span class=\"badge warn\">强制更新</span>");
+        }
+        let title = if entry.title.trim().is_empty() {
+            String::new()
         } else {
-            ""
+            format!(
+                "<p class=\"release-title\"><strong>{}</strong></p>",
+                util::escape_html(&entry.title)
+            )
         };
-        let notes = if manifest.notes.trim().is_empty() {
+        let notes = if entry.body.trim().is_empty() {
             "<p class=\"muted\">这个版本没有写更新说明。</p>".to_string()
         } else {
-            markdown(&manifest.notes)
+            markdown(&entry.body)
         };
-        entries.push_str(&format!(
+        rendered.push_str(&format!(
             r#"<article class="release" id="v{version}">
-  <h2>{version} {badge}</h2>
+  <h2>{version} {badges}</h2>
+  {title}
   <p class="muted small">{date}</p>
   {notes}
 </article>"#
         ));
     }
-    if entries.is_empty() {
+    if rendered.is_empty() {
         return "<section class=\"narrow\"><h1>更新日志</h1><p class=\"lede\">还没有发布记录。</p></section>".to_string();
     }
     format!(
         r#"<section class="narrow">
-  <p class="eyebrow">更新日志</p>
-  <h1>每个版本改了什么</h1>
-  <p class="lede">清单里的更新说明，按发布时间排列。</p>
+  <h1>更新日志</h1>
+  <p class="lede">按发布时间从新到旧排列。</p>
 </section>
-<section class="section narrow">{entries}</section>"#
+<section class="section narrow">{rendered}</section>"#
     )
 }
 
