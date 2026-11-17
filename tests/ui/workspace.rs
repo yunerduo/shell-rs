@@ -53,6 +53,60 @@ fn tab_close_button_closes_the_terminal_and_disconnects(cx: &mut TestAppContext)
     });
 }
 
+/// Dragging the window takes the pointer down into the platform's own move
+/// loop, which the app hears no mouse up from. The press on the title bar must
+/// therefore never start the window-wide text selection: it could not end, and
+/// would go on growing over whatever text the pointer crossed next.
+#[gpui_kit::test]
+fn a_press_on_the_title_bar_starts_no_window_selection(cx: &mut TestAppContext) {
+    use gpui_kit::base::GlobalState;
+
+    let (handle, _) = open_workspace(cx);
+    in_frame(cx, handle, |window, cx| {
+        // Between the list switch and the commands on the right: title bar,
+        // and nothing on it that owns the press itself.
+        let switch_end = window.find("show-hosts").bounds().right();
+        let commands = window.find("theme-toggle").bounds();
+        let middle = switch_end + (commands.left() - switch_end) * 0.5;
+        click_at(
+            window,
+            point(middle, commands.center().y),
+            Modifiers::none(),
+            cx,
+        );
+        assert!(
+            GlobalState::is_text_selection_suppressed(cx),
+            "the press on the title bar was left to the window"
+        );
+    });
+}
+
+/// The window's resize border lies outside the content, and pressing it starts
+/// a platform resize loop whose mouse up the app never hears. Such a press must
+/// not start the window-wide text selection, or it could not end and would go
+/// on growing over whatever text the pointer crossed next.
+#[gpui_kit::test]
+fn a_press_on_the_window_frame_starts_no_window_selection(cx: &mut TestAppContext) {
+    use gpui_kit::base::GlobalState;
+
+    let (handle, _) = open_workspace(cx);
+    in_frame(cx, handle, |window, cx| {
+        let size = window.viewport_size();
+        // Just outside the content on two sides, as the border's presses come
+        // in.
+        for position in [
+            point(px(-4.), size.height * 0.5),
+            point(size.width * 0.5, size.height + px(4.)),
+        ] {
+            click_at(window, position, Modifiers::none(), cx);
+            assert!(
+                GlobalState::is_text_selection_suppressed(cx),
+                "the press at {position:?} was left to the window"
+            );
+        }
+    });
+}
+
 #[gpui_kit::test]
 async fn closing_every_tab_shows_the_recent_hosts(cx: &mut TestAppContext) {
     let (handle, workspace) = open_workspace(cx);

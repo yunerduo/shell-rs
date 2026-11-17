@@ -1293,6 +1293,53 @@ async fn the_scrollbar_scrolls_back_through_the_history(cx: &mut TestAppContext)
     assert!(!lines.contains("end"), "{lines}");
 }
 
+/// A press belongs to the terminal wherever it lands in the panel, so it never
+/// seeds the window-wide selection that would then grow into the assistant's
+/// text as the pointer moves on.
+#[gpui_kit::test]
+async fn a_press_on_the_terminals_margin_stays_the_terminals(cx: &mut TestAppContext) {
+    use gpui_kit::base::{GlobalState, TextSelection};
+
+    let (handle, _) = open_workspace(cx);
+    in_frame(cx, handle, |window, cx| {
+        window.activate_window();
+        window.click(("terminal-tab", INITIAL_WEB_TERMINAL), cx)
+    });
+    in_frame(cx, handle, |window, cx| window.click("tool-assistant", cx));
+    // The dock takes the panel in once the click's action has run.
+    in_frame(cx, handle, |_, _| {});
+
+    in_frame(cx, handle, |window, cx| {
+        let terminal = window.find(("terminal", INITIAL_WEB_TERMINAL)).bounds();
+        // Over the grid, then on the sliver past its last row and column.
+        for position in [
+            point(terminal.left() + px(2.), terminal.top() + px(2.)),
+            point(terminal.right() - px(1.), terminal.bottom() - px(1.)),
+        ] {
+            click_at(window, position, Modifiers::none(), cx);
+            assert!(
+                GlobalState::is_text_selection_suppressed(cx),
+                "the press at {position:?} was left to the window"
+            );
+        }
+
+        // The pointer then moves onto the assistant beside the terminal: no
+        // selection is under way. The panel's own messages are the only text
+        // it can offer, and a test's panel holds none, so the suppression
+        // above is what really guards this.
+        window.dispatch_event(
+            MouseMoveEvent {
+                position: window.find("assistant-send").bounds().center(),
+                pressed_button: None,
+                modifiers: Modifiers::none(),
+            }
+            .to_platform_input(),
+            cx,
+        );
+        assert!(!TextSelection::has_selection(window, cx));
+    });
+}
+
 /// A selection dragged past the bottom takes the view down with it, step
 /// by step while the pointer stays out there, as in every editor; the wheel
 /// turned while dragging does the same. It stops once let go.

@@ -9,6 +9,7 @@ use alacritty_terminal::term::TermMode;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::COUNT;
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Rgb};
+use gpui_kit::base::GlobalState;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
@@ -1845,13 +1846,21 @@ impl Element for TerminalElement {
                 if !phase.bubble() || !hitbox.is_hovered(window) {
                     return;
                 }
-                let Some(cell) = viewport.cell_at(event.position) else {
-                    return;
-                };
                 let button = match event.button {
                     MouseButton::Left => ReportButton::Left,
                     MouseButton::Middle => ReportButton::Middle,
                     _ => return,
+                };
+                // Every left press in the panel is the terminal's, even off the
+                // grid (the sliver past the last row or column). Left to the
+                // window, such a press would seed the window-wide text
+                // selection, which then grows into whatever text sits beside
+                // the terminal as the pointer moves.
+                if button == ReportButton::Left {
+                    GlobalState::suppress_text_selection(cx);
+                }
+                let Some(cell) = viewport.cell_at(event.position) else {
+                    return;
                 };
                 if button == ReportButton::Left
                     && opens_links(&event.modifiers)
