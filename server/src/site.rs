@@ -278,7 +278,7 @@ fn layout(title: &str, description: &str, active: &str, body: &str) -> String {
 <link rel="icon" href="/favicon-16.png" type="image/png" sizes="16x16">
 <link rel="apple-touch-icon" href="/favicon-180.png">
 <link rel="manifest" href="/site.webmanifest">
-<link rel="stylesheet" href="/assets/site.css?v=20261117183407">
+<link rel="stylesheet" href="/assets/site.css?v=20261117194229">
 </head>
 <body>
 <div class="pointer-glow" aria-hidden="true"></div>
@@ -481,18 +481,18 @@ shellas upload &lt;ID&gt; ./dist /opt/app</code></pre>
 
 const HOME_INTRO: &str = r##"
 <section class="hero">
-  <p class="eyebrow">&gt; 开源 · GPL-3.0</p>
+  <p class="eyebrow">&gt; 免费 · 强大的新一代 SSH 客户端，源自 ShellRS</p>
   <h1>Agree ShellAs</h1>
   <p class="lede">用 Rust 编写、由 GPU 渲染的原生跨平台 SSH 客户端：Xshell 式主机管理、WinSCP 式 SFTP、端口转发，外加一个能执行命令的 AI 助手。</p>
   <div class="actions">
     <a class="button" href="/download">下载</a>
     <a class="button ghost" href="#why">功能说明</a>
   </div>
-  <p class="version">v0.1.20 · Windows x64 · Linux x64</p>
+  <p class="version">v0.1.21 · Windows x64 · Linux x64</p>
 </section>
 
 <figure class="shot">
-  <img src="/assets/app.png?v=20261117183407" width="1589" height="797"
+  <img src="/assets/app.png?v=20261117194229" width="1589" height="797"
        alt="ShellAs 主界面：左侧是主机列表，中间是终端，右侧是 AI 助手面板">
   <figcaption>ShellAs 主界面：主机列表、终端和 AI 助手</figcaption>
 </figure>

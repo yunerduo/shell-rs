@@ -45,8 +45,9 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* 一层很淡的青色光，压在顶部；再叠一层会缓慢平移的方格。
-   两层都在背景，不接收点击，也不参与排版。 */
+/* 一层很淡的青色光，压在顶部；再叠一层会缓慢平移的方格，
+   最上面是一团跟随指针的柔光。三层都在背景，不接收点击，
+   也不参与排版。 */
 body::before {
   content: "";
   position: absolute;
@@ -54,7 +55,7 @@ body::before {
   left: 0;
   right: 0;
   height: 70vh;
-  z-index: -2;
+  z-index: -3;
   pointer-events: none;
   background: radial-gradient(
     ellipse 70% 60% at 50% 0%,
@@ -67,7 +68,7 @@ body::after {
   content: "";
   position: fixed;
   inset: 0;
-  z-index: -1;
+  z-index: -2;
   pointer-events: none;
   background-image:
     linear-gradient(to right, rgba(11, 13, 15, 0.045) 1px, transparent 1px),
@@ -85,6 +86,29 @@ body::after {
   to {
     background-position: -64px -64px;
   }
+}
+
+/* 跟随指针的一团柔光。只改 transform 和 opacity，
+   不读页面内容，也不接收点击。 */
+.pointer-glow {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: -1;
+  width: 44vmax;
+  height: 44vmax;
+  border-radius: 50%;
+  background: radial-gradient(
+    closest-side,
+    rgba(0, 169, 155, 0.16),
+    rgba(0, 169, 155, 0.05) 58%,
+    transparent 76%
+  );
+  filter: blur(48px);
+  opacity: 0.38;
+  pointer-events: none;
+  transform: translate3d(50vw, 32vh, 0) translate(-50%, -50%);
+  will-change: transform, opacity;
 }
 
 a {
@@ -201,7 +225,8 @@ main {
   font-family: var(--mono);
   font-size: 12px;
   letter-spacing: 0.14em;
-  text-transform: uppercase;
+  /* 这行里出现了品牌名 ShellRS，不能整行转大写，否则会变成 SHELLRS。 */
+  text-transform: none;
 }
 
 .eyebrow::before,
@@ -339,7 +364,10 @@ h3 {
 .shot {
   position: relative;
   isolation: isolate;
-  margin: clamp(32px, 4vw, 48px) auto 0;
+  /* 比正文栏宽一档，宽屏上接近视口；窄屏自动退回正文宽度。 */
+  --shot-w: min(1320px, calc(100vw - 2 * var(--gutter)));
+  width: var(--shot-w);
+  margin: clamp(32px, 4vw, 48px) 0 0 calc((100% - var(--shot-w)) / 2);
 }
 
 .shot::before {
@@ -362,6 +390,7 @@ h3 {
   box-shadow:
     0 30px 70px -30px rgba(12, 20, 28, 0.35),
     0 10px 24px -18px rgba(12, 20, 28, 0.25);
+  cursor: zoom-in;
 }
 
 .shot figcaption {
@@ -369,6 +398,50 @@ h3 {
   color: var(--text-muted);
   font-size: 12.5px;
   text-align: center;
+}
+
+/* 点击截图后的放大查看层：图片按比例缩放到视口内，不裁切。 */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(16px, 3vw, 40px);
+  background: rgba(11, 13, 15, 0.84);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.16s ease,
+    visibility 0s linear 0.16s;
+  cursor: zoom-out;
+}
+
+.lightbox.open {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.16s ease;
+}
+
+.lightbox img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  background: var(--surface);
+  box-shadow: 0 34px 90px -34px rgba(0, 0, 0, 0.7);
+  transform: scale(0.985);
+  transition: transform 0.16s ease;
+}
+
+.lightbox.open img {
+  transform: scale(1);
+}
+
+body.lightbox-open {
+  overflow: hidden;
 }
 
 /* 通用区块 */
@@ -548,6 +621,24 @@ h3 {
   color: var(--text-soft);
 }
 
+/* 下载页的说明区：比通用区块紧一档，说明文字不再额外限宽。 */
+.section.help {
+  padding: clamp(24px, 3vw, 32px) 0;
+}
+
+.help h2 {
+  margin-bottom: 10px;
+}
+
+.help .lede {
+  max-width: none;
+  margin-bottom: 16px;
+}
+
+.help .grid {
+  margin-top: 22px;
+}
+
 pre {
   margin: 0;
   padding: 20px 22px;
@@ -579,7 +670,7 @@ pre .c {
 }
 
 .help pre {
-  margin: 12px 0;
+  margin: 10px 0;
 }
 
 /* 下载页 */
@@ -807,9 +898,15 @@ pre .c {
     animation: none;
   }
 
+  .pointer-glow {
+    display: none;
+  }
+
   .button,
   .grid article,
-  .top nav a {
+  .top nav a,
+  .lightbox,
+  .lightbox img {
     transition: none;
   }
 }
