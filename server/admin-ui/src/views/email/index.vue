@@ -16,6 +16,7 @@ import {
   type EmailTemplate,
   type EmailTestResult
 } from "@/api/admin";
+import { formatFullDateTime, formatShortDateTime } from "@/utils/datetime";
 
 defineOptions({ name: "EmailSettings" });
 
@@ -300,7 +301,7 @@ onMounted(async () => {
                 保存并立即生效
               </el-button>
               <span v-if="settings.updatedAt" class="hint ml">
-                上次修改：{{ settings.updatedAt }}
+                上次修改：{{ formatFullDateTime(settings.updatedAt) }}
               </span>
             </el-form-item>
           </el-form>
@@ -394,7 +395,13 @@ onMounted(async () => {
             </div>
           </template>
           <el-table v-loading="sendsLoading" :data="sends" size="small">
-            <el-table-column prop="createdAt" label="时间" width="190" />
+            <el-table-column label="时间" width="120">
+              <template #default="{ row }">
+                <el-tooltip :content="formatFullDateTime(row.createdAt)" placement="top">
+                  <span>{{ formatShortDateTime(row.createdAt) }}</span>
+                </el-tooltip>
+              </template>
+            </el-table-column>
             <el-table-column prop="email" label="邮箱" min-width="200" />
             <el-table-column label="用途" width="160">
               <template #default="{ row }">

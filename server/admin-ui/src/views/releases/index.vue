@@ -14,6 +14,7 @@ import {
   type ReleaseOverview,
   type ReleaseRecord
 } from "@/api/admin";
+import { formatDate, formatFullDateTime, formatShortDateTime } from "@/utils/datetime";
 
 defineOptions({ name: "ReleaseManage" });
 
@@ -79,7 +80,7 @@ function formatBytes(bytes: number) {
 }
 
 function shortDate(at: string) {
-  return at ? at.slice(0, 10) : "";
+  return formatDate(at);
 }
 
 function preview(text: string) {
@@ -321,8 +322,12 @@ onMounted(loadOverview);
             <el-tag :type="severityType(row.severity)" size="small">{{ severityLabel(row.severity) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="发布时间" width="140">
-          <template #default="{ row }">{{ shortDate(row.publishedAt) }}</template>
+        <el-table-column label="发布时间" width="120" align="center">
+          <template #default="{ row }">
+            <el-tooltip :content="formatFullDateTime(row.publishedAt)" placement="top">
+              <span>{{ formatShortDateTime(row.publishedAt) }}</span>
+            </el-tooltip>
+          </template>
         </el-table-column>
         <el-table-column label="状态" width="110">
           <template #default="{ row }">
@@ -361,8 +366,12 @@ onMounted(loadOverview);
               <el-table-column label="下载" width="90">
                 <template #default="{ row: file }">{{ file.downloads }}</template>
               </el-table-column>
-              <el-table-column label="上传时间" width="120">
-                <template #default="{ row: file }">{{ shortDate(file.uploadedAt) }}</template>
+              <el-table-column label="上传时间" width="120" align="center">
+                <template #default="{ row: file }">
+                  <el-tooltip :content="formatFullDateTime(file.uploadedAt)" placement="top">
+                    <span>{{ formatShortDateTime(file.uploadedAt) }}</span>
+                  </el-tooltip>
+                </template>
               </el-table-column>
               <el-table-column label="状态" width="100">
                 <template #default="{ row: file }">
@@ -427,8 +436,12 @@ onMounted(loadOverview);
         <el-table-column label="下载次数" width="110">
           <template #default="{ row }">{{ row.downloads }}</template>
         </el-table-column>
-        <el-table-column label="发布时间" width="140">
-          <template #default="{ row }">{{ shortDate(row.publishedAt) }}</template>
+        <el-table-column label="发布时间" width="120" align="center">
+          <template #default="{ row }">
+            <el-tooltip :content="formatFullDateTime(row.publishedAt)" placement="top">
+              <span>{{ formatShortDateTime(row.publishedAt) }}</span>
+            </el-tooltip>
+          </template>
         </el-table-column>
         <el-table-column label="状态" width="100">
           <template #default="{ row }">

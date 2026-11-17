@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import * as echarts from "echarts";
 import { getUsage, type UsageOverview } from "@/api/admin";
+import { formatFullDateTime, formatShortDateTime } from "@/utils/datetime";
 
 defineOptions({ name: "UsageReport" });
 
@@ -183,7 +184,13 @@ onBeforeUnmount(() => {
         <el-card shadow="never">
           <template #header>最近事件</template>
           <el-table :data="data.recent" size="small">
-            <el-table-column prop="occurredAt" label="时间" width="170" />
+            <el-table-column label="时间" width="120">
+              <template #default="{ row }">
+                <el-tooltip :content="formatFullDateTime(row.occurredAt)" placement="top">
+                  <span>{{ formatShortDateTime(row.occurredAt) }}</span>
+                </el-tooltip>
+              </template>
+            </el-table-column>
             <el-table-column prop="name" label="事件" min-width="150" />
             <el-table-column prop="appVersion" label="版本" width="100" />
             <el-table-column prop="osName" label="系统" width="110" />

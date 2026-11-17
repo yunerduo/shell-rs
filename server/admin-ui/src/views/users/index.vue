@@ -8,6 +8,7 @@ import {
   updateUser,
   type UserAccount
 } from "@/api/admin";
+import { formatFullDateTime, formatShortDateTime } from "@/utils/datetime";
 
 defineOptions({ name: "UserAccounts" });
 
@@ -179,32 +180,42 @@ onMounted(load);
       </div>
     </div>
 
-    <el-table v-loading="loading" :data="filtered" size="small">
-      <el-table-column prop="username" label="账号" min-width="150" />
-      <el-table-column prop="email" label="邮箱" min-width="190">
+    <el-table
+      v-loading="loading"
+      :data="filtered"
+      size="small"
+      table-layout="fixed"
+      class="users-table"
+    >
+      <el-table-column prop="username" label="账号" min-width="100" show-overflow-tooltip />
+      <el-table-column prop="email" label="邮箱" min-width="120">
         <template #default="{ row }">
-          {{ row.email || "—" }}
-          <el-tag v-if="row.email && !row.emailVerified" size="small" type="info">
-            未验证
-          </el-tag>
+          <div class="text-cell">
+            <span class="ellipsis" :title="row.email || '—'">{{ row.email || "—" }}</span>
+            <el-tag v-if="row.email && !row.emailVerified" size="small" type="info">
+              未验证
+            </el-tag>
+          </div>
         </template>
       </el-table-column>
-      <el-table-column prop="phone" label="手机号" min-width="140">
+      <el-table-column prop="phone" label="手机号" min-width="150">
         <template #default="{ row }">
-          {{ row.phone || "—" }}
-          <el-tag v-if="row.phone && !row.phoneVerified" size="small" type="info">
-            未验证
-          </el-tag>
+          <div class="text-cell">
+            <span class="ellipsis" :title="row.phone || '—'">{{ row.phone || "—" }}</span>
+            <el-tag v-if="row.phone && !row.phoneVerified" size="small" type="info">
+              未验证
+            </el-tag>
+          </div>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="90">
+      <el-table-column label="状态" width="70" align="center">
         <template #default="{ row }">
           <el-tag :type="row.disabled ? 'info' : 'success'" size="small">
             {{ row.disabled ? "已停用" : "正常" }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="云同步用量" min-width="220">
+      <el-table-column label="云同步用量" min-width="110">
         <template #default="{ row }">
           <div class="usage">
             <el-progress
@@ -212,27 +223,53 @@ onMounted(load);
               :stroke-width="8"
               :show-text="false"
             />
-            <span class="muted small">
+            <span class="muted small nowrap">
               {{ formatBytes(row.usedBytes) }} / {{ formatBytes(row.quotaBytes) }}
             </span>
           </div>
         </template>
       </el-table-column>
-      <el-table-column prop="versions" label="版本数" width="90" />
-      <el-table-column prop="createdAt" label="注册时间" width="180" />
-      <el-table-column label="操作" width="210" fixed="right">
+      <el-table-column prop="versions" label="版本数" width="56" align="right" />
+      <el-table-column label="注册时间" width="116" align="center">
         <template #default="{ row }">
-          <el-button v-perms="'user:write'" link type="primary" @click="openEdit(row as UserAccount)">
-            配额与状态
-          </el-button>
-          <el-button v-perms="'user:write'" link type="primary" @click="openPassword(row as UserAccount)">
-            重置口令
-          </el-button>
-          <el-button v-perms="'user:write'" link type="danger" @click="remove(row as UserAccount)">
-            删除
-          </el-button>
+          <el-tooltip :content="formatFullDateTime(row.createdAt)" placement="top">
+            <span class="nowrap">{{ formatShortDateTime(row.createdAt) }}</span>
+          </el-tooltip>
         </template>
       </el-table-column>
+      <el-table-column label="操作" width="226" fixed="right" align="center">
+        <template #default="{ row }">
+          <div class="row-actions">
+            <el-button
+              v-perms="'user:write'"
+              link
+              type="primary"
+              @click="openEdit(row as UserAccount)"
+            >
+              配额与状态
+            </el-button>
+            <el-button
+              v-perms="'user:write'"
+              link
+              type="primary"
+              @click="openPassword(row as UserAccount)"
+            >
+              重置口令
+            </el-button>
+            <el-button
+              v-perms="'user:write'"
+              link
+              type="danger"
+              @click="remove(row as UserAccount)"
+            >
+              删除
+            </el-button>
+          </div>
+        </template>
+      </el-table-column>
+      <template #empty>
+        <el-empty description="还没有用户" :image-size="72" />
+      </template>
     </el-table>
 
     <el-dialog v-model="editDialog" title="配额与状态" width="460px" destroy-on-close>
@@ -304,9 +341,42 @@ onMounted(load);
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
 .search {
   width: 220px;
+}
+.text-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.ellipsis {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.text-cell .el-tag {
+  flex: none;
+}
+.row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+.row-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+.nowrap {
+  white-space: nowrap;
+}
+.users-table {
+  width: 100%;
 }
 .usage {
   display: flex;

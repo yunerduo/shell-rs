@@ -8,6 +8,7 @@ import {
   updateChangelog,
   type ChangelogEntry
 } from "@/api/admin";
+import { formatDate, todayLocalDate } from "@/utils/datetime";
 
 defineOptions({ name: "ChangelogManage" });
 
@@ -32,7 +33,7 @@ function resetForm() {
   form.severity = "recommended";
   form.title = "";
   form.body = "";
-  form.publishedAt = new Date().toISOString().slice(0, 10);
+  form.publishedAt = todayLocalDate();
   editingId.value = null;
 }
 
@@ -47,7 +48,7 @@ function severityType(severity: string) {
 }
 
 function shortDate(at: string) {
-  return at ? at.slice(0, 10) : "";
+  return formatDate(at);
 }
 
 async function load() {
@@ -74,7 +75,7 @@ function openEdit(row: ChangelogEntry) {
   form.severity = row.severity;
   form.title = row.title;
   form.body = row.body;
-  form.publishedAt = shortDate(row.publishedAt) || new Date().toISOString().slice(0, 10);
+  form.publishedAt = row.publishedAt ? formatDate(row.publishedAt) : todayLocalDate();
   dialog.value = true;
 }
 

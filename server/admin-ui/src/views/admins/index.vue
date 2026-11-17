@@ -10,6 +10,7 @@ import {
   updateAdmin,
   type AdminAccount
 } from "@/api/admin";
+import { formatFullDateTime, formatShortDateTime } from "@/utils/datetime";
 
 defineOptions({ name: "AdminAccounts" });
 
@@ -183,7 +184,13 @@ onMounted(load);
           <el-tag :type="roleType(row.role)" size="small">{{ roleLabel(row.role) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="createdAt" label="创建时间" width="180" />
+      <el-table-column label="创建时间" width="128" align="center">
+        <template #default="{ row }">
+          <el-tooltip :content="formatFullDateTime(row.createdAt)" placement="top">
+            <span>{{ formatShortDateTime(row.createdAt) }}</span>
+          </el-tooltip>
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="170" fixed="right">
         <template #default="{ row }">
           <el-button v-perms="'admin:write'" link type="primary" @click="openEdit(row as AdminAccount)">
