@@ -98,9 +98,18 @@ impl SshTerminalTransport {
             .connect(&self.config, broker.clone())
             .await
             .map_err(|error| anyhow!(describe_login_error(&error)))?;
+        // The view lays the terminal out as soon as it is drawn and asks for
+        // the window's size, and that request waits here while the
+        // connection is made. The shell must open at the size the grid has
+        // now, not the one the engine started with: a host lays out its
+        // login banner and first prompt for the width it is given, so a
+        // shell opened narrower than the grid wraps its banner where the
+        // grid does not, and the prompt's redraw lands on the wrapped tail.
+        let mut size = initial_size;
+        let mut queued = drain_queued(&mut io_rx, &mut size);
         let mut shutdown = broker.shutdown_receiver();
         let mut channel = tokio::select! {
-            result = open_shell(&handle, "xterm-256color", pty_size(initial_size)) => {
+            result = open_shell(&handle, "xterm-256color", pty_size(size)) => {
                 result.map_err(|error| anyhow!(describe_error(&error)))?
             }
             _ = shutdown.changed() => bail!(describe_error(&ConnectError::Cancelled.into())),
@@ -152,7 +161,7 @@ impl SshTerminalTransport {
                 side = side_queue.pop_front();
             }
             tokio::select! {
-                command = io_rx.recv() => match command {
+                command = next_command(&mut queued, &mut io_rx) => match command {
                     Some(TerminalTransportCommand::Write(bytes) | TerminalTransportCommand::WriteData(bytes)) => {
                         write_shell(&channel, bytes).await.map_err(|error| anyhow!(describe_error(&error)))?;
                     }
@@ -167,7 +176,7 @@ impl SshTerminalTransport {
                             let _ = channel.close().await;
                             let _ = handle.disconnect(
                                 russh::Disconnect::ByApplication,
-                                "ShellRS closed the terminal",
+                                "ShellAs closed the terminal",
                                 "zh-CN",
                             ).await;
                         }).await;
@@ -256,6 +265,35 @@ impl SshTerminalTransport {
             })
             .await;
         Ok(())
+    }
+}
+
+/// Takes what is already queued before the shell is opened, moves `size` to
+/// the newest one asked for — the shell should open at it — and keeps the
+/// rest, in order, for the loop that runs once the shell is up.
+fn drain_queued(
+    commands: &mut tokio_mpsc::UnboundedReceiver<TerminalTransportCommand>,
+    size: &mut TerminalSize,
+) -> VecDeque<TerminalTransportCommand> {
+    let mut queued = VecDeque::new();
+    while let Ok(command) = commands.try_recv() {
+        match command {
+            TerminalTransportCommand::Resize(requested) => *size = requested,
+            command => queued.push_back(command),
+        }
+    }
+    queued
+}
+
+/// The next command to act on: those that waited while the shell was opened,
+/// in the order they came, then the channel.
+async fn next_command(
+    queued: &mut VecDeque<TerminalTransportCommand>,
+    commands: &mut tokio_mpsc::UnboundedReceiver<TerminalTransportCommand>,
+) -> Option<TerminalTransportCommand> {
+    match queued.pop_front() {
+        Some(command) => Some(command),
+        None => commands.recv().await,
     }
 }
 
@@ -1242,9 +1280,7 @@ mod tests {
         let (result, stdout, _) = run_cli_command(&host, &known_hosts, keychain);
         let error = result.unwrap_err();
         assert_eq!(error.kind, crate::ssh::ExecErrorKind::HostKeyUnknown);
-        assert!(
-            crate::ssh::describe_exec_error(&error).contains("请先在 Agree ShellAS 中连接一次")
-        );
+        assert!(crate::ssh::describe_exec_error(&error).contains("请先在 ShellAs 中连接一次"));
         assert!(stdout.is_empty());
         // Nothing was trusted on the user's behalf.
         assert!(!known_hosts.exists());
@@ -2515,5 +2551,43 @@ mod tests {
             .expect("the terminal did not stop")
             .unwrap();
         changed.worker.join().unwrap();
+    }
+
+    /// The view asks for the window's size while the connection is being
+    /// made. The shell has to open at that size: opened narrower than the
+    /// grid, a host wraps its login banner where the grid does not, and the
+    /// prompt written afterwards lands on the wrapped tail.
+    #[test]
+    fn a_shell_opens_at_the_size_asked_for_before_it_did() {
+        let (commands, mut receiver) = tokio_mpsc::unbounded_channel();
+        let first = TerminalSize::new(46, 30, 8, 16);
+        let newest = TerminalSize::new(52, 31, 8, 16);
+        commands
+            .send(TerminalTransportCommand::Write(b"typed".to_vec()))
+            .unwrap();
+        commands
+            .send(TerminalTransportCommand::Resize(first))
+            .unwrap();
+        commands
+            .send(TerminalTransportCommand::WriteData(b"zmodem".to_vec()))
+            .unwrap();
+        commands
+            .send(TerminalTransportCommand::Resize(newest))
+            .unwrap();
+
+        let mut size = TerminalSize::DEFAULT;
+        let queued = drain_queued(&mut receiver, &mut size);
+
+        assert_eq!(size, newest, "the shell opens at the newest size asked for");
+        assert_eq!(queued.len(), 2, "the other commands wait for the shell");
+        assert!(matches!(
+            queued.front(),
+            Some(TerminalTransportCommand::Write(bytes)) if bytes.as_slice() == b"typed"
+        ));
+        assert!(matches!(
+            queued.back(),
+            Some(TerminalTransportCommand::WriteData(bytes)) if bytes.as_slice() == b"zmodem"
+        ));
+        assert!(receiver.try_recv().is_err(), "nothing is left behind");
     }
 }
