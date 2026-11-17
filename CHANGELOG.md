@@ -17,7 +17,7 @@ One section per version, titled `## [version]`, optionally followed by a date. E
 ### Improved
 
 - Updates are now recommended or required, and a version that is too old asks you to update first.
-- Interface and naming: the product is now Agree ShellAs; packages and executables use ShellAs / shellas. The data folder and database file names changed to shellas; data from older versions is not read, so back up the old `shellrs` data folder before upgrading.
+- Interface and naming: the product is now ShellAs; packages and executables use ShellAs / shellas. The data folder and database file names changed to shellas; data from older versions is not read.
 - A remote terminal opens at the size it queued while connecting, so resizing the window no longer leaves it misaligned.
 - Pressing at a pane corner no longer starts a global text selection; error and exit messages use the ShellAs name.
 
