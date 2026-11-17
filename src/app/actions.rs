@@ -45,6 +45,11 @@ gpui_kit::actions!(
         /// Open the import dialog for Xshell's sessions: a `.xts` export,
         /// a `.xsh` file, or the `Sessions` folder.
         ImportXshell,
+        /// Export the saved hosts and groups to a file, sealed by a password
+        /// when the user asks for one.
+        ExportHosts,
+        /// Import the hosts and groups in a file an export wrote.
+        ImportHostsFile,
         /// Open a new local login-shell terminal.
         NewLocalTerminal,
         /// Start 命令广播, which turns terminal tab marks into checkboxes,
@@ -232,9 +237,9 @@ gpui_kit::actions!(
         FitPreview,
         /// Show the previewed image at its own size (100%).
         ActualSizePreview,
-        /// Put the `shellrs` command on the PATH.
+        /// Put the `shellas` command on the PATH.
         InstallCliCommand,
-        /// Take the `shellrs` command off the PATH.
+        /// Take the `shellas` command off the PATH.
         RemoveCliCommand,
         /// Look again at what of the external CLI is installed.
         RefreshCliIntegration,
@@ -281,8 +286,38 @@ gpui_kit::actions!(
         ChangeSyncPassword,
         /// Open 关闭同步.
         TurnOffSync,
+        /// Open the optional account's login dialog, on its 登录 tab.
+        SignInAccount,
+        /// Open the optional account's login dialog, on its 注册 tab.
+        RegisterAccount,
+        /// Sign out of the optional account. Local hosts, terminals, SFTP
+        /// and settings stay as they are.
+        SignOutAccount,
+        /// Open 设置 › 账号.
+        OpenAccountSettings,
+        /// Upload the settings and hosts documents to the account's cloud
+        /// sync now.
+        UploadCloudSyncNow,
+        /// Choose a picture for the account's avatar.
+        ChangeAccountAvatar,
+        /// Open the dialog that edits the account's nickname.
+        EditAccountNickname,
     ]
 );
+
+/// Turn the account's cloud sync on or off, from 设置 › 账号.
+#[derive(Action, Clone, PartialEq, Eq)]
+#[action(namespace = shellrs, no_json)]
+pub struct SetCloudSync {
+    pub enabled: bool,
+}
+
+/// Keep the account's cloud sync password in the system keychain.
+#[derive(Action, Clone, PartialEq, Eq)]
+#[action(namespace = shellrs, no_json)]
+pub struct SetRememberSyncPassword {
+    pub enabled: bool,
+}
 
 /// Commands that carry the id of what they act on.
 macro_rules! id_actions {

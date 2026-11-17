@@ -1,6 +1,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use gpui_kit::base::{GlobalState, TextSelection};
 use gpui_kit::component::{
     ActiveTheme as _, IconName, Selectable as _, Sizable as _, TITLE_BAR_HEIGHT, TitleBar,
     button::{Button, ButtonGroup, ButtonVariants as _},
@@ -38,7 +39,7 @@ pub fn render_title_bar(
     view: EntityId,
     target: &FocusHandle,
     cx: &App,
-) -> TitleBar {
+) -> impl IntoElement {
     let dark = cx.theme().is_dark();
     let (mode, quick, temporary, new_local, theme, show_update) = (
         target.clone(),
@@ -51,153 +52,219 @@ pub fn render_title_bar(
     // The title bar drags the window on mouse down; keep clicks on its
     // controls from starting a drag.
     let no_drag = |_: &MouseDownEvent, _: &mut Window, cx: &mut App| cx.stop_propagation();
-    TitleBar::new()
+    // Dragging the window takes the pointer down into the platform's own
+    // move loop, which the app hears no mouse up from. A text selection that
+    // press started would therefore never end, and would go on growing over
+    // whatever text the pointer crossed next — the assistant's, say.
+    div()
+        .flex_shrink_0()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| {
+            GlobalState::suppress_text_selection(cx);
+        })
         .child(
-            h_flex()
-                .gap_3()
+            TitleBar::new()
                 .child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(crate::app::PRODUCT_NAME),
+                    h_flex()
+                        .gap_3()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(crate::app::WINDOW_TITLE),
+                        )
+                        .child(
+                            // Which list the sidebar shows. The choice stays marked
+                            // while that list is up, and a hidden sidebar marks none.
+                            div()
+                                .relative()
+                                .on_mouse_down(MouseButton::Left, no_drag)
+                                .child(switch_end.measure(view))
+                                .child(
+                                    ButtonGroup::new("sidebar-mode")
+                                        .ghost()
+                                        .small()
+                                        .child(
+                                            Button::new("show-hosts")
+                                                .icon(CatalogIcon::Server)
+                                                .tooltip(t!("workspace.title_bar.hosts"))
+                                                .accessibility_label(t!(
+                                                    "workspace.title_bar.hosts"
+                                                ))
+                                                .selected(sidebar == Some(SidebarMode::Hosts)),
+                                        )
+                                        .child(
+                                            Button::new("show-forwards")
+                                                .icon(CatalogIcon::ArrowLeftRight)
+                                                .tooltip(t!("workspace.title_bar.forwards"))
+                                                .selected(sidebar == Some(SidebarMode::Forwards))
+                                                // Forwards run whether or not their list
+                                                // is showing, so the count is said here.
+                                                .map(|button| match forwards {
+                                                    0 => button.accessibility_label(t!(
+                                                        "workspace.title_bar.forwards"
+                                                    )),
+                                                    running => button
+                                                        .label(running.to_string())
+                                                        .accessibility_label(t!(
+                                                            "workspace.title_bar.forwards_running",
+                                                            count = running
+                                                        )),
+                                                }),
+                                        )
+                                        .child(
+                                            Button::new("show-credentials")
+                                                .icon(CatalogIcon::KeyRound)
+                                                .tooltip(t!("workspace.title_bar.credentials"))
+                                                .accessibility_label(t!(
+                                                    "workspace.title_bar.credentials"
+                                                ))
+                                                .selected(
+                                                    sidebar == Some(SidebarMode::Credentials),
+                                                ),
+                                        )
+                                        .on_click(move |picked: &Vec<usize>, window, cx| {
+                                            match picked.first() {
+                                                Some(0) => {
+                                                    mode.dispatch_action(&ShowHosts, window, cx)
+                                                }
+                                                Some(1) => {
+                                                    mode.dispatch_action(&ShowForwards, window, cx)
+                                                }
+                                                Some(2) => mode.dispatch_action(
+                                                    &ShowCredentials,
+                                                    window,
+                                                    cx,
+                                                ),
+                                                _ => {}
+                                            }
+                                        }),
+                                ),
+                        ),
                 )
                 .child(
-                    // Which list the sidebar shows. The choice stays marked
-                    // while that list is up, and a hidden sidebar marks none.
-                    div()
-                        .relative()
+                    h_flex()
+                        .justify_end()
+                        .px_2()
+                        .gap_1()
                         .on_mouse_down(MouseButton::Left, no_drag)
-                        .child(switch_end.measure(view))
                         .child(
-                            ButtonGroup::new("sidebar-mode")
+                            Button::new("title-quick-connect")
                                 .ghost()
                                 .small()
-                                .child(
-                                    Button::new("show-hosts")
-                                        .icon(CatalogIcon::Server)
-                                        .tooltip(t!("workspace.title_bar.hosts"))
-                                        .accessibility_label(t!("workspace.title_bar.hosts"))
-                                        .selected(sidebar == Some(SidebarMode::Hosts)),
+                                .icon(IconName::Search)
+                                .tooltip(t!("workspace.title_bar.quick_connect"))
+                                .accessibility_label(t!("workspace.title_bar.quick_connect"))
+                                .on_click(move |_, window, cx| {
+                                    quick.dispatch_action(&QuickConnect, window, cx)
+                                }),
+                        )
+                        .child(
+                            // Saved hosts are made in the host list; up here is the
+                            // quick way in, to a host that is not saved.
+                            Button::new("temporary-connection")
+                                .ghost()
+                                .small()
+                                .icon(CatalogIcon::Zap)
+                                .accessibility_label(t!("workspace.title_bar.temporary_connection"))
+                                .tooltip(t!("workspace.title_bar.temporary_connection_tooltip"))
+                                .on_click(move |_, window, cx| {
+                                    temporary.dispatch_action(&NewTemporaryConnection, window, cx)
+                                }),
+                        )
+                        .child(
+                            Button::new("new-local-terminal")
+                                .ghost()
+                                .small()
+                                .icon(CatalogIcon::Terminal)
+                                .accessibility_label(t!("workspace.title_bar.local_terminal"))
+                                .tooltip_with_action(
+                                    t!("workspace.title_bar.new_local_terminal"),
+                                    &NewLocalTerminal,
+                                    None,
                                 )
-                                .child(
-                                    Button::new("show-forwards")
-                                        .icon(CatalogIcon::ArrowLeftRight)
-                                        .tooltip(t!("workspace.title_bar.forwards"))
-                                        .selected(sidebar == Some(SidebarMode::Forwards))
-                                        // Forwards run whether or not their list
-                                        // is showing, so the count is said here.
-                                        .map(|button| match forwards {
-                                            0 => button.accessibility_label(t!(
-                                                "workspace.title_bar.forwards"
-                                            )),
-                                            running => button
-                                                .label(running.to_string())
-                                                .accessibility_label(t!(
-                                                    "workspace.title_bar.forwards_running",
-                                                    count = running
-                                                )),
-                                        }),
-                                )
-                                .child(
-                                    Button::new("show-credentials")
-                                        .icon(CatalogIcon::KeyRound)
-                                        .tooltip(t!("workspace.title_bar.credentials"))
-                                        .accessibility_label(t!("workspace.title_bar.credentials"))
-                                        .selected(sidebar == Some(SidebarMode::Credentials)),
-                                )
-                                .on_click(move |picked: &Vec<usize>, window, cx| {
-                                    match picked.first() {
-                                        Some(0) => mode.dispatch_action(&ShowHosts, window, cx),
-                                        Some(1) => mode.dispatch_action(&ShowForwards, window, cx),
-                                        Some(2) => {
-                                            mode.dispatch_action(&ShowCredentials, window, cx)
-                                        }
-                                        _ => {}
-                                    }
+                                .on_click(move |_, window, cx| {
+                                    new_local.dispatch_action(&NewLocalTerminal, window, cx)
+                                }),
+                        )
+                        .children(update.map(|update| {
+                            // The one coloured button up here, in the colour of
+                            // what it says: the only sign that an update waits.
+                            Button::new("update-available")
+                                .custom(tinted(
+                                    if update.trouble {
+                                        cx.theme().warning
+                                    } else {
+                                        cx.theme().success
+                                    },
+                                    cx,
+                                ))
+                                .small()
+                                .icon(CatalogIcon::CircleArrowUp)
+                                .tooltip(update.label.clone())
+                                .accessibility_label(update.label)
+                                .on_click(move |_, window, cx| {
+                                    show_update.dispatch_action(&ShowUpdate, window, cx)
+                                })
+                        }))
+                        .child(
+                            Button::new("theme-toggle")
+                                .ghost()
+                                .small()
+                                .icon(if dark { IconName::Sun } else { IconName::Moon })
+                                .tooltip(if dark {
+                                    t!("workspace.title_bar.to_light")
+                                } else {
+                                    t!("workspace.title_bar.to_dark")
+                                })
+                                .on_click(move |_, window, cx| {
+                                    theme.dispatch_action(&ToggleTheme, window, cx)
                                 }),
                         ),
                 ),
         )
-        .child(
-            h_flex()
-                .justify_end()
-                .px_2()
-                .gap_1()
-                .on_mouse_down(MouseButton::Left, no_drag)
-                .child(
-                    Button::new("title-quick-connect")
-                        .ghost()
-                        .small()
-                        .icon(IconName::Search)
-                        .tooltip(t!("workspace.title_bar.quick_connect"))
-                        .accessibility_label(t!("workspace.title_bar.quick_connect"))
-                        .on_click(move |_, window, cx| {
-                            quick.dispatch_action(&QuickConnect, window, cx)
-                        }),
-                )
-                .child(
-                    // Saved hosts are made in the host list; up here is the
-                    // quick way in, to a host that is not saved.
-                    Button::new("temporary-connection")
-                        .ghost()
-                        .small()
-                        .icon(CatalogIcon::Zap)
-                        .accessibility_label(t!("workspace.title_bar.temporary_connection"))
-                        .tooltip(t!("workspace.title_bar.temporary_connection_tooltip"))
-                        .on_click(move |_, window, cx| {
-                            temporary.dispatch_action(&NewTemporaryConnection, window, cx)
-                        }),
-                )
-                .child(
-                    Button::new("new-local-terminal")
-                        .ghost()
-                        .small()
-                        .icon(CatalogIcon::Terminal)
-                        .accessibility_label(t!("workspace.title_bar.local_terminal"))
-                        .tooltip_with_action(
-                            t!("workspace.title_bar.new_local_terminal"),
-                            &NewLocalTerminal,
-                            None,
-                        )
-                        .on_click(move |_, window, cx| {
-                            new_local.dispatch_action(&NewLocalTerminal, window, cx)
-                        }),
-                )
-                .children(update.map(|update| {
-                    // The one coloured button up here, in the colour of
-                    // what it says: the only sign that an update waits.
-                    Button::new("update-available")
-                        .custom(tinted(
-                            if update.trouble {
-                                cx.theme().warning
-                            } else {
-                                cx.theme().success
-                            },
-                            cx,
-                        ))
-                        .small()
-                        .icon(CatalogIcon::CircleArrowUp)
-                        .tooltip(update.label.clone())
-                        .accessibility_label(update.label)
-                        .on_click(move |_, window, cx| {
-                            show_update.dispatch_action(&ShowUpdate, window, cx)
-                        })
-                }))
-                .child(
-                    Button::new("theme-toggle")
-                        .ghost()
-                        .small()
-                        .icon(if dark { IconName::Sun } else { IconName::Moon })
-                        .tooltip(if dark {
-                            t!("workspace.title_bar.to_light")
-                        } else {
-                            t!("workspace.title_bar.to_dark")
-                        })
-                        .on_click(move |_, window, cx| {
-                            theme.dispatch_action(&ToggleTheme, window, cx)
-                        }),
-                ),
-        )
+        .child(render_selection_frame_guard())
+}
+
+/// Keeps the window's own frame — everything that is not content — out of the
+/// window-wide text selection.
+///
+/// The resize border lies outside the content, so a press there starts a
+/// platform resize loop, and the app hears no mouse up from it: a selection
+/// seeded by that press could never end, and would keep growing over whatever
+/// text the pointer crossed afterwards. Should a release be swallowed anyway,
+/// the first move without a button held ends the gesture before it grows.
+///
+/// The canvas paints nothing; it is here for its paint step, which runs after
+/// the selection layer's, so these listeners see the press before the
+/// selection's do.
+fn render_selection_frame_guard() -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        |_, _, window, _cx| {
+            window.on_mouse_event(|event: &MouseDownEvent, phase, window, cx| {
+                if !phase.bubble() || event.button != MouseButton::Left {
+                    return;
+                }
+                let size = window.viewport_size();
+                let position = event.position;
+                // Frame presses come in negative, or past the content's size.
+                if position.x < px(0.)
+                    || position.y < px(0.)
+                    || position.x >= size.width
+                    || position.y >= size.height
+                {
+                    GlobalState::suppress_text_selection(cx);
+                }
+            });
+            window.on_mouse_event(|event: &MouseMoveEvent, phase, window, cx| {
+                if phase.bubble() && event.pressed_button.is_none() {
+                    TextSelection::end(window, cx);
+                }
+            });
+        },
+    )
+    .absolute()
+    .size_full()
 }
 
 /// Where the title bar's list switch ends, as the last frame drew it: past

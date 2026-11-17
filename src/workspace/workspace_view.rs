@@ -8,8 +8,8 @@ use std::{
 
 use gpui_kit::component::{
     ActiveTheme as _, Root, Sizable as _, TitleBar, WindowExt as _,
-    button::ButtonVariant,
-    dialog::DialogButtonProps,
+    button::{Button, ButtonVariant, ButtonVariants as _},
+    dialog::{DialogButtonProps, DialogFooter},
     dock::{DockArea, DockEvent, DockLayout, DockPlacement, PanelId, TabGroup, panel_handle},
     form::{Field, Form},
     h_flex,
@@ -22,22 +22,28 @@ use gpui_kit::*;
 
 use super::editors::describe_files;
 use super::front::follow_focus;
+use crate::account::{
+    AccountEvent, AccountStore, HttpAccountService, LoginMode, SyncKind, cloud_sync,
+    open_login_dialog, open_nickname_dialog, open_sync_password_dialog, upload_error,
+};
 use crate::analytics::{Analytics, AnalyticsServices, Counter};
 use crate::app::ExplorerDispatch as _;
 use crate::app::{
-    CenterTab, ClearTerminal, CloseActiveTab, CloseEditor, CloseExplorer, CloseLocalTerminal,
-    CloseSettings, CloseTabs, CloseTerminal, CollapseAllGroups, ConnectGroup, ConnectHost,
-    ConnectHosts, CopyAgentSkill, CopyHostAddress, CopyHostAddresses, CopyHostId, CopyHostIds,
-    CopyTerminal, DeleteGroup, DeleteHost, DeleteHosts, DisconnectTerminal, DismissTerminalFind,
-    DuplicateHost, DuplicateHosts, DuplicateTerminal, EditHost, ExpandAllGroups, ExplorerAction,
-    ExplorerCommand, ExplorerShortcut, FindInTerminal, FindNextInTerminal, FindPreviousInTerminal,
-    FocusSearch, InstallAgentSkill, InstallCliCommand, MaximizeWindow, MoveHostNode, NewChildGroup,
-    NewGroup, NewHost, NewHostInGroup, NewLocalTerminal, NewTemporaryConnection, OpenExplorer,
-    OpenExplorerHosts, OpenSettings, PasteTerminal, QuickConnect, ReconnectTerminal,
-    RefreshCliIntegration, RemoveAgentSkill, RemoveCliCommand, RenameExplorer, RenameGroup,
+    CenterTab, ChangeAccountAvatar, ClearTerminal, CloseActiveTab, CloseEditor, CloseExplorer,
+    CloseLocalTerminal, CloseSettings, CloseTabs, CloseTerminal, CollapseAllGroups, ConnectGroup,
+    ConnectHost, ConnectHosts, CopyAgentSkill, CopyHostAddress, CopyHostAddresses, CopyHostId,
+    CopyHostIds, CopyTerminal, DeleteGroup, DeleteHost, DeleteHosts, DisconnectTerminal,
+    DismissTerminalFind, DuplicateHost, DuplicateHosts, DuplicateTerminal, EditAccountNickname,
+    EditHost, ExpandAllGroups, ExplorerAction, ExplorerCommand, ExplorerShortcut, FindInTerminal,
+    FindNextInTerminal, FindPreviousInTerminal, FocusSearch, InstallAgentSkill, InstallCliCommand,
+    MaximizeWindow, MoveHostNode, NewChildGroup, NewGroup, NewHost, NewHostInGroup,
+    NewLocalTerminal, NewTemporaryConnection, OpenAccountSettings, OpenExplorer, OpenExplorerHosts,
+    OpenSettings, PasteTerminal, QuickConnect, ReconnectTerminal, RefreshCliIntegration,
+    RegisterAccount, RemoveAgentSkill, RemoveCliCommand, RenameExplorer, RenameGroup,
     RenameTerminal, RestartLocalTerminal, RestoreWindow, SelectAllTerminal, SendBreak,
-    SetFileSizeFormat, ShowOrHideApp, ToggleHiddenFiles, ToggleHostDetails, ToggleHostPanel,
-    ToggleTheme, ToolKind, ZoomIn, ZoomOut, ZoomReset, ZoomTerminalIn, ZoomTerminalOut,
+    SetCloudSync, SetFileSizeFormat, SetRememberSyncPassword, ShowOrHideApp, SignInAccount,
+    SignOutAccount, ToggleHiddenFiles, ToggleHostDetails, ToggleHostPanel, ToggleTheme, ToolKind,
+    UploadCloudSyncNow, ZoomIn, ZoomOut, ZoomReset, ZoomTerminalIn, ZoomTerminalOut,
     ZoomTerminalReset,
 };
 use crate::assistant::panel::AssistantPanel;
@@ -99,7 +105,7 @@ use super::{
     window_state::{WindowState, window_placement},
 };
 
-const DOCK_ID: &str = "shellrs-dock";
+const DOCK_ID: &str = "shellas-dock";
 const DOCK_VERSION: usize = 1;
 /// How far the zoom keys move 界面字号 a press, in pixels.
 const INTERFACE_ZOOM_STEP: f32 = 2.;
@@ -205,11 +211,15 @@ pub struct Workspace {
     settings_tab: Option<Entity<SettingsPanel>>,
     /// What the settings tab edits; the workspace applies it to the window.
     settings: Entity<SettingsStore>,
-    /// Where the `shellrs` command and the agent skills go, and whether
+    /// The optional account. Signed out by default, and the only state on a
+    /// machine with no network: it adds cloud sync and the profile, and
+    /// gates nothing.
+    pub(super) account: Entity<AccountStore>,
+    /// Where the `shellas` command and the agent skills go, and whether
     /// they are there. No paths in UI tests, so nothing reaches the home
     /// directory unless a test hands it a temporary one.
     cli_integration: Entity<CliIntegration>,
-    /// Answers the `shellrs` command. Production only: UI tests never
+    /// Answers the `shellas` command. Production only: UI tests never
     /// listen on the real socket.
     pub(super) cli_server: Option<CliServer>,
     pub(super) locked_links: Vec<crate::cli::OpenLink>,
@@ -217,6 +227,9 @@ pub struct Workspace {
     /// in UI tests, so it never reaches the network unless a test hands it
     /// fakes.
     pub(super) updater: Entity<Updater>,
+    /// The version whose 强制更新 dialog is open. That dialog cannot be
+    /// dismissed, so this only remembers what was already opened.
+    pub(super) blocking_update: Option<String>,
     /// 同步. Without services in UI tests, so it never reaches a folder
     /// unless a test hands it a store.
     pub(super) sync: Entity<SyncService>,
@@ -362,6 +375,10 @@ impl Workspace {
         this.sync.update(cx, |sync, cx| {
             sync.set_services(crate::sync::system_services(), cx)
         });
+        this.account.update(cx, |account, cx| {
+            account.attach(crate::app::account_path().ok(), cx);
+            account.set_services(Arc::new(HttpAccountService::system()), cx);
+        });
         if let Some(services) = AnalyticsServices::system() {
             let enabled = this.settings.read(cx).settings().analytics.enabled;
             this.set_analytics(Analytics::start(services, enabled), window, cx);
@@ -439,6 +456,9 @@ impl Workspace {
             sync.set_location(sync_location, cx);
             sync
         });
+        // No path and no service in tests: the account stays signed out and
+        // offline, which is exactly what the local features need.
+        let account = cx.new(|cx| AccountStore::new(None, store.read(cx).secrets(), cx));
         let forward_panel = cx.new(|cx| {
             ForwardPanel::new(
                 store.clone(),
@@ -450,11 +470,20 @@ impl Workspace {
         });
         let credential_panel =
             cx.new(|cx| CredentialPanel::new(store.clone(), focus_handle.clone(), window, cx));
-        let sidebar = cx.new(|_| Sidebar::new(host_panel.clone(), forward_panel, credential_panel));
+        let sidebar = cx.new(|cx| {
+            Sidebar::new(
+                host_panel.clone(),
+                forward_panel,
+                credential_panel,
+                account.clone(),
+                cx,
+            )
+        });
         let tools = cx.new(|cx| {
             ToolSidebar::new(
                 store.clone(),
                 settings.clone(),
+                account.clone(),
                 focus_handle.clone(),
                 window,
                 cx,
@@ -575,6 +604,13 @@ impl Workspace {
             cx.observe_window_appearance(window, |this, window, cx| {
                 crate::settings::apply(this.settings.read(cx).settings(), window, cx);
             }),
+            cx.subscribe_in(
+                &account,
+                window,
+                |this, _, event: &AccountEvent, window, cx| {
+                    this.on_account_event(event, window, cx)
+                },
+            ),
             cx.subscribe_in(
                 &dock_area,
                 window,
@@ -746,10 +782,12 @@ impl Workspace {
             front_saved_terminal,
             settings_tab: None,
             settings,
+            account,
             cli_integration: cx.new(|_| CliIntegration::new(None)),
             cli_server: None,
             locked_links: Vec::new(),
             updater,
+            blocking_update: None,
             sync,
             analytics: None,
             local_terminal_provider,
@@ -954,6 +992,11 @@ impl Workspace {
 
     pub fn updater(&self) -> &Entity<Updater> {
         &self.updater
+    }
+
+    /// The optional account, for tests to sign in with a fake service.
+    pub fn account(&self) -> &Entity<AccountStore> {
+        &self.account
     }
 
     /// The assistant, for tests that talk to it without a click.
@@ -1577,7 +1620,22 @@ impl Workspace {
     /// Open the settings tab, or bring the open one forward: settings are
     /// one place, not one tab per visit.
     fn on_open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_settings_at(0, window, cx);
+    }
+
+    /// The account entry opens 设置 › 账号; the rest opens the first category.
+    fn on_open_account_settings(
+        &mut self,
+        _: &OpenAccountSettings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_settings_at(crate::settings::ACCOUNT_CATEGORY_INDEX, window, cx);
+    }
+
+    fn open_settings_at(&mut self, category: usize, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(panel) = self.settings_tab.clone() {
+            panel.update(cx, |panel, _| panel.start_at(category));
             let group = panel.read(cx).tab_group();
             self.activate_tab(group, panel.entity_id(), window, cx);
             // Already displayed, the group reports nothing, so the panel
@@ -1591,7 +1649,13 @@ impl Workspace {
         integration.update(cx, |integration, cx| integration.refresh(cx));
         let updater = self.updater.clone();
         let sync = self.sync.clone();
-        let panel = cx.new(|cx| SettingsPanel::new(store, integration, updater, sync, window, cx));
+        let account = self.account.clone();
+        let panel = cx.new(|cx| {
+            let mut panel =
+                SettingsPanel::new(store, integration, updater, sync, account, window, cx);
+            panel.start_at(category);
+            panel
+        });
         let subscription = cx.subscribe_in(
             &panel,
             window,
@@ -1617,6 +1681,236 @@ impl Workspace {
         self.settings_tab = Some(panel.clone());
         self.dock_area.update(cx, |area, cx| {
             area.add_panel_view(panel_handle(panel), DockPlacement::Center, None, window, cx);
+        });
+    }
+
+    fn on_sign_in_account(
+        &mut self,
+        _: &SignInAccount,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        open_login_dialog(self.account.clone(), LoginMode::SignIn, window, cx);
+    }
+
+    fn on_register_account(
+        &mut self,
+        _: &RegisterAccount,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        open_login_dialog(self.account.clone(), LoginMode::Register, window, cx);
+    }
+
+    fn on_sign_out_account(&mut self, _: &SignOutAccount, _: &mut Window, cx: &mut Context<Self>) {
+        self.account.update(cx, |account, cx| account.sign_out(cx));
+    }
+
+    fn on_set_cloud_sync(&mut self, action: &SetCloudSync, _: &mut Window, cx: &mut Context<Self>) {
+        let enabled = action.enabled;
+        self.account
+            .update(cx, |account, cx| account.set_cloud_sync(enabled, cx));
+    }
+
+    fn on_set_remember_sync_password(
+        &mut self,
+        action: &SetRememberSyncPassword,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let enabled = action.enabled;
+        self.account.update(cx, |account, cx| {
+            account.set_remember_sync_password(enabled, cx)
+        });
+    }
+
+    fn on_upload_cloud_sync_now(
+        &mut self,
+        _: &UploadCloudSyncNow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let settings = match cloud_sync::settings_document(&self.settings.read(cx).settings()) {
+            Ok(document) => document,
+            Err(error) => {
+                window.push_notification(Notification::error(error), cx);
+                return;
+            }
+        };
+        let hosts = cloud_sync::hosts_document(self.store.read(cx));
+        self.account
+            .update(cx, |account, cx| account.upload_both(settings, hosts, cx));
+    }
+
+    fn on_change_account_avatar(
+        &mut self,
+        _: &ChangeAccountAvatar,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.account.read(cx).is_signed_in() {
+            return;
+        }
+        let receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(t!("account.avatar.prompt")),
+        });
+        let account = self.account.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = receiver.await else {
+                return;
+            };
+            let Some(source) = paths.into_iter().next() else {
+                return;
+            };
+            let result = account.update(cx, |account, cx| account.set_avatar(&source, cx));
+            if let Err(error) = result {
+                let _ = this.update_in(cx, |_, window, cx| {
+                    window.push_notification(
+                        Notification::error(t!("account.avatar.failed", error = error)),
+                        cx,
+                    );
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn on_edit_account_nickname(
+        &mut self,
+        _: &EditAccountNickname,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        open_nickname_dialog(self.account.clone(), window, cx);
+    }
+
+    /// What the account has to say: a failed write, a finished upload, or a
+    /// cloud conflict. Signed out — the default — none of these happen.
+    fn on_account_event(
+        &mut self,
+        event: &AccountEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            AccountEvent::PersistFailed(message) => {
+                window.push_notification(Notification::error(message.clone()), cx);
+            }
+            AccountEvent::NeedsSyncPassword => {
+                open_sync_password_dialog(self.account.clone(), window, cx);
+            }
+            AccountEvent::CloudUploaded { kind, version } => {
+                let what = match kind {
+                    SyncKind::Settings => t!("account.kind.settings"),
+                    SyncKind::Hosts => t!("account.kind.hosts"),
+                };
+                window.push_notification(
+                    Notification::success(t!(
+                        "account.notify.uploaded",
+                        kind = what,
+                        version = *version
+                    )),
+                    cx,
+                );
+            }
+            AccountEvent::CloudFailed(error) => {
+                window.push_notification(Notification::error(upload_error(error)), cx);
+            }
+            AccountEvent::CloudConflict(conflict) => {
+                self.on_cloud_conflict(conflict, window, cx);
+            }
+            AccountEvent::SettingsDownloaded(bytes) => {
+                match cloud_sync::read_settings_document(bytes) {
+                    Ok(settings) => {
+                        self.settings.update(cx, |store, cx| {
+                            store.update(|current| *current = settings, cx)
+                        });
+                        window.push_notification(
+                            Notification::success(t!("account.notify.settings_downloaded")),
+                            cx,
+                        );
+                    }
+                    Err(error) => {
+                        window.push_notification(Notification::error(error), cx);
+                    }
+                }
+            }
+            AccountEvent::HostsDownloaded(path) => {
+                window.push_notification(
+                    Notification::info(t!(
+                        "account.notify.hosts_downloaded",
+                        path = path.display().to_string()
+                    )),
+                    cx,
+                );
+            }
+        }
+    }
+
+    /// 云端有更新的版本: keep the local copy, take the cloud one, or decide
+    /// later. The dialog's own buttons are the only way out; nothing is
+    /// overwritten until one is chosen.
+    fn on_cloud_conflict(
+        &mut self,
+        conflict: &crate::account::CloudConflict,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let kind = match conflict.kind {
+            SyncKind::Settings => t!("account.kind.settings"),
+            SyncKind::Hosts => t!("account.kind.hosts"),
+        };
+        let latest = conflict.latest.version;
+        let account = self.account.clone();
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog
+                .title(t!("account.conflict.title"))
+                .overlay_closable(true)
+                .child(t!(
+                    "account.conflict.description",
+                    kind = kind,
+                    version = latest
+                ))
+                .footer(
+                    DialogFooter::new()
+                        .child(
+                            Button::new("account-conflict-cancel")
+                                .ghost()
+                                .label(t!("account.conflict.later"))
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("account-conflict-download")
+                                .outline()
+                                .label(t!("account.conflict.download"))
+                                .on_click({
+                                    let account = account.clone();
+                                    move |_, window, cx| {
+                                        account.update(cx, |account, cx| {
+                                            account.download_conflict(cx)
+                                        });
+                                        window.close_dialog(cx);
+                                    }
+                                }),
+                        )
+                        .child(
+                            Button::new("account-conflict-overwrite")
+                                .primary()
+                                .label(t!("account.conflict.overwrite"))
+                                .on_click({
+                                    let account = account.clone();
+                                    move |_, window, cx| {
+                                        account.update(cx, |account, cx| {
+                                            account.overwrite_conflict(cx)
+                                        });
+                                        window.close_dialog(cx);
+                                    }
+                                }),
+                        ),
+                )
         });
     }
 
@@ -3266,6 +3560,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_import_ssh_config))
             .on_action(cx.listener(Self::on_import_known_hosts))
             .on_action(cx.listener(Self::on_import_xshell))
+            .on_action(cx.listener(Self::on_export_hosts))
+            .on_action(cx.listener(Self::on_import_hosts_file))
             .on_action(cx.listener(Self::on_expand_all_groups))
             .on_action(cx.listener(Self::on_collapse_all_groups))
             .on_action(cx.listener(Self::on_new_child_group))
@@ -3293,6 +3589,15 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_disable_app_lock))
             .on_action(cx.listener(Self::on_lock_app))
             .on_action(cx.listener(Self::on_open_settings))
+            .on_action(cx.listener(Self::on_open_account_settings))
+            .on_action(cx.listener(Self::on_sign_in_account))
+            .on_action(cx.listener(Self::on_register_account))
+            .on_action(cx.listener(Self::on_sign_out_account))
+            .on_action(cx.listener(Self::on_set_cloud_sync))
+            .on_action(cx.listener(Self::on_set_remember_sync_password))
+            .on_action(cx.listener(Self::on_upload_cloud_sync_now))
+            .on_action(cx.listener(Self::on_change_account_avatar))
+            .on_action(cx.listener(Self::on_edit_account_nickname))
             .on_action(cx.listener(Self::on_install_cli_command))
             .on_action(cx.listener(Self::on_remove_cli_command))
             .on_action(cx.listener(Self::on_install_agent_skill))

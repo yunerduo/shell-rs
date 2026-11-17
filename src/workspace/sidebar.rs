@@ -4,10 +4,12 @@ use gpui_kit::component::{
     dock::{BasePanel, Panel, PanelControl, PanelEvent},
     h_flex,
     menu::PopupMenu,
+    popover::Popover,
     v_flex,
 };
 use gpui_kit::*;
 
+use crate::account::{AccountStore, account_popover};
 use crate::app::{CatalogIcon, OpenSettings};
 use crate::credential::CredentialPanel;
 use crate::forward::ForwardPanel;
@@ -37,6 +39,8 @@ pub struct Sidebar {
     hosts: Entity<HostPanel>,
     forwards: Entity<ForwardPanel>,
     credentials: Entity<CredentialPanel>,
+    account: Entity<AccountStore>,
+    _account_subscription: Subscription,
 }
 
 impl Sidebar {
@@ -44,12 +48,17 @@ impl Sidebar {
         hosts: Entity<HostPanel>,
         forwards: Entity<ForwardPanel>,
         credentials: Entity<CredentialPanel>,
+        account: Entity<AccountStore>,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let subscription = cx.observe(&account, |_, _, cx| cx.notify());
         Self {
             mode: SidebarMode::default(),
             hosts,
             forwards,
             credentials,
+            account,
+            _account_subscription: subscription,
         }
     }
 
@@ -165,6 +174,8 @@ impl Render for Sidebar {
             SidebarMode::Forwards => self.forwards.clone().into_any_element(),
             SidebarMode::Credentials => self.credentials.clone().into_any_element(),
         };
+        let account = self.account.read(cx).snapshot();
+        let theme = cx.theme().clone();
         v_flex()
             .id("workspace-sidebar")
             .test_support()
@@ -176,6 +187,8 @@ impl Render for Sidebar {
                 // Pinned under the list, where desktop apps keep settings.
                 h_flex()
                     .p_2()
+                    .w_full()
+                    .justify_between()
                     .border_t_1()
                     .border_color(cx.theme().sidebar_border)
                     .child(
@@ -191,6 +204,23 @@ impl Render for Sidebar {
                             )
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(Box::new(OpenSettings), cx)
+                            }),
+                    )
+                    // The account is optional, so this is a quiet corner:
+                    // signed out it says so and offers a way in, and nothing
+                    // here blocks or asks on start-up.
+                    .child(
+                        Popover::new("account-button-popover")
+                            .anchor(Anchor::TopLeft)
+                            .trigger(
+                                Button::new("account-button")
+                                    .ghost()
+                                    .small()
+                                    .icon(Icon::new(CatalogIcon::CircleUser))
+                                    .tooltip(t!("account.button.tooltip")),
+                            )
+                            .content(move |_, _, _| {
+                                account_popover(account.clone(), theme.clone())
                             }),
                     ),
             )
