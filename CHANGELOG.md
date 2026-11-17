@@ -4,13 +4,21 @@
 
 One section per version, titled `## [version]`, optionally followed by a date. Each section is written in English here and in Chinese in [CHANGELOG.zh.md](CHANGELOG.zh.md), in the same change. The release workflow (`.github/workflows/release.yml`) takes the section with the tag’s version, as it is, for the GitHub release. The website’s changelog shows this file in English and Japanese and CHANGELOG.zh.md in Chinese (Agree ShellAs’s update dialog opens it with What’s new). Written in Markdown, for users.
 
-## [0.1.20]
+## [0.1.21]
 
-- The product is now named Agree ShellAs; packages and executables use ShellAs / shellas.
-- From this version the data folder and database file names changed; data from older versions is not read. Back up the old `shellrs` data folder before upgrading.
-- Accounts, cloud sync and the built-in AI trial are new.
-- Hosts can be exported and imported, including Xshell `.xts` profiles.
-- Updates are now either recommended or required.
+### Added
+
+- Built-in AI trial: sign in to an account and use the model the service provides, with no API key of your own; you can still use your own key.
+- Accounts and sign-in: register and sign in inside the app, and view or change your profile.
+- Email verification and password reset: verify your email after registering, and reset a forgotten password by email.
+- Host import and export: export your hosts to a file and import them on another machine, or import Xshell `.xts` profiles.
+
+### Improved
+
+- Updates are now recommended or required, and a version that is too old asks you to update first.
+- Interface and naming: the product is now Agree ShellAs; packages and executables use ShellAs / shellas. The data folder and database file names changed to shellas; data from older versions is not read, so back up the old `shellrs` data folder before upgrading.
+- A remote terminal opens at the size it queued while connecting, so resizing the window no longer leaves it misaligned.
+- Pressing at a pane corner no longer starts a global text selection; error and exit messages use the ShellAs name.
 
 ## [0.1.19]
 
