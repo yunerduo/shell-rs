@@ -5,12 +5,12 @@
 //! 与内置黑名单。
 //!
 //! ```text
-//! SHELLRS_TEST_MODEL_KEY=... SHELLRS_TEST_MODEL_BASE=http://127.0.0.1:18045/v1 \
-//! SHELLRS_TEST_MODEL=gemini-3.5-flash-lite \
+//! SHELLAS_TEST_MODEL_KEY=... SHELLAS_TEST_MODEL_BASE=http://127.0.0.1:18045/v1 \
+//! SHELLAS_TEST_MODEL=gemini-3.5-flash-lite \
 //!   cargo test --lib live_ -- --ignored --test-threads=1 --nocapture
 //! ```
 //!
-//! 端点不要求鉴权时 `SHELLRS_TEST_MODEL_KEY` 可以省略（占位值只进请求头，
+//! 端点不要求鉴权时 `SHELLAS_TEST_MODEL_KEY` 可以省略（占位值只进请求头，
 //! 不会出现在输出里）。
 
 use std::sync::atomic::AtomicBool;
@@ -27,11 +27,11 @@ use super::settings::{AssistantProvider, AssistantSettings, ProviderProtocol};
 /// The endpoint the live cases ask, from the environment.
 fn model_env() -> (String, String, String) {
     let key =
-        std::env::var("SHELLRS_TEST_MODEL_KEY").unwrap_or_else(|_| "local-endpoint".to_string());
-    let base_url = std::env::var("SHELLRS_TEST_MODEL_BASE")
+        std::env::var("SHELLAS_TEST_MODEL_KEY").unwrap_or_else(|_| "local-endpoint".to_string());
+    let base_url = std::env::var("SHELLAS_TEST_MODEL_BASE")
         .unwrap_or_else(|_| "http://127.0.0.1:18045/v1".to_string());
     let model =
-        std::env::var("SHELLRS_TEST_MODEL").unwrap_or_else(|_| "gemini-3.5-flash-lite".to_string());
+        std::env::var("SHELLAS_TEST_MODEL").unwrap_or_else(|_| "gemini-3.5-flash-lite".to_string());
     (key, base_url, model)
 }
 
@@ -70,6 +70,7 @@ fn ask_with(terminals: Vec<ToolTerminal>, prompt: &str) -> Vec<ToolCall> {
         stop: Vec::new(),
         extra: String::new(),
         instruction: String::new(),
+        trial: false,
     };
     let (tx, rx) = mpsc::channel();
     let cancel = AtomicBool::new(false);

@@ -664,6 +664,9 @@ pub struct ModelSelection {
     /// keeps one.
     pub supports_images: bool,
     pub headers: Vec<RequestHeader>,
+    /// The built-in trial: the request uses the account token instead of a
+    /// keychain API key, and the endpoint is the service's proxy.
+    pub trial: bool,
 }
 
 /// `settings.json`'s `assistant` section. One provider of each protocol is
@@ -811,6 +814,7 @@ impl AssistantSettings {
                     instruction: profile.instruction.clone(),
                     supports_images: profile.supports_images,
                     headers: provider.headers.clone(),
+                    trial: false,
                 }
             }
             None => {
@@ -834,6 +838,7 @@ impl AssistantSettings {
                     instruction: String::new(),
                     supports_images: true,
                     headers: provider.headers.clone(),
+                    trial: false,
                 }
             }
         }

@@ -714,7 +714,7 @@ mod tests {
     #[test]
     fn tasks_survive_a_write_and_a_read() {
         let dir = std::env::temp_dir().join(format!(
-            "shellrs-schedules-{}-{}",
+            "shellas-schedules-{}-{}",
             std::process::id(),
             now_millis()
         ));

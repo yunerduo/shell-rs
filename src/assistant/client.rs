@@ -78,6 +78,9 @@ pub struct StreamRequest {
     pub extra: String,
     /// Appended to the system prompt for this model.
     pub instruction: String,
+    /// The built-in trial: the token is the account's, read from the
+    /// keychain here, and the errors are the service's proxy codes.
+    pub trial: bool,
 }
 
 /// What the worker reports. `Delta` is a fragment of the answer as it
@@ -146,9 +149,13 @@ fn run(
     tx: &mpsc::Sender<StreamEvent>,
     cancel: &AtomicBool,
 ) -> Result<(), ChatError> {
-    let key = KeychainSecretStore::read_account(&account(&request.keychain_id))
-        .map_err(|error| ChatError::Keychain(short(&error.to_string())))?
-        .ok_or(ChatError::KeyMissing)?;
+    let key = if request.trial {
+        super::trial::token()?
+    } else {
+        KeychainSecretStore::read_account(&account(&request.keychain_id))
+            .map_err(|error| ChatError::Keychain(short(&error.to_string())))?
+            .ok_or(ChatError::KeyMissing)?
+    };
     run_with_key(request, &key, tx, cancel)
 }
 
@@ -225,7 +232,11 @@ pub(super) fn run_with_key(
         let mut body = String::new();
         // Enough to carry the provider's message, not a page of HTML.
         let _ = response.take(8192).read_to_string(&mut body);
-        return Err(protocol::status_error(status.as_u16(), &body));
+        return Err(if request.trial {
+            super::trial::status_error(status.as_u16(), &body)
+        } else {
+            protocol::status_error(status.as_u16(), &body)
+        });
     }
 
     let mut response = response;
@@ -437,7 +448,7 @@ pub fn test_proxy(
         .map_err(|error| ProxyTestError::Other(short(&error.to_string())))?;
     let response = client
         .get(target)
-        .header("User-Agent", "shellrs-assistant-proxy-check")
+        .header("User-Agent", "shellas-assistant-proxy-check")
         .send()
         .map_err(classify_proxy_error)?;
     let status = response.status().as_u16();
@@ -833,18 +844,18 @@ mod tests {
     /// and takes the key from the environment, so no file holds one:
     ///
     /// ```text
-    /// SHELLRS_TEST_MODEL_KEY=... SHELLRS_TEST_MODEL_BASE=... \
-    /// SHELLRS_TEST_MODEL=... cargo test --lib a_real_stream_answers -- --ignored
+    /// SHELLAS_TEST_MODEL_KEY=... SHELLAS_TEST_MODEL_BASE=... \
+    /// SHELLAS_TEST_MODEL=... cargo test --lib a_real_stream_answers -- --ignored
     /// ```
     #[test]
-    #[ignore = "needs a model endpoint and SHELLRS_TEST_MODEL_KEY"]
+    #[ignore = "needs a model endpoint and SHELLAS_TEST_MODEL_KEY"]
     fn a_real_stream_answers() {
-        let Ok(key) = std::env::var("SHELLRS_TEST_MODEL_KEY") else {
+        let Ok(key) = std::env::var("SHELLAS_TEST_MODEL_KEY") else {
             return;
         };
-        let base_url = std::env::var("SHELLRS_TEST_MODEL_BASE")
+        let base_url = std::env::var("SHELLAS_TEST_MODEL_BASE")
             .unwrap_or_else(|_| "http://127.0.0.1:18045/v1".to_string());
-        let model = std::env::var("SHELLRS_TEST_MODEL")
+        let model = std::env::var("SHELLAS_TEST_MODEL")
             .unwrap_or_else(|_| "gemini-3.5-flash-lite".to_string());
         let request = StreamRequest {
             protocol: ProviderProtocol::OpenAi,
@@ -867,6 +878,7 @@ mod tests {
             stop: Vec::new(),
             extra: String::new(),
             instruction: String::new(),
+            trial: false,
         };
         let (tx, rx) = mpsc::channel();
         let cancel = AtomicBool::new(false);

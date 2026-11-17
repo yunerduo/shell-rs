@@ -650,7 +650,7 @@ mod tests {
     #[test]
     fn bindings_survive_a_write_and_a_read() {
         let dir = std::env::temp_dir().join(format!(
-            "shellrs-bindings-{}-{}",
+            "shellas-bindings-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

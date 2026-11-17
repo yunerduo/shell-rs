@@ -149,6 +149,9 @@ impl AskUserArgs {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChatMessage {
     pub role: Role,
+    /// When the turn was sent or started, in milliseconds since the Unix
+    /// epoch. Zero when nobody stamped it; the panel shows no time then.
+    pub at: i64,
     /// Plain text. The panel renders assistant text as Markdown, but the
     /// wire format is text either way. A tool message's text is its JSON
     /// result.
@@ -165,6 +168,13 @@ pub struct ChatMessage {
 }
 
 impl ChatMessage {
+    /// Stamp the turn with when it was sent or started. The panel calls this
+    /// on every message it adds, so each one shows a time.
+    pub fn with_time(mut self, at: i64) -> Self {
+        self.at = at;
+        self
+    }
+
     pub fn user(text: impl Into<String>) -> Self {
         Self::user_with(text, Vec::new())
     }
@@ -173,6 +183,7 @@ impl ChatMessage {
     pub fn user_with(text: impl Into<String>, attachments: Vec<Attachment>) -> Self {
         Self {
             role: Role::User,
+            at: 0,
             text: text.into(),
             reasoning: String::new(),
             tool_calls: Vec::new(),
@@ -184,6 +195,7 @@ impl ChatMessage {
     pub fn assistant(text: impl Into<String>) -> Self {
         Self {
             role: Role::Assistant,
+            at: 0,
             text: text.into(),
             reasoning: String::new(),
             tool_calls: Vec::new(),
@@ -197,6 +209,7 @@ impl ChatMessage {
     pub fn assistant_calls(text: impl Into<String>, tool_calls: Vec<ToolCall>) -> Self {
         Self {
             role: Role::Assistant,
+            at: 0,
             text: text.into(),
             reasoning: String::new(),
             tool_calls,
@@ -209,6 +222,7 @@ impl ChatMessage {
     pub fn tool_result(call_id: impl Into<String>, text: impl Into<String>) -> Self {
         Self {
             role: Role::Tool,
+            at: 0,
             text: text.into(),
             reasoning: String::new(),
             tool_calls: Vec::new(),

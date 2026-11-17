@@ -163,6 +163,7 @@ impl ToolSidebar {
     pub fn new(
         store: Entity<HostStore>,
         settings: Entity<SettingsStore>,
+        account: Entity<crate::account::AccountStore>,
         dispatch: FocusHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -183,7 +184,8 @@ impl ToolSidebar {
             processes: cx.new(|cx| ProcessPanel::new(dispatch.clone(), window, cx)),
             netstat: cx.new(|cx| NetstatPanel::new(dispatch.clone(), window, cx)),
             gpu: cx.new(|cx| GpuPanel::new(dispatch.clone(), cx)),
-            assistant: cx.new(|cx| AssistantPanel::new(settings, dispatch.clone(), window, cx)),
+            assistant: cx
+                .new(|cx| AssistantPanel::new(settings, account, dispatch.clone(), window, cx)),
             dispatch,
             focus_handle: cx.focus_handle(),
         }

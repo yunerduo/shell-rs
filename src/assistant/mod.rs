@@ -20,6 +20,7 @@ pub mod schedule;
 pub mod sessions;
 pub mod settings;
 pub mod tool_result;
+pub mod trial;
 pub mod wait;
 
 #[cfg(test)]

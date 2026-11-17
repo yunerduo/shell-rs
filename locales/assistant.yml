@@ -159,6 +159,39 @@ assistant.model.default:
 assistant.model.default_none:
   zh-CN: 供应商默认（尚未填写模型）
   en: Provider default (no model yet)
+assistant.trial.name:
+  zh-CN: 内置 AI · 试用
+  en: Built-in AI · Trial
+assistant.trial.menu:
+  zh-CN: 内置 AI · 试用 · 今日剩余 %{remaining} 次
+  en: Built-in AI · Trial · %{remaining} left today
+assistant.trial.menu.exhausted:
+  zh-CN: 内置 AI · 试用 · 今日额度已用完
+  en: Built-in AI · Trial · today's quota is used up
+assistant.trial.quota:
+  zh-CN: 内置 AI · 试用 · 今日剩余 %{requests} 次 · 已用 %{tokens} tokens
+  en: Built-in AI · Trial · %{requests} requests left today · %{tokens} tokens used
+assistant.trial.error.upstream:
+  zh-CN: 内置 AI 试用暂时连不上模型服务，请稍后再试
+  en: The built-in AI trial cannot reach the model right now; try again later.
+assistant.trial.error.limit:
+  zh-CN: 今日内置 AI 试用额度已用完，明天 00:00 后恢复
+  en: Today's built-in AI trial quota is used up; it resets after 00:00.
+assistant.trial.error.busy:
+  zh-CN: 内置 AI 试用正在处理上一条请求，请稍后再试
+  en: The built-in AI trial is still answering the previous request; try again shortly.
+assistant.trial.error.login:
+  zh-CN: 登录状态已失效，请重新登录后再使用内置 AI 试用
+  en: Your sign-in has expired; sign in again to use the built-in AI trial.
+assistant.trial.error.account:
+  zh-CN: 账号已停用，暂时无法使用内置 AI 试用
+  en: This account is disabled; the built-in AI trial is unavailable.
+assistant.trial.error.disabled:
+  zh-CN: 内置 AI 试用已关闭
+  en: The built-in AI trial is turned off.
+assistant.trial.error.unavailable:
+  zh-CN: 内置 AI 试用当前不可用，请稍后再试
+  en: The built-in AI trial is unavailable right now; try again later.
 assistant.composer.terminal.none:
   zh-CN: 未绑定终端
   en: No terminal bound
@@ -390,6 +423,9 @@ assistant.tool.cancelled_stop:
 assistant.action.copy:
   zh-CN: 复制 Markdown
   en: Copy Markdown
+assistant.scroll.latest:
+  zh-CN: 回到最新
+  en: Back to latest
 assistant.action.copied:
   zh-CN: 已复制
   en: Copied

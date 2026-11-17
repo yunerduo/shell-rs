@@ -129,7 +129,7 @@ mod tests {
     #[test]
     fn the_queue_survives_a_write_and_a_read() {
         let dir = std::env::temp_dir().join(format!(
-            "shellrs-pending-{}-{}",
+            "shellas-pending-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

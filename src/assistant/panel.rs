@@ -6,7 +6,7 @@ use std::cell::Cell;
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::mpsc::TryRecvError;
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::{
@@ -16,7 +16,7 @@ use gpui_kit::component::{
     h_flex,
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
     menu::{DropdownMenu as _, PopupMenuItem},
-    scroll::ScrollableElement as _,
+    scroll::{ScrollableElement as _, Scrollbar, ScrollbarMode},
     text::TextView,
     v_flex,
 };
@@ -46,10 +46,12 @@ use super::policy::{self, AuthorizationLevel, Classified, Decision, Policy, Risk
 use super::protocol::ToolTerminal;
 use super::schedule::{self, ResumePlan, Schedule, ScheduleAction, ScheduleStore, ScheduleTarget};
 use super::sessions::{SessionEvent, Sessions};
+use super::settings::ModelSelection;
 use super::tool_result::{
     ResultFacts, call_parts, call_summary, denied_result, result_facts, tool_card_parts,
     tool_error, tool_result_body, unknown_terminal, unsupported_result,
 };
+use super::trial;
 use super::wait::{self, Watcher};
 
 /// How often the panel looks at the answer's channel.
@@ -81,6 +83,10 @@ const WAIT_CHECK: Duration = Duration::from_millis(200);
 
 /// How often the scheduler looks for a task that has come due.
 const SCHEDULE_TICK: Duration = Duration::from_secs(30);
+
+/// How long a trial status is trusted before the 30-second loop asks again.
+/// Quota is also refreshed at once after an answer ends.
+const TRIAL_STATUS_TTL: Duration = Duration::from_secs(300);
 
 /// The longest a scheduled command or answer may take, whatever the file
 /// says.
@@ -253,6 +259,10 @@ struct ScheduledAiRun {
 /// the entity.
 pub struct AssistantPanel {
     settings: Entity<SettingsStore>,
+    /// The optional account. Signed in, the assistant calls the user by
+    /// their nickname or username instead of 「你」; signed out, it keeps
+    /// the neutral wording.
+    account: Entity<crate::account::AccountStore>,
     input: Entity<TextareaState>,
     bindings: Bindings,
     /// The roles loaded into this conversation, by id.
@@ -275,9 +285,32 @@ pub struct AssistantPanel {
     /// The conversations kept between launches; `messages` is the open one.
     sessions: Sessions,
     messages: Vec<ChatMessage>,
+    /// The conversation's scroll position. Tracked so new words can follow
+    /// the tail while the reader is there, and so the scrollbar has a handle.
+    scroll: ScrollHandle,
+    /// The tail moved on while the reader was above it: the jump button
+    /// shows until they come back or ask for it.
+    behind: bool,
+    /// The tail's shape when the last frame was built, so a repaint for any
+    /// other reason does not claim new words.
+    painted_tail: (usize, usize),
     /// What the user pasted or dropped into the composer, not sent yet.
     attachments: Vec<Attachment>,
     stream: Option<StreamHandle>,
+    /// The built-in trial's last status; `None` when signed out, offline or
+    /// the server says it is off.
+    trial: Option<trial::Status>,
+    /// This panel picked the trial for the next turn. Never written to the
+    /// settings: it follows the sign-in, not the saved model.
+    trial_selected: bool,
+    /// The availability probe on its way.
+    trial_probe: Option<Receiver<Option<trial::Status>>>,
+    /// When the status last came back, so the 30-second loop does not ask
+    /// again for a while.
+    trial_checked: Option<Instant>,
+    /// The answer being streamed is the trial's, so its end refreshes the
+    /// quota.
+    stream_trial: bool,
     /// The calls of this exchange not yet handled.
     queue: VecDeque<ToolCall>,
     /// Calls waiting for the user, oldest first.
@@ -347,6 +380,7 @@ pub struct AssistantPanel {
 impl AssistantPanel {
     pub fn new(
         settings: Entity<SettingsStore>,
+        account: Entity<crate::account::AccountStore>,
         _dispatch: FocusHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -364,6 +398,7 @@ impl AssistantPanel {
         let subscriptions =
             vec![
                 cx.observe(&settings, |_, _, cx| cx.notify()),
+                cx.observe(&account, |this, _, cx| this.trial_changed(cx)),
                 cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
                     match event {
                         InputEvent::PressEnter { shift: false, .. } => this.send(window, cx),
@@ -388,6 +423,7 @@ impl AssistantPanel {
         };
         let mut panel = Self {
             settings,
+            account,
             input,
             bindings: Bindings::default(),
             roles: Vec::new(),
@@ -397,8 +433,16 @@ impl AssistantPanel {
             available: Vec::new(),
             sessions,
             messages,
+            scroll: ScrollHandle::new(),
+            behind: false,
+            painted_tail: (0, 0),
             attachments: Vec::new(),
             stream: None,
+            trial: None,
+            trial_selected: false,
+            trial_probe: None,
+            trial_checked: None,
+            stream_trial: false,
             queue: VecDeque::new(),
             pending: VecDeque::new(),
             execs: Vec::new(),
@@ -437,6 +481,7 @@ impl AssistantPanel {
         panel.resume_schedules(cx);
         panel.ensure_schedule_tick(cx);
         panel.install_paste_interceptor(cx);
+        panel.refresh_trial(cx, true);
         panel
     }
 
@@ -577,6 +622,8 @@ impl AssistantPanel {
         }
         self.poll_scheduled(cx);
         self.poll_scheduled_ai(cx);
+        self.poll_trial(cx);
+        self.refresh_trial(cx, false);
         if !self.scheduled.is_empty() || self.scheduled_ai.is_some() {
             self.ensure_tick(cx);
         }
@@ -739,6 +786,7 @@ impl AssistantPanel {
             stop: selection.stop,
             extra: selection.extra,
             instruction: selection.instruction,
+            trial: false,
         };
         self.scheduled_ai = Some(ScheduledAiRun {
             name: task.name.clone(),
@@ -961,6 +1009,7 @@ impl AssistantPanel {
             stop: selection.stop,
             extra: selection.extra,
             instruction: selection.instruction,
+            trial: false,
         };
         run.stream = client::start(request);
         run.deadline = Instant::now() + timeout;
@@ -1549,6 +1598,130 @@ impl AssistantPanel {
             || self.classify.is_some()
     }
 
+    /// What the model menu may do with the built-in trial now.
+    fn trial_offer(&self, cx: &App) -> trial::Offer {
+        trial::offer(self.account.read(cx).is_signed_in(), self.trial.as_ref())
+    }
+
+    /// What the next request uses: the trial when this panel picked it and
+    /// it is still offered, otherwise the saved model.
+    fn selection(&self, cx: &App) -> ModelSelection {
+        if self.trial_selected
+            && self.trial_offer(cx) == trial::Offer::Ready
+            && let Some(status) = &self.trial
+        {
+            return trial::selection(status);
+        }
+        self.settings.read(cx).settings().assistant.selection()
+    }
+
+    /// Why the picked trial cannot answer now, if it cannot.
+    fn trial_blocked(&self, cx: &App) -> Option<SharedString> {
+        if !self.trial_selected {
+            return None;
+        }
+        match self.trial_offer(cx) {
+            trial::Offer::Ready => None,
+            trial::Offer::Exhausted => Some(t!("assistant.trial.error.limit")),
+            trial::Offer::Hidden if !self.account.read(cx).is_signed_in() => None,
+            trial::Offer::Hidden if self.trial.is_some() => {
+                Some(t!("assistant.trial.error.disabled"))
+            }
+            trial::Offer::Hidden => Some(t!("assistant.trial.error.unavailable")),
+        }
+    }
+
+    /// The account came or went: the trial goes with it.
+    fn trial_changed(&mut self, cx: &mut Context<Self>) {
+        if !self.account.read(cx).is_signed_in() {
+            self.trial = None;
+            self.trial_selected = false;
+            self.trial_probe = None;
+            self.trial_checked = None;
+        } else {
+            // The first probe after a sign-in is immediate: there is no
+            // fresh status to trust yet.
+            self.refresh_trial(cx, false);
+        }
+        cx.notify();
+    }
+
+    /// Pick the trial for later turns. A running answer or a waiting card
+    /// holds it back, like any other model switch.
+    fn select_trial(&mut self, cx: &mut Context<Self>) {
+        if self.stream.is_some() || self.busy() {
+            return;
+        }
+        if self.trial_offer(cx) != trial::Offer::Ready {
+            return;
+        }
+        self.trial_selected = true;
+        self.refresh_trial(cx, true);
+        cx.notify();
+    }
+
+    /// Ask the service whether the trial is on, unless a probe is already
+    /// on its way or the last answer is still fresh.
+    fn refresh_trial(&mut self, cx: &mut Context<Self>, force: bool) {
+        if !self.account.read(cx).is_signed_in() {
+            self.trial = None;
+            self.trial_selected = false;
+            self.trial_probe = None;
+            self.trial_checked = None;
+            return;
+        }
+        if self.trial_probe.is_some() {
+            return;
+        }
+        if !force
+            && self
+                .trial_checked
+                .is_some_and(|at| at.elapsed() < TRIAL_STATUS_TTL)
+        {
+            return;
+        }
+        self.trial_probe = Some(trial::probe());
+        self.begin_trial_poll(cx);
+    }
+
+    fn begin_trial_poll(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(POLL_INTERVAL).await;
+                let done = this
+                    .update(cx, |this, cx| this.poll_trial(cx))
+                    .unwrap_or(true);
+                if done {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Take the probe's answer; `true` when nothing more is coming.
+    fn poll_trial(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(probe) = &self.trial_probe else {
+            return true;
+        };
+        let result = match probe.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return false,
+            Err(TryRecvError::Disconnected) => None,
+        };
+        self.trial_probe = None;
+        self.trial_checked = Some(Instant::now());
+        self.trial = result;
+        // A trial that is no longer offered (signed out, turned off, not
+        // configured) stops being the picked model; a used-up quota keeps
+        // it so the menu can say why.
+        if self.trial_offer(cx) == trial::Offer::Hidden {
+            self.trial_selected = false;
+        }
+        cx.notify();
+        true
+    }
+
     /// Switch which model answers: one of the configured profiles, or the
     /// empty id for the active provider's own. It takes effect on the next
     /// turn; the conversation so far stays as it is.
@@ -1556,9 +1729,10 @@ impl AssistantPanel {
         if self.stream.is_some() || self.busy() {
             return;
         }
-        if self.settings.read(cx).settings().assistant.active_model == id {
+        if self.settings.read(cx).settings().assistant.active_model == id && !self.trial_selected {
             return;
         }
+        self.trial_selected = false;
         self.settings.update(cx, |store, cx| {
             store.update(|settings| settings.assistant.active_model = id, cx)
         });
@@ -1605,8 +1779,13 @@ impl AssistantPanel {
             cx.notify();
             return;
         }
+        if let Some(message) = self.trial_blocked(cx) {
+            self.error = Some(message);
+            cx.notify();
+            return;
+        }
         let assistant = self.settings.read(cx).settings().assistant.clone();
-        let selection = assistant.selection();
+        let selection = self.selection(cx);
         if !selection.supports_images && self.attachments.iter().any(Attachment::is_image) {
             // The model was marked text-only after the picture was added;
             // sending it would only come back as a provider error.
@@ -1647,11 +1826,13 @@ impl AssistantPanel {
             .iter()
             .map(|attachment| attachment.reference())
             .collect();
+        let at = schedule::now_millis();
         self.messages
-            .push(ChatMessage::user_with(text.clone(), attachments));
+            .push(ChatMessage::user_with(text.clone(), attachments).with_time(at));
         self.session_append(SessionEvent::User {
             text,
             attachments: references,
+            at,
         });
         self.queue.clear();
         self.pending.clear();
@@ -1742,15 +1923,7 @@ impl AssistantPanel {
                         "assistant.attachment.too_many",
                         limit = attachment::MAX_ATTACHMENTS
                     ));
-                } else if attachment.is_image()
-                    && !self
-                        .settings
-                        .read(cx)
-                        .settings()
-                        .assistant
-                        .selection()
-                        .supports_images
-                {
+                } else if attachment.is_image() && !self.selection(cx).supports_images {
                     // The model's profile says it cannot see; a picture
                     // would come back as a provider error, so say it here.
                     self.notice = Some(t!("assistant.attachment.images_off"));
@@ -1862,8 +2035,14 @@ impl AssistantPanel {
         {
             return;
         }
+        if let Some(message) = self.trial_blocked(cx) {
+            self.error = Some(message);
+            self.exchange = false;
+            cx.notify();
+            return;
+        }
         let assistant = self.settings.read(cx).settings().assistant.clone();
-        let selection = assistant.selection();
+        let selection = self.selection(cx);
         let round_limit = selection.tool_rounds.max(1);
         if self.rounds >= round_limit {
             self.notice = Some(t!("assistant.tool.round_limit", rounds = round_limit));
@@ -1874,7 +2053,8 @@ impl AssistantPanel {
             return;
         }
         self.rounds += 1;
-        self.messages.push(ChatMessage::assistant(String::new()));
+        self.messages
+            .push(ChatMessage::assistant(String::new()).with_time(schedule::now_millis()));
         // The model's own instruction first, then what the roles and the
         // enabled skills add: the roles are the last word on style.
         let mut instruction = selection.instruction.trim().to_string();
@@ -1886,6 +2066,15 @@ impl AssistantPanel {
                 instruction.push_str("\n\n");
                 instruction.push_str(note);
             }
+        }
+        // Signed in, the user has a name: the assistant uses it instead of
+        // 「你」. Signed out — the default, and the only state offline — the
+        // neutral wording stays.
+        if let Some(name) = self.account.read(cx).assistant_addressing() {
+            if !instruction.is_empty() {
+                instruction.push_str("\n\n");
+            }
+            instruction.push_str(&t!("assistant.instruction.address_user", name = name));
         }
         let request = StreamRequest {
             protocol: selection.protocol,
@@ -1916,7 +2105,9 @@ impl AssistantPanel {
             stop: selection.stop,
             extra: selection.extra,
             instruction,
+            trial: selection.trial,
         };
+        self.stream_trial = selection.trial;
         self.stream = Some(client::start(request));
         self.begin_poll(cx);
     }
@@ -1983,6 +2174,10 @@ impl AssistantPanel {
         }
         if finished {
             self.stream = None;
+            // The trial's usage moved; the menu should say so now.
+            if std::mem::take(&mut self.stream_trial) {
+                self.refresh_trial(cx, true);
+            }
             let empty = self.messages.last().is_some_and(|message| {
                 message.text.trim().is_empty() && message.tool_calls.is_empty()
             });
@@ -1995,10 +2190,10 @@ impl AssistantPanel {
                 .messages
                 .last()
                 .filter(|message| message.role == chat::Role::Assistant)
-                .map(|message| message.text.clone())
-                .filter(|text| !text.trim().is_empty());
-            if let Some(text) = answered {
-                self.session_append(SessionEvent::Assistant { text });
+                .map(|message| (message.text.clone(), message.at))
+                .filter(|(text, _)| !text.trim().is_empty());
+            if let Some((text, at)) = answered {
+                self.session_append(SessionEvent::Assistant { text, at });
             }
             if let Some(text) = failure {
                 self.session_append(SessionEvent::Error {
@@ -2028,11 +2223,15 @@ impl AssistantPanel {
                 .messages
                 .last()
                 .filter(|message| message.role == chat::Role::Assistant)
-                .map(|message| message.text.clone())
-                .filter(|text| !text.trim().is_empty());
-            if let Some(text) = answered {
-                self.session_append(SessionEvent::Assistant { text });
+                .map(|message| (message.text.clone(), message.at))
+                .filter(|(text, _)| !text.trim().is_empty());
+            if let Some((text, at)) = answered {
+                self.session_append(SessionEvent::Assistant { text, at });
             }
+        }
+        // A cancelled trial answer still counted against the daily quota.
+        if std::mem::take(&mut self.stream_trial) {
+            self.refresh_trial(cx, true);
         }
         self.stopped = true;
         self.exchange = false;
@@ -2862,7 +3061,8 @@ impl AssistantPanel {
     }
 
     fn push_result(&mut self, call_id: String, body: String) {
-        self.messages.push(ChatMessage::tool_result(call_id, body));
+        self.messages
+            .push(ChatMessage::tool_result(call_id, body).with_time(schedule::now_millis()));
     }
 
     /// Add how long it took and how the policy judged it to a result body.
@@ -4103,9 +4303,9 @@ impl AssistantPanel {
     /// estimate, which the display says; the window comes from the model
     /// profile.
     fn context_usage(&self, cx: &mut Context<Self>) -> (usize, usize) {
-        let assistant = self.settings.read(cx).settings().assistant.clone();
+        let selection = self.selection(cx);
         let mut chars = self.conversation_note.chars().count();
-        chars += assistant.selection().instruction.chars().count();
+        chars += selection.instruction.chars().count();
         let mut image_tokens = 0;
         for message in &self.messages {
             chars += message.text.chars().count() + message.reasoning.chars().count();
@@ -4124,8 +4324,74 @@ impl AssistantPanel {
         chars += 12_000;
         (
             chars / 4 + self.messages.len() * 4 + image_tokens,
-            assistant.context_window() as usize,
+            selection.context_window as usize,
         )
+    }
+
+    /// The conversation area: the messages themselves, the scrollbar, and
+    /// the way back to the newest words while the reader is above them.
+    fn render_conversation(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        self.follow_tail();
+        let behind = self.behind;
+        v_flex()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .child(self.render_messages(cx))
+            .when(behind, |area| {
+                area.child(
+                    div()
+                        .absolute()
+                        .bottom_3()
+                        .left_0()
+                        .right_0()
+                        .flex()
+                        .justify_center()
+                        .child(
+                            Button::new("assistant-jump-latest")
+                                .small()
+                                .outline()
+                                .icon(IconName::ArrowDown)
+                                .label(t!("assistant.scroll.latest"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.behind = false;
+                                    this.scroll.scroll_to_bottom();
+                                    cx.notify();
+                                })),
+                        ),
+                )
+            })
+            // On the wrapper, which does not scroll: on the list the bar
+            // would scroll away with the messages. Always visible, so the
+            // conversation can be dragged without hunting for the bar.
+            .child(
+                Scrollbar::vertical(&self.scroll)
+                    .id("assistant-scrollbar")
+                    .mode(ScrollbarMode::Always),
+            )
+            .into_any_element()
+    }
+
+    /// Keep the newest words in view while the reader is at the bottom. A
+    /// reader above the tail is left where they are, and the jump button
+    /// says the conversation moved on. Runs before each frame is built.
+    fn follow_tail(&mut self) {
+        let tail = (
+            self.messages.len(),
+            self.messages
+                .last()
+                .map_or(0, |message| message.text.len() + message.reasoning.len()),
+        );
+        // Offsets run from zero at the top to minus the scroll range at the
+        // bottom, so the sum is zero when the tail is in view.
+        let at_bottom = self.scroll.offset().y + self.scroll.max_offset().y <= px(0.5);
+        if at_bottom {
+            self.behind = false;
+            self.scroll.scroll_to_bottom();
+        } else if tail != self.painted_tail {
+            self.behind = true;
+        }
+        self.painted_tail = tail;
     }
 
     fn render_messages(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -4136,6 +4402,7 @@ impl AssistantPanel {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .gap_3()
             .px_2()
             .py_2();
@@ -4169,7 +4436,7 @@ impl AssistantPanel {
                 .id(("assistant-turn", index))
                 .w_full()
                 .gap_1()
-                .child(div().text_xs().text_color(muted).child(role));
+                .child(self.render_message_header(message, role, cx));
             match message.role {
                 chat::Role::Tool => {
                     let (summary, body) = tool_card_parts(&message.text);
@@ -4226,6 +4493,60 @@ impl AssistantPanel {
             list = list.child(turn);
         }
         list
+    }
+
+    /// The line above a message's words: the speaker's badge, the name, and
+    /// when it was said. A tool result has no speaker, so it gets no badge.
+    fn render_message_header(
+        &self,
+        message: &ChatMessage,
+        role: SharedString,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let mut header = h_flex().w_full().items_center().gap_2();
+        if let Some(avatar) = self.render_speaker_avatar(message.role, cx) {
+            header = header.child(avatar);
+        }
+        let header = header.child(div().text_sm().font_weight(FontWeight::MEDIUM).child(role));
+        match message_time(message.at) {
+            Some(time) => header
+                .child(div().text_xs().text_color(muted).child(time))
+                .into_any_element(),
+            None => header.into_any_element(),
+        }
+    }
+
+    /// The badge in front of a message's name: the assistant's bot on the
+    /// quiet surface, and a placeholder for the user until signing in can
+    /// supply the account's picture — when it can, return that image here
+    /// for the user arm and leave the rest of the header alone. A tool
+    /// result is nobody speaking, so it gets none.
+    fn render_speaker_avatar(
+        &self,
+        role: chat::Role,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let muted = cx.theme().muted_foreground;
+        let (ink, glyph) = match role {
+            chat::Role::User => (muted, Icon::new(CatalogIcon::User)),
+            chat::Role::Assistant | chat::Role::System => {
+                (cx.theme().foreground, Icon::new(CatalogIcon::Bot))
+            }
+            chat::Role::Tool => return None,
+        };
+        Some(
+            h_flex()
+                .size_5()
+                .flex_shrink_0()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .bg(cx.theme().muted)
+                .text_color(ink)
+                .child(glyph.xsmall())
+                .into_any_element(),
+        )
     }
 
     /// The pictures and files waiting to be sent, each with a way to look at
@@ -4693,15 +5014,53 @@ impl AssistantPanel {
 
     /// The configured models, with the current one checked. Switching takes
     /// effect on the next turn; a running answer or a waiting card holds it
-    /// back.
+    /// back. The built-in trial heads the list while the service offers it.
     fn render_model_menu(&self, locked: bool, cx: &mut Context<Self>) -> AnyElement {
         let assistant = self.settings.read(cx).settings().assistant.clone();
         let active = assistant.active_profile();
         let provider_model = assistant.active().model.trim();
-        let label: SharedString = match (active, provider_model) {
-            (Some(profile), _) => profile.display_name().to_string().into(),
-            (None, "") => t!("assistant.model.none"),
-            (None, model) => model.to_string().into(),
+        let offer = self.trial_offer(cx);
+        let trial_selected = self.trial_selected && offer != trial::Offer::Hidden;
+        let label: SharedString = if trial_selected {
+            t!("assistant.trial.name")
+        } else {
+            match (active, provider_model) {
+                (Some(profile), _) => profile.display_name().to_string().into(),
+                (None, "") => t!("assistant.model.none"),
+                (None, model) => model.to_string().into(),
+            }
+        };
+        let tooltip: SharedString = if locked {
+            t!("assistant.model.locked")
+        } else if trial_selected {
+            match &self.trial {
+                Some(status) if status.available => t!(
+                    "assistant.trial.quota",
+                    requests = status.requests_remaining_today,
+                    tokens = compact_tokens(status.tokens_used_today as usize)
+                ),
+                _ => t!("assistant.trial.menu.exhausted"),
+            }
+        } else {
+            t!("assistant.model.switch")
+        };
+        // Hidden means the entry is not there at all; Exhausted keeps it so
+        // the user can see why it stopped.
+        let trial_item: Option<(SharedString, bool, bool)> = match (&self.trial, offer) {
+            (Some(status), trial::Offer::Ready) => Some((
+                t!(
+                    "assistant.trial.menu",
+                    remaining = status.requests_remaining_today
+                ),
+                true,
+                self.trial_selected,
+            )),
+            (Some(_), trial::Offer::Exhausted) => Some((
+                t!("assistant.trial.menu.exhausted"),
+                false,
+                self.trial_selected,
+            )),
+            _ => None,
         };
         let profiles = assistant.models.clone();
         let configured = !profiles.is_empty();
@@ -4713,21 +5072,29 @@ impl AssistantPanel {
         } else {
             t!("assistant.model.default", model = provider_model)
         };
-        let default_checked = assistant.active_model.is_empty();
+        let default_checked = assistant.active_model.is_empty() && !trial_selected;
         Button::new("assistant-model")
             .xsmall()
             .ghost()
             .icon(CatalogIcon::Cpu)
             .label(label)
-            .tooltip(if locked {
-                t!("assistant.model.locked")
-            } else {
-                t!("assistant.model.switch")
-            })
+            .tooltip(tooltip)
             .dropdown_caret(true)
             .disabled(locked)
             .dropdown_menu(move |menu, _, _| {
                 let mut menu = menu;
+                if let Some((label, selectable, checked)) = trial_item.clone() {
+                    let panel = panel.clone();
+                    let mut item = PopupMenuItem::new(label).checked(checked);
+                    if selectable {
+                        item = item.on_click(move |_, _, cx| {
+                            panel.update(cx, |panel, cx| panel.select_trial(cx));
+                        });
+                    } else {
+                        item = item.disabled(true);
+                    }
+                    menu = menu.item(item).separator();
+                }
                 if !configured {
                     menu = menu.item(PopupMenuItem::new(t!("assistant.model.none")).disabled(true));
                 }
@@ -4735,7 +5102,7 @@ impl AssistantPanel {
                     let id = profile.id.clone();
                     let label =
                         format!("{} · {}", profile.display_name(), profile.protocol.label());
-                    let checked = assistant.active_model == id;
+                    let checked = assistant.active_model == id && !trial_selected;
                     let panel = panel.clone();
                     menu = menu.item(PopupMenuItem::new(label).checked(checked).on_click(
                         move |_, _, cx| {
@@ -5015,7 +5382,7 @@ impl Render for AssistantPanel {
                         .child(error),
                 )
             })
-            .child(self.render_messages(cx))
+            .child(self.render_conversation(cx))
             .when_some(self.ask.as_ref(), |panel, ask| {
                 panel.child(self.render_ask(ask, cx))
             })
@@ -5024,6 +5391,27 @@ impl Render for AssistantPanel {
             })
             .child(self.render_composer(cx))
     }
+}
+
+/// When a message was sent, in the reader's own clock: the hour and minute
+/// for today, the date too for an older turn. Nothing for a message whose
+/// time was never kept, as in journals written before times were recorded.
+fn message_time(at: i64) -> Option<SharedString> {
+    use chrono::Datelike as _;
+    if at <= 0 {
+        return None;
+    }
+    let time = chrono::DateTime::from_timestamp_millis(at)?.with_timezone(&chrono::Local);
+    let today = chrono::Local::now().date_naive();
+    let date = time.date_naive();
+    let text = if date == today {
+        time.format("%H:%M").to_string()
+    } else if date.year() == today.year() {
+        time.format("%m-%d %H:%M").to_string()
+    } else {
+        time.format("%Y-%m-%d %H:%M").to_string()
+    };
+    Some(text.into())
 }
 
 /// Text on one line, cut to a readable length for a folded card.

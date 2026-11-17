@@ -131,6 +131,7 @@ pub fn request(settings: &AssistantSettings, command: &str, shell: &str) -> Stre
         stop: Vec::new(),
         extra: String::new(),
         instruction: String::new(),
+        trial: false,
     }
 }
 

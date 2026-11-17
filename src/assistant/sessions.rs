@@ -49,9 +49,16 @@ pub enum SessionEvent {
         text: String,
         #[serde(default)]
         attachments: Vec<AttachmentRef>,
+        /// When it was said, in milliseconds since the epoch. Journals
+        /// written before times were kept have none, and such a line shows
+        /// without a time.
+        #[serde(default)]
+        at: i64,
     },
     Assistant {
         text: String,
+        #[serde(default)]
+        at: i64,
     },
     Error {
         text: String,
@@ -254,17 +261,19 @@ impl Sessions {
                 continue;
             };
             match event {
-                SessionEvent::User { text, attachments }
-                    if !text.trim().is_empty() || !attachments.is_empty() =>
-                {
+                SessionEvent::User {
+                    text,
+                    attachments,
+                    at,
+                } if !text.trim().is_empty() || !attachments.is_empty() => {
                     let attachments = attachments
                         .iter()
                         .filter_map(|reference| Attachment::restore(&dir, reference))
                         .collect();
-                    messages.push(ChatMessage::user_with(text, attachments));
+                    messages.push(ChatMessage::user_with(text, attachments).with_time(at));
                 }
-                SessionEvent::Assistant { text } if !text.trim().is_empty() => {
-                    messages.push(ChatMessage::assistant(text));
+                SessionEvent::Assistant { text, at } if !text.trim().is_empty() => {
+                    messages.push(ChatMessage::assistant(text).with_time(at));
                 }
                 SessionEvent::User { .. }
                 | SessionEvent::Assistant { .. }
@@ -331,7 +340,7 @@ mod tests {
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "shellrs-sessions-{name}-{}-{}",
+            "shellas-sessions-{name}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -367,6 +376,7 @@ mod tests {
                 &SessionEvent::User {
                     text: "check the disk".into(),
                     attachments: Vec::new(),
+                    at: 1_700_000_000_500,
                 },
                 1,
             )
@@ -376,6 +386,7 @@ mod tests {
                 &id,
                 &SessionEvent::Assistant {
                     text: "It is 80% full.".into(),
+                    at: 1_700_000_001_000,
                 },
                 2,
             )
@@ -392,7 +403,9 @@ mod tests {
         let messages = sessions.messages(&id);
         assert_eq!(messages.len(), 2, "an error is not part of the talk");
         assert_eq!(messages[0].text, "check the disk");
+        assert_eq!(messages[0].at, 1_700_000_000_500, "the time comes back too");
         assert_eq!(messages[1].text, "It is 80% full.");
+        assert_eq!(messages[1].at, 1_700_000_001_000);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -408,6 +421,7 @@ mod tests {
                 &SessionEvent::User {
                     text: long,
                     attachments: Vec::new(),
+                    at: 1,
                 },
                 1,
             )
@@ -418,6 +432,7 @@ mod tests {
                 &SessionEvent::User {
                     text: "second".into(),
                     attachments: Vec::new(),
+                    at: 2,
                 },
                 2,
             )
@@ -502,6 +517,7 @@ mod tests {
                 &SessionEvent::User {
                     text: "look".into(),
                     attachments: vec![attachment.reference()],
+                    at: 1,
                 },
                 1,
             )
