@@ -41,6 +41,18 @@ pub struct SessionIndex {
     pub active: Option<String>,
 }
 
+/// What an earlier compaction left behind: the summary a conversation shows
+/// and sends, and how many journaled messages it replaced.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Compaction {
+    pub summary: String,
+    /// How many user and assistant messages the summary stands for, counting
+    /// earlier compactions. The divider shows this number.
+    pub count: usize,
+    /// The summary could not be written, so the messages were only dropped.
+    pub trimmed: bool,
+}
+
 /// One line of a session's journal.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -62,6 +74,14 @@ pub enum SessionEvent {
     },
     Error {
         text: String,
+    },
+    /// Earlier messages were replaced by a summary. `count` is cumulative:
+    /// how many journaled messages the summary now stands for.
+    Compact {
+        summary: String,
+        count: usize,
+        #[serde(default)]
+        trimmed: bool,
     },
 }
 
@@ -249,13 +269,15 @@ impl Sessions {
     }
 
     /// The conversation to show: the user's and the assistant's words, in
-    /// order, with the empty turns a stopped answer leaves behind dropped.
-    pub fn messages(&self, id: &str) -> Vec<ChatMessage> {
+    /// order, with the empty turns a stopped answer leaves behind dropped,
+    /// and the summary an earlier compaction left behind.
+    pub fn messages(&self, id: &str) -> (Vec<ChatMessage>, Option<Compaction>) {
         let Ok(text) = fs::read_to_string(journal_path(&self.dir, id)) else {
-            return Vec::new();
+            return (Vec::new(), None);
         };
         let dir = attachments_path(&self.dir, id);
         let mut messages = Vec::new();
+        let mut compaction: Option<Compaction> = None;
         for line in text.lines() {
             let Ok(event) = serde_json::from_str::<SessionEvent>(line) else {
                 continue;
@@ -275,12 +297,28 @@ impl Sessions {
                 SessionEvent::Assistant { text, at } if !text.trim().is_empty() => {
                     messages.push(ChatMessage::assistant(text).with_time(at));
                 }
+                SessionEvent::Compact {
+                    summary,
+                    count,
+                    trimmed,
+                } => {
+                    // `count` is cumulative: drop what this compaction added
+                    // beyond the last one, which is already gone.
+                    let previous = compaction.as_ref().map_or(0, |current| current.count);
+                    let drop = count.saturating_sub(previous).min(messages.len());
+                    messages.drain(..drop);
+                    compaction = Some(Compaction {
+                        summary,
+                        count,
+                        trimmed,
+                    });
+                }
                 SessionEvent::User { .. }
                 | SessionEvent::Assistant { .. }
                 | SessionEvent::Error { .. } => {}
             }
         }
-        messages
+        (messages, compaction)
     }
 
     /// Where the open session's attachment files go.
@@ -400,7 +438,7 @@ mod tests {
                 3,
             )
             .expect("append");
-        let messages = sessions.messages(&id);
+        let messages = sessions.messages(&id).0;
         assert_eq!(messages.len(), 2, "an error is not part of the talk");
         assert_eq!(messages[0].text, "check the disk");
         assert_eq!(messages[0].at, 1_700_000_000_500, "the time comes back too");
@@ -468,7 +506,12 @@ mod tests {
         assert_eq!(sessions.sessions().len(), 1);
         assert_ne!(sessions.active_id(), Some(id.as_str()));
         assert!(!journal_path(&dir, &id).exists());
-        assert!(sessions.messages(sessions.active_id().unwrap()).is_empty());
+        assert!(
+            sessions
+                .messages(sessions.active_id().unwrap())
+                .0
+                .is_empty()
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -522,7 +565,7 @@ mod tests {
                 1,
             )
             .expect("append");
-        let messages = sessions.messages(&id);
+        let messages = sessions.messages(&id).0;
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].attachments.len(), 1);
         assert_eq!(
@@ -534,6 +577,70 @@ mod tests {
 
         sessions.delete(&id, 2);
         assert!(!attachments_path(&dir, &id).exists(), "files go with it");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_compaction_replays_and_keeps_the_merged_summary() {
+        let dir = temp_dir("compaction");
+        let mut sessions = Sessions::load(&dir, 1_700_000_000_000);
+        let id = sessions.active_id().unwrap().to_string();
+        let append = |sessions: &mut Sessions, text: &str, user: bool, at: i64| {
+            let event = if user {
+                SessionEvent::User {
+                    text: text.into(),
+                    attachments: Vec::new(),
+                    at,
+                }
+            } else {
+                SessionEvent::Assistant {
+                    text: text.into(),
+                    at,
+                }
+            };
+            sessions.append(&id, &event, at).expect("append");
+        };
+        append(&mut sessions, "one", true, 1);
+        append(&mut sessions, "two", false, 2);
+        append(&mut sessions, "three", true, 3);
+        append(&mut sessions, "four", false, 4);
+        sessions
+            .append(
+                &id,
+                &SessionEvent::Compact {
+                    summary: "the start".into(),
+                    count: 2,
+                    trimmed: false,
+                },
+                5,
+            )
+            .expect("append");
+        append(&mut sessions, "five", true, 6);
+        append(&mut sessions, "six", false, 7);
+        sessions
+            .append(
+                &id,
+                &SessionEvent::Compact {
+                    summary: "one to four".into(),
+                    count: 4,
+                    trimmed: false,
+                },
+                8,
+            )
+            .expect("append");
+
+        let (messages, compaction) = sessions.messages(&id);
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| message.text.as_str())
+                .collect::<Vec<_>>(),
+            ["five", "six"]
+        );
+        let compaction = compaction.expect("a compaction comes back");
+        assert_eq!(compaction.summary, "one to four");
+        assert_eq!(compaction.count, 4);
+        assert!(!compaction.trimmed);
         let _ = fs::remove_dir_all(&dir);
     }
 }

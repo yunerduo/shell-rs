@@ -193,7 +193,7 @@ mod tests {
         "available": true,
         "reason": null,
         "model": "trial-model",
-        "maxContextTokens": 32000,
+        "maxContextTokens": 131072,
         "maxOutputTokens": 4096,
         "dailyRequestLimit": 200,
         "dailyTokenLimit": 0,
@@ -217,7 +217,7 @@ mod tests {
         let status: Status = serde_json::from_str(SAMPLE).expect("the sample status");
         assert!(status.available);
         assert_eq!(status.model, "trial-model");
-        assert_eq!(status.max_context_tokens, 32_000);
+        assert_eq!(status.max_context_tokens, 131_072);
         assert_eq!(status.max_output_tokens, 4_096);
         assert_eq!(status.requests_remaining_today, 197);
         assert_eq!(status.tokens_used_today, 5_120);
@@ -267,7 +267,7 @@ mod tests {
         assert_eq!(selection.model, "trial-model");
         assert!(selection.keychain_id.is_empty());
         assert_eq!(selection.max_tokens, 4_096);
-        assert_eq!(selection.context_window, 32_000);
+        assert_eq!(selection.context_window, 131_072);
         assert!(selection.trial);
         assert!(selection.headers.is_empty());
     }

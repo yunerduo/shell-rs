@@ -205,8 +205,23 @@ assistant.context.usage:
   zh-CN: 上下文 %{percent}% · %{used}/%{limit}
   en: Context %{percent}% · %{used}/%{limit}
 assistant.context.warning:
+  zh-CN: 上下文已用 %{percent}%，接近窗口上限；下一轮将自动压缩较早的对话。
+  en: Context is %{percent}% full and near the window; the next turn will compact the earlier messages.
+assistant.context.warning.manual:
   zh-CN: 上下文已用 %{percent}%，接近窗口上限；建议新建对话或精简历史。
   en: Context is %{percent}% full and near the window; start a new conversation or trim the history.
+assistant.compact.notice:
+  zh-CN: 较早的 %{count} 条对话已压缩为摘要
+  en: Earlier %{count} messages were compacted into a summary
+assistant.compact.notice.trimmed:
+  zh-CN: 较早的 %{count} 条对话已裁剪（摘要生成失败）
+  en: Earlier %{count} messages were dropped (summarizing failed)
+assistant.compact.running:
+  zh-CN: 正在压缩较早的对话…
+  en: Compacting earlier messages…
+assistant.compact.failed:
+  zh-CN: 摘要生成失败，已裁剪最早的消息。
+  en: Summarizing failed; the oldest messages were dropped.
 assistant.thinking.title:
   zh-CN: 思考过程
   en: Thinking

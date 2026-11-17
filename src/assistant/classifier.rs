@@ -119,6 +119,7 @@ pub fn request(settings: &AssistantSettings, command: &str, shell: &str) -> Stre
         timeout: TIMEOUT,
         terminals: Vec::new(),
         scheduled: false,
+        plain: true,
         headers: selection.headers.clone(),
         proxy: settings.proxy_route(selection.protocol).map(Into::into),
         // The judgment stays the same whatever the model's own tuning: the

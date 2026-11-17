@@ -58,6 +58,9 @@ pub struct StreamRequest {
     /// This answer belongs to a scheduled task: the tools are the read-only
     /// ones and a proposal that cannot run.
     pub scheduled: bool,
+    /// A text-only request: no tools and no terminal aliases. The
+    /// conversation compactor uses it.
+    pub plain: bool,
     /// Headers the provider's settings add; a name the protocol already
     /// sets keeps the protocol's value.
     pub headers: Vec<RequestHeader>,
@@ -168,7 +171,16 @@ pub(super) fn run_with_key(
     tx: &mpsc::Sender<StreamEvent>,
     cancel: &AtomicBool,
 ) -> Result<(), ChatError> {
-    let mut spec = if request.scheduled {
+    let mut spec = if request.plain {
+        protocol::plain_request_spec(
+            request.protocol,
+            &request.base_url,
+            &request.model,
+            key,
+            &request.messages,
+            request.max_tokens,
+        )
+    } else if request.scheduled {
         protocol::scheduled_request_spec(
             request.protocol,
             &request.base_url,
@@ -868,6 +880,7 @@ mod tests {
             timeout: Duration::from_secs(60),
             terminals: Vec::new(),
             scheduled: false,
+            plain: false,
             headers: Vec::new(),
             proxy: None,
             temperature: None,

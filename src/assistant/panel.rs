@@ -40,12 +40,13 @@ use super::chat::{
 };
 use super::classifier::{self, Judged};
 use super::client::{self, StreamEvent, StreamHandle, StreamRequest};
+use super::compact;
 use super::inject::{self, InjectOutcome, Route};
 use super::pending::{self, PendingItem};
 use super::policy::{self, AuthorizationLevel, Classified, Decision, Policy, Risk, Verdict};
 use super::protocol::ToolTerminal;
 use super::schedule::{self, ResumePlan, Schedule, ScheduleAction, ScheduleStore, ScheduleTarget};
-use super::sessions::{SessionEvent, Sessions};
+use super::sessions::{Compaction, SessionEvent, Sessions};
 use super::settings::ModelSelection;
 use super::tool_result::{
     ResultFacts, call_parts, call_summary, denied_result, result_facts, tool_card_parts,
@@ -255,6 +256,17 @@ struct ScheduledAiRun {
     deadline: Instant,
 }
 
+/// One summarizing call in flight. Its text becomes the summary of the
+/// messages before `split`.
+struct CompactRun {
+    stream: StreamHandle,
+    text: String,
+    split: usize,
+    /// The cumulative number of stored messages the summary will stand for.
+    count: usize,
+    started: Instant,
+}
+
 /// A tool panel in the sidebar. It renders itself; the sidebar only keeps
 /// the entity.
 pub struct AssistantPanel {
@@ -285,6 +297,11 @@ pub struct AssistantPanel {
     /// The conversations kept between launches; `messages` is the open one.
     sessions: Sessions,
     messages: Vec<ChatMessage>,
+    /// The summary an earlier compaction left behind, and how many stored
+    /// messages it stands for.
+    compaction: Option<Compaction>,
+    /// The summarizing call in flight, if any.
+    compact: Option<CompactRun>,
     /// The conversation's scroll position. Tracked so new words can follow
     /// the tail while the reader is there, and so the scrollbar has a handle.
     scroll: ScrollHandle,
@@ -417,9 +434,9 @@ impl AssistantPanel {
                 ),
             ];
         let sessions = Sessions::load(&crate::app::data_dir(), schedule::now_millis());
-        let messages = match sessions.active_id() {
+        let (messages, compaction) = match sessions.active_id() {
             Some(id) => sessions.messages(id),
-            None => Vec::new(),
+            None => (Vec::new(), None),
         };
         let mut panel = Self {
             settings,
@@ -433,6 +450,8 @@ impl AssistantPanel {
             available: Vec::new(),
             sessions,
             messages,
+            compaction,
+            compact: None,
             scroll: ScrollHandle::new(),
             behind: false,
             painted_tail: (0, 0),
@@ -776,6 +795,7 @@ impl AssistantPanel {
                 title: terminal.title.clone(),
             }],
             scheduled: true,
+            plain: false,
             headers: selection.headers,
             proxy: assistant.proxy_route(selection.protocol).map(Into::into),
             temperature: selection.temperature,
@@ -999,6 +1019,7 @@ impl AssistantPanel {
                 title: run.target.title.clone(),
             }],
             scheduled: true,
+            plain: false,
             headers: selection.headers,
             proxy: assistant.proxy_route(selection.protocol).map(Into::into),
             temperature: selection.temperature,
@@ -1596,6 +1617,7 @@ impl AssistantPanel {
             || !self.pending.is_empty()
             || self.ask.is_some()
             || self.classify.is_some()
+            || self.compact.is_some()
     }
 
     /// What the model menu may do with the built-in trial now.
@@ -2030,6 +2052,7 @@ impl AssistantPanel {
             || !self.waiting.is_empty()
             || self.classify.is_some()
             || self.ask.is_some()
+            || self.compact.is_some()
             || !self.pending.is_empty()
             || !self.queue.is_empty()
         {
@@ -2050,6 +2073,11 @@ impl AssistantPanel {
         }
         if selection.base_url.trim().is_empty() || selection.model.trim().is_empty() {
             self.error = Some(t!("assistant.error.no_provider"));
+            return;
+        }
+        // Near the window, the older turns become a summary before this
+        // round is asked for. The summary call ends by calling back here.
+        if self.maybe_compact(cx) {
             return;
         }
         self.rounds += 1;
@@ -2076,6 +2104,17 @@ impl AssistantPanel {
             }
             instruction.push_str(&t!("assistant.instruction.address_user", name = name));
         }
+        // The turns that are no longer in the message list travel as a
+        // summary the compaction wrote.
+        if let Some(compaction) = &self.compaction
+            && !compaction.summary.trim().is_empty()
+        {
+            if !instruction.is_empty() {
+                instruction.push_str("\n\n");
+            }
+            instruction.push_str("Summary of the earlier conversation:\n");
+            instruction.push_str(compaction.summary.trim());
+        }
         let request = StreamRequest {
             protocol: selection.protocol,
             base_url: selection.base_url,
@@ -2095,6 +2134,7 @@ impl AssistantPanel {
                 })
                 .collect(),
             scheduled: false,
+            plain: false,
             headers: selection.headers,
             proxy: assistant.proxy_route(selection.protocol).map(Into::into),
             temperature: selection.temperature,
@@ -2110,6 +2150,176 @@ impl AssistantPanel {
         self.stream_trial = selection.trial;
         self.stream = Some(client::start(request));
         self.begin_poll(cx);
+    }
+
+    /// Start a summarizing call when the next turn would come too close to
+    /// the window. `true` when one is on its way.
+    fn maybe_compact(&mut self, cx: &mut Context<Self>) -> bool {
+        let (used, window) = self.context_usage(cx);
+        if window == 0 || used * 100 < window * compact::TRIGGER_PERCENT {
+            return false;
+        }
+        let Some(plan) = compact::plan(
+            &self.messages,
+            self.compaction
+                .as_ref()
+                .map(|current| current.summary.as_str()),
+        ) else {
+            return false;
+        };
+        let selection = self.selection(cx);
+        let assistant = self.settings.read(cx).settings().assistant.clone();
+        let timeout = Duration::from_secs(
+            assistant
+                .timeout_seconds
+                .clamp(30, compact::SUMMARY_TIMEOUT.as_secs()),
+        );
+        let request = compact::request(
+            &selection,
+            plan.prompt,
+            timeout,
+            assistant.proxy_route(selection.protocol).map(Into::into),
+        );
+        let count = self.compaction.as_ref().map_or(0, |current| current.count) + plan.count;
+        self.compact = Some(CompactRun {
+            stream: client::start(request),
+            text: String::new(),
+            split: plan.split,
+            count,
+            started: Instant::now(),
+        });
+        self.begin_compact_poll(cx);
+        cx.notify();
+        true
+    }
+
+    fn begin_compact_poll(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(POLL_INTERVAL).await;
+                let finished = this
+                    .update(cx, |this, cx| this.poll_compact(cx))
+                    .unwrap_or(true);
+                if finished {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Take what the summarizing answer sent. `true` when it is over,
+    /// however it ended: a slow or failed summary never holds the
+    /// conversation.
+    fn poll_compact(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(mut run) = self.compact.take() else {
+            return true;
+        };
+        let mut finished = false;
+        let mut failed = false;
+        let mut changed = false;
+        loop {
+            match client::next_event(&run.stream.rx) {
+                Some(StreamEvent::Delta(text)) => {
+                    run.text.push_str(&text);
+                    changed = true;
+                }
+                Some(StreamEvent::Thinking(_)) | Some(StreamEvent::ToolCalls(_)) => {}
+                Some(StreamEvent::Done) => {
+                    finished = true;
+                    break;
+                }
+                Some(StreamEvent::Failed(_)) => {
+                    failed = true;
+                    finished = true;
+                    break;
+                }
+                None => break,
+            }
+        }
+        if !finished && run.started.elapsed() < compact::SUMMARY_TIMEOUT {
+            self.compact = Some(run);
+            if changed {
+                cx.notify();
+            }
+            return false;
+        }
+        if !finished {
+            run.stream.cancel();
+        }
+        let summary = if failed || run.text.trim().is_empty() {
+            None
+        } else {
+            Some(run.text.trim().to_string())
+        };
+        self.finish_compaction(run, summary, cx);
+        true
+    }
+
+    /// Replace the messages before the cut with the summary, then continue
+    /// the exchange. `summary` is `None` when the model could not write one:
+    /// the same messages are simply dropped.
+    fn finish_compaction(
+        &mut self,
+        run: CompactRun,
+        summary: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let split = run.split.min(self.messages.len());
+        self.messages.drain(..split);
+        self.expanded.clear();
+        let trimmed = summary.is_none();
+        let summary = summary.unwrap_or_else(|| compact::FALLBACK_SUMMARY.to_string());
+        self.compaction = Some(Compaction {
+            summary,
+            count: run.count,
+            trimmed,
+        });
+
+        // The kept tail alone may still be too large (one huge answer, for
+        // example). Drop older turns from it rather than let the request
+        // fail.
+        let selection = self.selection(cx);
+        let standing = self.standing_chars(&selection, cx);
+        let window = selection.context_window as usize;
+        if window > 0
+            && compact::estimate_tokens(&self.messages, standing) * 100
+                >= window * compact::TRIGGER_PERCENT
+        {
+            let removed = compact::trim_to_target(&mut self.messages, standing, window);
+            if removed > 0
+                && let Some(compaction) = &mut self.compaction
+            {
+                compaction.count += removed;
+                compaction.trimmed = true;
+                compaction.summary.push_str("\n\n");
+                compaction.summary.push_str(compact::FALLBACK_SUMMARY);
+            }
+        }
+        self.painted_tail = (self.messages.len(), 0);
+
+        let compacted = self.compaction.as_ref().map(|compaction| {
+            (
+                compaction.summary.clone(),
+                compaction.count,
+                compaction.trimmed,
+            )
+        });
+        if let Some((summary, count, trimmed)) = compacted {
+            self.session_append(SessionEvent::Compact {
+                summary,
+                count,
+                trimmed,
+            });
+            if trimmed {
+                self.notice = Some(t!("assistant.compact.failed"));
+            }
+        }
+        if self.exchange {
+            self.request_round(cx);
+        } else {
+            cx.notify();
+        }
     }
 
     fn begin_poll(&mut self, cx: &mut Context<Self>) {
@@ -3397,15 +3607,17 @@ impl AssistantPanel {
             || !self.backgrounds.is_empty()
             || self.classify.is_some()
             || self.ask.is_some()
+            || self.compact.is_some()
     }
 
     /// Show the open session's words. Everything that belonged to the last
     /// exchange's screen is dropped; nothing is replayed or re-run.
     fn load_session(&mut self, cx: &mut Context<Self>) {
-        self.messages = match self.sessions.active_id() {
+        (self.messages, self.compaction) = match self.sessions.active_id() {
             Some(id) => self.sessions.messages(id),
-            None => Vec::new(),
+            None => (Vec::new(), None),
         };
+        self.compact = None;
         self.expanded.clear();
         self.attachments.clear();
         self.queue.clear();
@@ -4304,28 +4516,28 @@ impl AssistantPanel {
     /// profile.
     fn context_usage(&self, cx: &mut Context<Self>) -> (usize, usize) {
         let selection = self.selection(cx);
-        let mut chars = self.conversation_note.chars().count();
-        chars += selection.instruction.chars().count();
-        let mut image_tokens = 0;
-        for message in &self.messages {
-            chars += message.text.chars().count() + message.reasoning.chars().count();
-            for call in &message.tool_calls {
-                chars += call.name.chars().count() + call.arguments.chars().count() + 8;
-            }
-            for attachment in &message.attachments {
-                match attachment.text_content() {
-                    Some((text, _)) => chars += text.chars().count(),
-                    // Roughly what one picture costs once it is scaled.
-                    None => image_tokens += 1_100,
-                }
-            }
-        }
-        // The platform prompt and the tool schemas travel every time.
-        chars += 12_000;
+        let standing = self.standing_chars(&selection, cx);
         (
-            chars / 4 + self.messages.len() * 4 + image_tokens,
+            compact::estimate_tokens(&self.messages, standing),
             selection.context_window as usize,
         )
+    }
+
+    /// The characters the next request always carries beside the messages:
+    /// the model's instruction, the roles and skills, the user's name, and
+    /// any earlier summary.
+    fn standing_chars(&self, selection: &ModelSelection, cx: &App) -> usize {
+        let mut chars =
+            self.conversation_note.chars().count() + selection.instruction.chars().count();
+        if let Some(name) = self.account.read(cx).assistant_addressing() {
+            chars += t!("assistant.instruction.address_user", name = name)
+                .chars()
+                .count();
+        }
+        if let Some(compaction) = &self.compaction {
+            chars += compaction.summary.chars().count();
+        }
+        chars
     }
 
     /// The conversation area: the messages themselves, the scrollbar, and
@@ -4412,6 +4624,25 @@ impl AssistantPanel {
                     .text_sm()
                     .text_color(muted)
                     .child(t!("assistant.empty_state")),
+            );
+        }
+        if let Some(compaction) = &self.compaction {
+            let text = if compaction.trimmed {
+                t!("assistant.compact.notice.trimmed", count = compaction.count)
+            } else {
+                t!("assistant.compact.notice", count = compaction.count)
+            };
+            list = list.child(
+                h_flex()
+                    .id("assistant-compaction")
+                    .w_full()
+                    .items_center()
+                    .gap_2()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(div().h_px().flex_1().bg(cx.theme().border))
+                    .child(text)
+                    .child(div().h_px().flex_1().bg(cx.theme().border)),
             );
         }
         for (index, message) in self.messages.iter().enumerate() {
@@ -4723,6 +4954,7 @@ impl AssistantPanel {
         let empty = self.input.read(cx).value().trim().is_empty();
         let (used, window) = self.context_usage(cx);
         let percent = (used * 100).checked_div(window).unwrap_or(0).min(100);
+        let can_compact = compact::can_plan(&self.messages);
         let tone = if percent >= 95 {
             cx.theme().danger
         } else {
@@ -4744,6 +4976,15 @@ impl AssistantPanel {
                         .text_xs()
                         .text_color(muted)
                         .child(t!("assistant.tool.classifying")),
+                )
+            })
+            .when(self.compact.is_some(), |composer| {
+                composer.child(
+                    div()
+                        .id("assistant-compacting")
+                        .text_xs()
+                        .text_color(muted)
+                        .child(t!("assistant.compact.running")),
                 )
             })
             .when(!self.backgrounds.is_empty(), |composer| {
@@ -4830,12 +5071,17 @@ impl AssistantPanel {
                             .aria_label(t!("assistant.input.aria")),
                     )
                     .when(percent >= 80, |card| {
+                        let warning = if can_compact {
+                            t!("assistant.context.warning", percent = percent)
+                        } else {
+                            t!("assistant.context.warning.manual", percent = percent)
+                        };
                         card.child(
                             div()
                                 .id("assistant-context-warning")
                                 .text_xs()
                                 .text_color(tone)
-                                .child(t!("assistant.context.warning", percent = percent)),
+                                .child(warning),
                         )
                     })
                     .child(

@@ -9,6 +9,7 @@ One section per version, titled `## [version]`, optionally followed by a date. E
 ### Added
 
 - Built-in AI trial: sign in to an account and use the model the service provides, with no API key of your own; you can still use your own key.
+- When the assistant's context nears the window limit it compacts the earlier messages into a summary (128K context), so long conversations do not stop at the limit.
 - Accounts and sign-in: register and sign in inside the app, and view or change your profile.
 - Email verification and password reset: verify your email after registering, and reset a forgotten password by email.
 - Host import and export: export your hosts to a file and import them on another machine, or import Xshell `.xts` profiles.
