@@ -104,6 +104,12 @@ pub struct RegisterRequest {
     password: String,
     #[serde(default)]
     email: Option<String>,
+    /// 中国大陆手机号，可选；没有短信验证。
+    #[serde(default)]
+    phone: Option<String>,
+    /// 后台开启「注册需验证邮箱」时必填，值为邮箱收到的 6 位数字。
+    #[serde(default)]
+    verification_code: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -116,6 +122,11 @@ pub struct LoginRequest {
 pub struct MeResponse {
     username: String,
     email: Option<String>,
+    /// 注册时填的手机号；没有短信通道，不代表已验证。
+    phone: Option<String>,
+    /// 邮箱是否通过验证码确认过归属。开关关闭时注册的账号为 false，
+    /// 但可以正常使用。
+    email_verified: bool,
     /// 待验证的新邮箱；验证通过前 `email` 不变。
     pending_email: Option<String>,
     quota_bytes: i64,
@@ -163,21 +174,70 @@ pub async fn register(
     {
         return Err(ApiError::BadRequest("邮箱格式不对".into()));
     }
+    let phone = request
+        .phone
+        .as_deref()
+        .map(str::trim)
+        .filter(|phone| !phone.is_empty());
+    if let Some(phone) = phone {
+        if !auth::valid_phone(phone) {
+            return Err(ApiError::InvalidPhone(
+                "手机号要 11 位数字，且以 1 开头".into(),
+            ));
+        }
+        if state.db.phone_taken(phone)? {
+            return Err(ApiError::PhoneTaken);
+        }
+    }
     let password = request.password;
+    let require_verification = crate::email::require_verification(&state.db)?;
+    if require_verification {
+        let Some(email) = email else {
+            return Err(ApiError::EmailRequired);
+        };
+        let Some(code) = request
+            .verification_code
+            .as_deref()
+            .map(str::trim)
+            .filter(|code| !code.is_empty())
+        else {
+            return Err(ApiError::EmailVerificationRequired);
+        };
+        // 先查重，避免验证码通过了却因为账号冲突白烧一次。
+        if state.db.user_by_email(email)?.is_some() {
+            return Err(ApiError::Conflict("该邮箱已被注册".into()));
+        }
+        if state.db.user_by_name(&username)?.is_some() {
+            return Err(ApiError::Conflict("用户名已被注册".into()));
+        }
+        crate::email::verify_register_code(&state, email, code)?;
+    }
     let password_hash = tokio::task::spawn_blocking(move || auth::hash_password(&password))
         .await
         .map_err(ApiError::internal)?
         .map_err(ApiError::internal)?;
     let quota = state.config.default_quota_bytes;
     let salt = util::random_salt();
-    let user = match state
-        .db
-        .create_user(&username, email, &password_hash, &salt, quota)
-    {
+    let user = match state.db.create_user(
+        &username,
+        email,
+        phone,
+        &password_hash,
+        &salt,
+        quota,
+        require_verification,
+    ) {
         Ok(user) => user,
-        Err(rusqlite::Error::SqliteFailure(error, _))
+        Err(rusqlite::Error::SqliteFailure(error, detail))
             if error.code == rusqlite::ErrorCode::ConstraintViolation =>
         {
+            // 预检之后仍可能撞上唯一索引（并发注册），按索引区分手机号与账号。
+            if detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("users.phone"))
+            {
+                return Err(ApiError::PhoneTaken);
+            }
             return Err(ApiError::Conflict("用户名或邮箱已被注册".into()));
         }
         Err(error) => return Err(error.into()),
@@ -258,44 +318,7 @@ pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> ApiRes
     Ok(response)
 }
 
-/// 邮件找回这轮不做，但接口位置先占住：客户端可以调，拿到的是一个
-/// 稳定的 501，而不是 404。
-#[derive(Deserialize, Default)]
-#[allow(dead_code)] // 接口占位：字段先按将来发信的入参留着。
-pub struct ForgotPasswordRequest {
-    #[serde(default)]
-    pub username: String,
-    #[serde(default)]
-    pub email: String,
-}
-
-pub async fn forgot_password(
-    State(_state): State<AppState>,
-    Json(_request): Json<ForgotPasswordRequest>,
-) -> ApiResult<StatusCode> {
-    Err(ApiError::NotImplemented(
-        "邮件找回还没有开放，请联系管理员重置口令".into(),
-    ))
-}
-
-#[derive(Deserialize, Default)]
-#[allow(dead_code)] // 接口占位：字段先按将来校验收口令的入参留着。
-pub struct ResetPasswordRequest {
-    #[serde(default)]
-    pub token: String,
-    #[serde(default)]
-    pub password: String,
-}
-
-pub async fn reset_password(
-    State(_state): State<AppState>,
-    Json(_request): Json<ResetPasswordRequest>,
-) -> ApiResult<StatusCode> {
-    Err(ApiError::NotImplemented(
-        "邮件找回还没有开放，请联系管理员重置口令".into(),
-    ))
-}
-
+/// 邮件找回在 `email` 模块里实现，走 `POST /api/v1/auth/password/forgot`。
 fn session_response(body: AuthResponse, days: i64) -> Response {
     let token = body.token.clone();
     let mut response = Json(body).into_response();
@@ -423,6 +446,8 @@ fn me_response(state: &AppState, user: &User) -> ApiResult<MeResponse> {
     Ok(MeResponse {
         username: user.username.clone(),
         email: user.email.clone(),
+        phone: user.phone.clone(),
+        email_verified: user.email_verified,
         pending_email: state.db.pending_email(user.id)?,
         quota_bytes: user.quota_bytes,
         used_bytes: state.db.used_bytes(user.id)?,

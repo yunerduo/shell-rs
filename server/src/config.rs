@@ -43,6 +43,15 @@ pub struct Config {
     pub ai_base_url: Option<String>,
     pub ai_api_key: Option<String>,
     pub ai_model: Option<String>,
+    /// SMTP 的首次播种值。同样只在库里还没有配置时读一次，之后以
+    /// 后台保存的值为准。口令只在这里出现，不写日志。
+    pub smtp_host: Option<String>,
+    pub smtp_port: Option<i64>,
+    pub smtp_encryption: Option<String>,
+    pub smtp_username: Option<String>,
+    pub smtp_password: Option<String>,
+    pub smtp_from: Option<String>,
+    pub smtp_from_name: Option<String>,
 }
 
 impl Config {
@@ -109,6 +118,15 @@ impl Config {
             ai_base_url: optional("SHELLAS_AI_BASE_URL"),
             ai_api_key: optional("SHELLAS_AI_API_KEY"),
             ai_model: optional("SHELLAS_AI_MODEL"),
+            smtp_host: optional("SHELLAS_SMTP_HOST"),
+            smtp_port: optional("SHELLAS_SMTP_PORT")
+                .map(|value| number(value).map(|port| port.clamp(1, 65535)))
+                .transpose()?,
+            smtp_encryption: optional("SHELLAS_SMTP_ENCRYPTION"),
+            smtp_username: optional("SHELLAS_SMTP_USERNAME"),
+            smtp_password: optional("SHELLAS_SMTP_PASSWORD"),
+            smtp_from: optional("SHELLAS_SMTP_FROM"),
+            smtp_from_name: optional("SHELLAS_SMTP_FROM_NAME"),
         })
     }
 

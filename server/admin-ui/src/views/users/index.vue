@@ -36,7 +36,8 @@ const filtered = computed(() => {
   return rows.value.filter(
     row =>
       row.username.toLowerCase().includes(text) ||
-      (row.email ?? "").toLowerCase().includes(text)
+      (row.email ?? "").toLowerCase().includes(text) ||
+      (row.phone ?? "").includes(text)
   );
 });
 
@@ -171,7 +172,7 @@ onMounted(load);
         <el-input
           v-model="keyword"
           class="search"
-          placeholder="搜索账号或邮箱"
+          placeholder="搜索账号、邮箱或手机号"
           clearable
         />
         <el-button @click="load">刷新</el-button>
@@ -181,7 +182,20 @@ onMounted(load);
     <el-table v-loading="loading" :data="filtered" size="small">
       <el-table-column prop="username" label="账号" min-width="150" />
       <el-table-column prop="email" label="邮箱" min-width="190">
-        <template #default="{ row }">{{ row.email || "—" }}</template>
+        <template #default="{ row }">
+          {{ row.email || "—" }}
+          <el-tag v-if="row.email && !row.emailVerified" size="small" type="info">
+            未验证
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column prop="phone" label="手机号" min-width="140">
+        <template #default="{ row }">
+          {{ row.phone || "—" }}
+          <el-tag v-if="row.phone && !row.phoneVerified" size="small" type="info">
+            未验证
+          </el-tag>
+        </template>
       </el-table-column>
       <el-table-column label="状态" width="90">
         <template #default="{ row }">

@@ -14,13 +14,18 @@ use thiserror::Error;
 use crate::util;
 
 /// 正在升级的库版本，见 [`migrate`]。
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 10;
 
 #[derive(Clone, Debug)]
 pub struct User {
     pub id: i64,
     pub username: String,
     pub email: Option<String>,
+    /// 注册时填的手机号，可以没有；没有短信通道，不做验证。
+    pub phone: Option<String>,
+    /// 邮箱是否通过验证码确认过归属。开关关闭时注册的账号为 false，
+    /// 但仍然可以正常使用；重置口令成功后会置为 true。
+    pub email_verified: bool,
     pub password_hash: String,
     pub quota_bytes: i64,
     pub sync_salt: String,
@@ -36,6 +41,11 @@ pub struct UserRow {
     pub id: i64,
     pub username: String,
     pub email: Option<String>,
+    pub phone: Option<String>,
+    /// 手机号是否验证过。目前没有短信通道，恒为 false，留给以后。
+    pub phone_verified: bool,
+    /// 邮箱是否通过验证码确认过归属。
+    pub email_verified: bool,
     pub quota_bytes: i64,
     /// 快照与同步文档占用的总字节数。
     pub used_bytes: i64,
@@ -225,6 +235,70 @@ pub struct AiUsageRow {
     pub last_used_at: Option<String>,
 }
 
+/// SMTP 配置。口令只存服务端，任何接口都不回传。
+#[derive(Clone, Debug)]
+pub struct EmailSettings {
+    pub enabled: bool,
+    pub host: String,
+    pub port: i64,
+    /// `starttls` / `tls` / `plain`。
+    pub encryption: String,
+    pub username: String,
+    pub password: String,
+    pub from_address: String,
+    pub from_name: String,
+    /// 注册是否要求邮箱验证。只影响新注册，不追溯已有账号。
+    pub require_verification: bool,
+    pub updated_at: String,
+}
+
+impl EmailSettings {
+    /// 库为空时的默认值：未配置、未启用、不要求验证。
+    pub fn defaults() -> Self {
+        Self {
+            enabled: false,
+            host: String::new(),
+            port: 587,
+            encryption: "starttls".into(),
+            username: String::new(),
+            password: String::new(),
+            from_address: String::new(),
+            from_name: "Agree ShellAs".into(),
+            require_verification: false,
+            updated_at: String::new(),
+        }
+    }
+}
+
+/// 一套邮件模板，`purpose` 是 `register_verification` 或 `password_reset`。
+#[derive(Clone, Debug)]
+pub struct EmailTemplate {
+    pub purpose: String,
+    pub subject: String,
+    pub body: String,
+    pub updated_at: String,
+}
+
+/// 发送记录的一行。只留元数据，验证码和正文不在这里。
+#[derive(Clone, Debug)]
+pub struct EmailSend {
+    pub id: i64,
+    pub email: String,
+    pub purpose: String,
+    pub result: String,
+    pub detail: String,
+    pub created_at: String,
+}
+
+/// 校验验证码的结果。输错次数已在库里累加。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EmailCodeCheck {
+    Ok,
+    Invalid,
+    Expired,
+    Locked,
+}
+
 /// 每日限额挡住请求时的原因，接口层据此给 429 与可读文案。
 #[derive(Debug, Error)]
 pub enum AiQuotaError {
@@ -311,31 +385,38 @@ impl Db {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    #[allow(clippy::too_many_arguments)] // 建号要一次写全，调用方都是明确的字面量。
     pub fn create_user(
         &self,
         username: &str,
         email: Option<&str>,
+        phone: Option<&str>,
         password_hash: &str,
         sync_salt: &str,
         quota_bytes: i64,
+        email_verified: bool,
     ) -> rusqlite::Result<User> {
         let created_at = util::now();
         self.conn().execute(
-            "INSERT INTO users (username, email, password_hash, quota_bytes, sync_salt, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO users (username, email, phone, password_hash, quota_bytes, sync_salt, created_at, email_verified)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 username,
                 email,
+                phone,
                 password_hash,
                 quota_bytes,
                 sync_salt,
-                created_at
+                created_at,
+                email_verified
             ],
         )?;
         Ok(User {
             id: self.conn().last_insert_rowid(),
             username: username.to_string(),
             email: email.map(str::to_string),
+            phone: phone.map(str::to_string),
+            email_verified,
             password_hash: password_hash.to_string(),
             quota_bytes,
             sync_salt: sync_salt.to_string(),
@@ -344,12 +425,34 @@ impl Db {
         })
     }
 
+    /// 手机号是否已被占用。
+    pub fn phone_taken(&self, phone: &str) -> rusqlite::Result<bool> {
+        let count: i64 = self.conn().query_row(
+            "SELECT COUNT(*) FROM users WHERE phone = ?1",
+            [phone],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
     pub fn user_by_name(&self, username: &str) -> rusqlite::Result<Option<User>> {
         self.conn()
             .query_row(
-                "SELECT id, username, email, password_hash, quota_bytes, sync_salt, created_at, disabled
+                "SELECT id, username, email, password_hash, quota_bytes, sync_salt, created_at, disabled, phone, email_verified
                  FROM users WHERE username = ?1 COLLATE NOCASE",
                 [username],
+                user_row,
+            )
+            .optional()
+    }
+
+    /// 按邮箱查账号，不区分大小写。找回密码用。
+    pub fn user_by_email(&self, email: &str) -> rusqlite::Result<Option<User>> {
+        self.conn()
+            .query_row(
+                "SELECT id, username, email, password_hash, quota_bytes, sync_salt, created_at, disabled, phone, email_verified
+                 FROM users WHERE email = ?1 COLLATE NOCASE",
+                [email],
                 user_row,
             )
             .optional()
@@ -358,7 +461,7 @@ impl Db {
     pub fn user_by_id(&self, id: i64) -> rusqlite::Result<Option<User>> {
         self.conn()
             .query_row(
-                "SELECT id, username, email, password_hash, quota_bytes, sync_salt, created_at, disabled
+                "SELECT id, username, email, password_hash, quota_bytes, sync_salt, created_at, disabled, phone, email_verified
                  FROM users WHERE id = ?1",
                 [id],
                 user_row,
@@ -370,11 +473,13 @@ impl Db {
     pub fn users(&self) -> rusqlite::Result<Vec<UserRow>> {
         let conn = self.conn();
         let mut statement = conn.prepare(
-            "SELECT u.id, u.username, u.email, u.quota_bytes, u.created_at, u.disabled,
+            "SELECT u.id, u.username, u.email, u.phone, u.phone_verified, u.quota_bytes,
+                    u.created_at, u.disabled,
                     COALESCE((SELECT SUM(size) FROM snapshots WHERE user_id = u.id), 0)
                       + COALESCE((SELECT SUM(size) FROM sync_documents WHERE user_id = u.id), 0),
                     (SELECT COUNT(*) FROM snapshots WHERE user_id = u.id)
-                      + (SELECT COUNT(*) FROM sync_documents WHERE user_id = u.id)
+                      + (SELECT COUNT(*) FROM sync_documents WHERE user_id = u.id),
+                    u.email_verified
              FROM users u ORDER BY u.id",
         )?;
         let rows = statement.query_map([], |row| {
@@ -382,11 +487,14 @@ impl Db {
                 id: row.get(0)?,
                 username: row.get(1)?,
                 email: row.get(2)?,
-                quota_bytes: row.get(3)?,
-                created_at: row.get(4)?,
-                disabled: row.get(5)?,
-                used_bytes: row.get(6)?,
-                versions: row.get(7)?,
+                phone: row.get(3)?,
+                phone_verified: row.get(4)?,
+                quota_bytes: row.get(5)?,
+                created_at: row.get(6)?,
+                disabled: row.get(7)?,
+                used_bytes: row.get(8)?,
+                versions: row.get(9)?,
+                email_verified: row.get(10)?,
             })
         })?;
         rows.collect()
@@ -421,6 +529,313 @@ impl Db {
         )?;
         self.conn()
             .execute("DELETE FROM sessions WHERE user_id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn set_email_verified(&self, id: i64, verified: bool) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE users SET email_verified = ?2 WHERE id = ?1",
+            params![id, verified],
+        )?;
+        Ok(())
+    }
+
+    // ---- 邮件配置、模板与验证码 ----
+
+    pub fn email_settings(&self) -> rusqlite::Result<Option<EmailSettings>> {
+        self.conn()
+            .query_row(
+                "SELECT enabled, host, port, encryption, username, password,
+                        from_address, from_name, require_verification, updated_at
+                 FROM email_settings WHERE id = 1",
+                [],
+                |row| {
+                    Ok(EmailSettings {
+                        enabled: row.get(0)?,
+                        host: row.get(1)?,
+                        port: row.get(2)?,
+                        encryption: row.get(3)?,
+                        username: row.get(4)?,
+                        password: row.get(5)?,
+                        from_address: row.get(6)?,
+                        from_name: row.get(7)?,
+                        require_verification: row.get(8)?,
+                        updated_at: row.get(9)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    /// 只在库为空时播种 `.env` 里的配置，已有记录时保持后台改过的值。
+    pub fn seed_email_settings(&self, settings: &EmailSettings) -> rusqlite::Result<bool> {
+        let inserted = self.conn().execute(
+            "INSERT OR IGNORE INTO email_settings
+                (id, enabled, host, port, encryption, username, password,
+                 from_address, from_name, require_verification, updated_at)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                settings.enabled,
+                settings.host,
+                settings.port,
+                settings.encryption,
+                settings.username,
+                settings.password,
+                settings.from_address,
+                settings.from_name,
+                settings.require_verification,
+                settings.updated_at
+            ],
+        )?;
+        Ok(inserted > 0)
+    }
+
+    pub fn save_email_settings(&self, settings: &EmailSettings) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO email_settings
+                (id, enabled, host, port, encryption, username, password,
+                 from_address, from_name, require_verification, updated_at)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT(id) DO UPDATE SET
+                enabled = excluded.enabled,
+                host = excluded.host,
+                port = excluded.port,
+                encryption = excluded.encryption,
+                username = excluded.username,
+                password = excluded.password,
+                from_address = excluded.from_address,
+                from_name = excluded.from_name,
+                require_verification = excluded.require_verification,
+                updated_at = excluded.updated_at",
+            params![
+                settings.enabled,
+                settings.host,
+                settings.port,
+                settings.encryption,
+                settings.username,
+                settings.password,
+                settings.from_address,
+                settings.from_name,
+                settings.require_verification,
+                settings.updated_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn email_template(&self, purpose: &str) -> rusqlite::Result<Option<EmailTemplate>> {
+        self.conn()
+            .query_row(
+                "SELECT purpose, subject, body, updated_at FROM email_templates WHERE purpose = ?1",
+                [purpose],
+                |row| {
+                    Ok(EmailTemplate {
+                        purpose: row.get(0)?,
+                        subject: row.get(1)?,
+                        body: row.get(2)?,
+                        updated_at: row.get(3)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    pub fn save_email_template(
+        &self,
+        purpose: &str,
+        subject: &str,
+        body: &str,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO email_templates (purpose, subject, body, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(purpose) DO UPDATE SET
+                subject = excluded.subject,
+                body = excluded.body,
+                updated_at = excluded.updated_at",
+            params![purpose, subject, body, util::now()],
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_email_send(
+        &self,
+        email: &str,
+        purpose: &str,
+        result: &str,
+        detail: &str,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO email_sends (email, purpose, result, detail, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![email, purpose, result, detail, util::now()],
+        )?;
+        Ok(())
+    }
+
+    pub fn email_sends(&self, limit: i64, offset: i64) -> rusqlite::Result<(i64, Vec<EmailSend>)> {
+        let conn = self.conn();
+        let total: i64 =
+            conn.query_row("SELECT COUNT(*) FROM email_sends", [], |row| row.get(0))?;
+        let mut statement = conn.prepare(
+            "SELECT id, email, purpose, result, detail, created_at
+             FROM email_sends ORDER BY id DESC LIMIT ?1 OFFSET ?2",
+        )?;
+        let rows = statement.query_map(params![limit, offset], |row| {
+            Ok(EmailSend {
+                id: row.get(0)?,
+                email: row.get(1)?,
+                purpose: row.get(2)?,
+                result: row.get(3)?,
+                detail: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        })?;
+        Ok((total, rows.collect::<rusqlite::Result<Vec<_>>>()?))
+    }
+
+    /// 该邮箱最近一次签发验证码的时间，用于每分钟 1 封的判断。
+    pub fn last_email_code_at(&self, email: &str) -> rusqlite::Result<Option<String>> {
+        self.conn()
+            .query_row(
+                "SELECT created_at FROM email_codes
+                 WHERE email = ?1 ORDER BY id DESC LIMIT 1",
+                [email],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    /// 该邮箱在 `since` 之后签发过多少封验证码，用于每小时 5 封的判断。
+    pub fn email_code_count_since(&self, email: &str, since: &str) -> rusqlite::Result<i64> {
+        self.conn().query_row(
+            "SELECT COUNT(*) FROM email_codes WHERE email = ?1 AND created_at >= ?2",
+            params![email, since],
+            |row| row.get(0),
+        )
+    }
+
+    /// 作废旧码并写入新码。调用方已经算好摘要与过期时间。
+    pub fn issue_email_code(
+        &self,
+        purpose: &str,
+        email: &str,
+        code_hash: &str,
+        expires_at: &str,
+        max_attempts: i64,
+    ) -> rusqlite::Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "UPDATE email_codes SET invalidated_at = ?3
+             WHERE purpose = ?1 AND email = ?2
+               AND consumed_at IS NULL AND invalidated_at IS NULL",
+            params![purpose, email, util::now()],
+        )?;
+        tx.execute(
+            "INSERT INTO email_codes
+                (purpose, email, code_hash, attempts, max_attempts, created_at, expires_at)
+             VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6)",
+            params![
+                purpose,
+                email,
+                code_hash,
+                max_attempts,
+                util::now(),
+                expires_at
+            ],
+        )?;
+        tx.commit()
+    }
+
+    /// 校验并消费验证码。整个判断和写入在一个事务里，并发提交只有一个成功。
+    pub fn check_email_code(
+        &self,
+        purpose: &str,
+        email: &str,
+        code_hash: &str,
+    ) -> rusqlite::Result<EmailCodeCheck> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let found = tx
+            .query_row(
+                "SELECT id, code_hash, attempts, max_attempts, expires_at, consumed_at, invalidated_at
+                 FROM email_codes WHERE purpose = ?1 AND email = ?2
+                 ORDER BY id DESC LIMIT 1",
+                params![purpose, email],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Option<String>>(6)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((id, stored, attempts, max_attempts, expires_at, consumed_at, invalidated_at)) =
+            found
+        else {
+            return Ok(EmailCodeCheck::Invalid);
+        };
+        if consumed_at.is_some() || invalidated_at.is_some() {
+            return Ok(if attempts >= max_attempts {
+                EmailCodeCheck::Locked
+            } else {
+                EmailCodeCheck::Invalid
+            });
+        }
+        if util::is_past(&expires_at) {
+            tx.execute(
+                "UPDATE email_codes SET invalidated_at = ?2 WHERE id = ?1",
+                params![id, util::now()],
+            )?;
+            tx.commit()?;
+            return Ok(EmailCodeCheck::Expired);
+        }
+        if attempts >= max_attempts {
+            tx.execute(
+                "UPDATE email_codes SET invalidated_at = ?2 WHERE id = ?1",
+                params![id, util::now()],
+            )?;
+            tx.commit()?;
+            return Ok(EmailCodeCheck::Locked);
+        }
+        if stored != code_hash {
+            let attempts = attempts + 1;
+            if attempts >= max_attempts {
+                tx.execute(
+                    "UPDATE email_codes SET attempts = ?2, invalidated_at = ?3 WHERE id = ?1",
+                    params![id, attempts, util::now()],
+                )?;
+                tx.commit()?;
+                return Ok(EmailCodeCheck::Locked);
+            }
+            tx.execute(
+                "UPDATE email_codes SET attempts = ?2 WHERE id = ?1",
+                params![id, attempts],
+            )?;
+            tx.commit()?;
+            return Ok(EmailCodeCheck::Invalid);
+        }
+        tx.execute(
+            "UPDATE email_codes SET consumed_at = ?2 WHERE id = ?1",
+            params![id, util::now()],
+        )?;
+        tx.commit()?;
+        Ok(EmailCodeCheck::Ok)
+    }
+
+    pub fn invalidate_email_codes(&self, purpose: &str, email: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE email_codes SET invalidated_at = ?3
+             WHERE purpose = ?1 AND email = ?2
+               AND consumed_at IS NULL AND invalidated_at IS NULL",
+            params![purpose, email, util::now()],
+        )?;
         Ok(())
     }
 
@@ -473,12 +888,13 @@ impl Db {
         let found = conn
             .query_row(
                 "SELECT u.id, u.username, u.email, u.password_hash, u.quota_bytes,
-                        u.sync_salt, u.created_at, u.disabled, s.expires_at
+                        u.sync_salt, u.created_at, u.disabled, u.phone, u.email_verified,
+                        s.expires_at
                  FROM sessions s JOIN users u ON u.id = s.user_id
                  WHERE s.token_hash = ?1",
                 [token_hash],
                 |row| {
-                    let expires_at: String = row.get(8)?;
+                    let expires_at: String = row.get(10)?;
                     Ok((user_row(row)?, expires_at))
                 },
             )
@@ -1562,6 +1978,8 @@ fn user_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
         sync_salt: row.get(5)?,
         created_at: row.get(6)?,
         disabled: row.get(7)?,
+        phone: row.get(8)?,
+        email_verified: row.get(9)?,
     })
 }
 
@@ -2138,6 +2556,86 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
              COMMIT;",
         )?;
     }
+    if version < 9 {
+        // 注册手机号：可空，老用户没有也正常。没有短信通道，先留出
+        // `phone_verified` 状态位（默认 0），不伪造已验证。
+        conn.execute_batch(
+            "BEGIN;
+             ALTER TABLE users ADD COLUMN phone TEXT;
+             ALTER TABLE users ADD COLUMN phone_verified INTEGER NOT NULL DEFAULT 0;
+             CREATE UNIQUE INDEX IF NOT EXISTS users_phone ON users(phone);
+             PRAGMA user_version = 9;
+             COMMIT;",
+        )?;
+    }
+    if version < 10 {
+        // 邮件：SMTP 配置、两套模板、验证码与发送记录。配置只有一行，
+        // 口令只进不出；验证码只存摘要。默认模板随迁移写入，管理员可改。
+        conn.execute_batch(
+            r#"BEGIN;
+             ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0;
+             CREATE TABLE IF NOT EXISTS email_settings (
+               id                   INTEGER PRIMARY KEY CHECK (id = 1),
+               enabled              INTEGER NOT NULL DEFAULT 0,
+               host                 TEXT NOT NULL DEFAULT '',
+               port                 INTEGER NOT NULL DEFAULT 587,
+               encryption           TEXT NOT NULL DEFAULT 'starttls',
+               username             TEXT NOT NULL DEFAULT '',
+               password             TEXT NOT NULL DEFAULT '',
+               from_address         TEXT NOT NULL DEFAULT '',
+               from_name            TEXT NOT NULL DEFAULT '',
+               require_verification INTEGER NOT NULL DEFAULT 0,
+               updated_at           TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS email_templates (
+               purpose    TEXT PRIMARY KEY,
+               subject    TEXT NOT NULL,
+               body       TEXT NOT NULL,
+               updated_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS email_codes (
+               id             INTEGER PRIMARY KEY,
+               purpose        TEXT NOT NULL,
+               email          TEXT NOT NULL COLLATE NOCASE,
+               code_hash      TEXT NOT NULL,
+               attempts       INTEGER NOT NULL DEFAULT 0,
+               max_attempts   INTEGER NOT NULL DEFAULT 5,
+               created_at     TEXT NOT NULL,
+               expires_at     TEXT NOT NULL,
+               consumed_at    TEXT,
+               invalidated_at TEXT
+             );
+             CREATE INDEX IF NOT EXISTS email_codes_lookup
+               ON email_codes(purpose, email, created_at);
+             CREATE TABLE IF NOT EXISTS email_sends (
+               id         INTEGER PRIMARY KEY,
+               email      TEXT NOT NULL,
+               purpose    TEXT NOT NULL,
+               result     TEXT NOT NULL,
+               detail     TEXT NOT NULL DEFAULT '',
+               created_at TEXT NOT NULL
+             );
+             INSERT OR IGNORE INTO email_templates (purpose, subject, body, updated_at) VALUES
+               ('register_verification', '【Agree ShellAs】邮箱验证码',
+                '你好 {username}：
+
+你的 ShellAs 邮箱验证码是 {code}，{minutes} 分钟内有效。
+如非本人操作，请忽略这封邮件。
+
+Agree ShellAs',
+                strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+               ('password_reset', '【Agree ShellAs】重置口令验证码',
+                '你好 {username}：
+
+你的 ShellAs 口令重置验证码是 {code}，{minutes} 分钟内有效。
+如果这不是你发起的，请忽略这封邮件，并考虑修改口令。
+
+Agree ShellAs',
+                strftime('%Y-%m-%dT%H:%M:%SZ','now'));
+             PRAGMA user_version = 10;
+             COMMIT;"#,
+        )?;
+    }
     Ok(())
 }
 
@@ -2277,8 +2775,45 @@ mod tests {
     }
 
     fn user(db: &Db) -> User {
-        db.create_user("alice", None, "$argon2id$hash", "salt", 1024)
+        db.create_user("alice", None, None, "$argon2id$hash", "salt", 1024, false)
             .unwrap()
+    }
+
+    #[test]
+    fn phone_numbers_are_optional_and_unique() {
+        let db = db();
+        let alice = db
+            .create_user(
+                "alice",
+                None,
+                Some("13800138000"),
+                "$argon2id$hash",
+                "salt",
+                1024,
+                false,
+            )
+            .unwrap();
+        assert_eq!(
+            db.user_by_id(alice.id).unwrap().unwrap().phone.as_deref(),
+            Some("13800138000")
+        );
+        assert!(db.phone_taken("13800138000").unwrap());
+        let bob = db
+            .create_user("bob", None, None, "$argon2id$hash", "salt", 1024, false)
+            .unwrap();
+        assert_eq!(bob.phone, None);
+        assert!(
+            db.create_user(
+                "carol",
+                None,
+                Some("13800138000"),
+                "$argon2id$hash",
+                "salt",
+                1024,
+                false,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -2297,9 +2832,11 @@ mod tests {
             .create_user(
                 "bob",
                 Some("bob@example.com"),
+                None,
                 "$argon2id$hash",
                 "salt",
                 1024,
+                false,
             )
             .unwrap();
         assert_eq!(db.pending_email(alice.id).unwrap(), None);
@@ -2597,5 +3134,175 @@ mod tests {
         assert_eq!(total, 1);
         assert_eq!(rows[0].username, "alice");
         assert!(!rows[0].ai_enabled);
+    }
+
+    #[test]
+    fn email_settings_are_seeded_once_and_keep_admin_changes() {
+        let db = db();
+        assert!(db.email_settings().unwrap().is_none());
+        let mut settings = EmailSettings::defaults();
+        settings.enabled = true;
+        settings.host = "smtp.example.com".into();
+        settings.from_address = "no-reply@example.com".into();
+        settings.updated_at = util::now();
+        assert!(db.seed_email_settings(&settings).unwrap());
+        assert!(!db.seed_email_settings(&settings).unwrap());
+
+        let mut changed = settings.clone();
+        changed.host = "smtp2.example.com".into();
+        changed.require_verification = true;
+        db.save_email_settings(&changed).unwrap();
+        let stored = db.email_settings().unwrap().unwrap();
+        assert_eq!(stored.host, "smtp2.example.com");
+        assert!(stored.require_verification);
+    }
+
+    #[test]
+    fn migration_writes_both_default_templates() {
+        let db = db();
+        for purpose in ["register_verification", "password_reset"] {
+            let template = db.email_template(purpose).unwrap().unwrap();
+            assert!(template.subject.contains("ShellAs"));
+            assert!(template.body.contains("{code}"));
+            assert!(template.body.contains("{minutes}"));
+        }
+    }
+
+    #[test]
+    fn a_code_is_single_use() {
+        let db = db();
+        let email = "alice@example.com";
+        db.issue_email_code(
+            "register_verification",
+            email,
+            "hash",
+            &util::later_minutes(10),
+            5,
+        )
+        .unwrap();
+        assert_eq!(
+            db.check_email_code("register_verification", email, "hash")
+                .unwrap(),
+            EmailCodeCheck::Ok
+        );
+        assert_eq!(
+            db.check_email_code("register_verification", email, "hash")
+                .unwrap(),
+            EmailCodeCheck::Invalid
+        );
+    }
+
+    #[test]
+    fn five_wrong_codes_invalidate_even_the_right_one() {
+        let db = db();
+        let email = "alice@example.com";
+        db.issue_email_code(
+            "password_reset",
+            email,
+            "right",
+            &util::later_minutes(10),
+            5,
+        )
+        .unwrap();
+        for attempt in 1..5 {
+            assert_eq!(
+                db.check_email_code("password_reset", email, "wrong")
+                    .unwrap(),
+                EmailCodeCheck::Invalid,
+                "第 {attempt} 次"
+            );
+        }
+        assert_eq!(
+            db.check_email_code("password_reset", email, "wrong")
+                .unwrap(),
+            EmailCodeCheck::Locked
+        );
+        assert_eq!(
+            db.check_email_code("password_reset", email, "right")
+                .unwrap(),
+            EmailCodeCheck::Locked
+        );
+    }
+
+    #[test]
+    fn resending_invalidates_the_previous_code() {
+        let db = db();
+        let email = "alice@example.com";
+        db.issue_email_code(
+            "register_verification",
+            email,
+            "old",
+            &util::later_minutes(10),
+            5,
+        )
+        .unwrap();
+        db.issue_email_code(
+            "register_verification",
+            email,
+            "new",
+            &util::later_minutes(10),
+            5,
+        )
+        .unwrap();
+        assert_eq!(
+            db.check_email_code("register_verification", email, "old")
+                .unwrap(),
+            EmailCodeCheck::Invalid
+        );
+        assert_eq!(
+            db.check_email_code("register_verification", email, "new")
+                .unwrap(),
+            EmailCodeCheck::Ok
+        );
+    }
+
+    #[test]
+    fn an_expired_code_is_refused() {
+        let db = db();
+        let email = "alice@example.com";
+        db.issue_email_code("password_reset", email, "hash", &util::seconds_ago(1), 5)
+            .unwrap();
+        assert_eq!(
+            db.check_email_code("password_reset", email, "hash")
+                .unwrap(),
+            EmailCodeCheck::Expired
+        );
+    }
+
+    #[test]
+    fn send_log_keeps_metadata_only_and_counts_email_codes() {
+        let db = db();
+        db.insert_email_send("alice@example.com", "test", "ok", "")
+            .unwrap();
+        db.insert_email_send("alice@example.com", "password_reset", "rejected", "550")
+            .unwrap();
+        let (total, rows) = db.email_sends(10, 0).unwrap();
+        assert_eq!(total, 2);
+        assert_eq!(rows[0].result, "rejected");
+        assert_eq!(rows[0].detail, "550");
+
+        db.issue_email_code(
+            "password_reset",
+            "alice@example.com",
+            "hash",
+            &util::later_minutes(10),
+            5,
+        )
+        .unwrap();
+        assert!(
+            db.last_email_code_at("alice@example.com")
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            db.email_code_count_since("alice@example.com", &util::seconds_ago(60))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            db.email_code_count_since("alice@example.com", &util::later_minutes(1))
+                .unwrap(),
+            0
+        );
     }
 }

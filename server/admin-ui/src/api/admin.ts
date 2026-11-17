@@ -75,6 +75,9 @@ export interface UserAccount {
   id: number;
   username: string;
   email: string | null;
+  phone: string | null;
+  phoneVerified: boolean;
+  emailVerified: boolean;
   quotaBytes: number;
   usedBytes: number;
   versions: number;
@@ -225,6 +228,77 @@ export interface AiUsagePage {
   items: AiUsageRow[];
 }
 
+export interface EmailSettings {
+  enabled: boolean;
+  host: string;
+  port: number;
+  encryption: "starttls" | "tls" | "plain";
+  username: string;
+  hasPassword: boolean;
+  fromAddress: string;
+  fromName: string;
+  requireVerification: boolean;
+  configured: boolean;
+  warning: string | null;
+  updatedAt: string;
+}
+
+export interface EmailSettingsPayload {
+  enabled?: boolean;
+  host?: string;
+  port?: number;
+  encryption?: "starttls" | "tls" | "plain";
+  username?: string;
+  password?: string;
+  clearPassword?: boolean;
+  fromAddress?: string;
+  fromName?: string;
+  requireVerification?: boolean;
+}
+
+export interface EmailTestResult {
+  ok: boolean;
+  category:
+    | "ok"
+    | "unreachable"
+    | "auth_failed"
+    | "rejected"
+    | "not_configured";
+  detail: string;
+  to: string;
+  latencyMs: number;
+  sentAt: string;
+}
+
+export interface EmailTemplate {
+  purpose: "register_verification" | "password_reset";
+  subject: string;
+  body: string;
+  placeholders: string[];
+  configured: boolean;
+  updatedAt: string;
+}
+
+export interface EmailPreview {
+  subject: string;
+  body: string;
+  variables: Record<string, string>;
+}
+
+export interface EmailSendRow {
+  id: number;
+  email: string;
+  purpose: "register_verification" | "password_reset" | "test";
+  result: "ok" | "unreachable" | "auth_failed" | "rejected" | "not_configured";
+  detail: string;
+  createdAt: string;
+}
+
+export interface EmailSendPage {
+  total: number;
+  items: EmailSendRow[];
+}
+
 export const getReleaseOverview = () =>
   http.request<ApiResult<ReleaseOverview>>("get", "/releases");
 
@@ -330,6 +404,43 @@ export const setAiUserEnabled = (id: number, enabled: boolean) =>
   http.request<ApiResult<unknown>>("put", `/ai/users/${id}`, {
     data: { enabled }
   });
+
+export const getEmailSettings = () =>
+  http.request<ApiResult<EmailSettings>>("get", "/email/settings");
+
+export const saveEmailSettings = (data: EmailSettingsPayload) =>
+  http.request<ApiResult<EmailSettings>>("put", "/email/settings", { data });
+
+export const sendEmailTest = (to: string) =>
+  http.request<ApiResult<EmailTestResult>>("post", "/email/test", {
+    data: { to }
+  });
+
+export const getEmailTemplates = () =>
+  http.request<ApiResult<EmailTemplate[]>>("get", "/email/templates");
+
+export const saveEmailTemplate = (
+  purpose: EmailTemplate["purpose"],
+  data: { subject: string; body: string }
+) =>
+  http.request<ApiResult<EmailTemplate>>(
+    "put",
+    `/email/templates/${purpose}`,
+    { data }
+  );
+
+export const previewEmailTemplate = (
+  purpose: EmailTemplate["purpose"],
+  data: { subject?: string; body?: string }
+) =>
+  http.request<ApiResult<EmailPreview>>(
+    "post",
+    `/email/templates/${purpose}/preview`,
+    { data }
+  );
+
+export const getEmailSends = (params: { limit?: number; offset?: number }) =>
+  http.request<ApiResult<EmailSendPage>>("get", "/email/sends", { params });
 
 /**
  * 上传安装包。走 XHR 是为了拿到上传进度；令牌与 axios 用同一个。

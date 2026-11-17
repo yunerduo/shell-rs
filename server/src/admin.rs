@@ -43,6 +43,8 @@ const OWNER_PERMISSIONS: &[&str] = &[
     "user:write",
     "ai:read",
     "ai:write",
+    "email:read",
+    "email:write",
 ];
 
 const PUBLISHER_PERMISSIONS: &[&str] = &[
@@ -1096,6 +1098,11 @@ struct UserDto {
     id: i64,
     username: String,
     email: Option<String>,
+    phone: Option<String>,
+    /// 没有短信通道，目前恒为 false；字段先留着。
+    phone_verified: bool,
+    /// 邮箱是否通过验证码确认过归属。
+    email_verified: bool,
     quota_bytes: i64,
     used_bytes: i64,
     versions: i64,
@@ -1108,6 +1115,9 @@ fn user_dto(row: &UserRow) -> UserDto {
         id: row.id,
         username: row.username.clone(),
         email: row.email.clone(),
+        phone: row.phone.clone(),
+        phone_verified: row.phone_verified,
+        email_verified: row.email_verified,
         quota_bytes: row.quota_bytes,
         used_bytes: row.used_bytes,
         versions: row.versions,
@@ -1630,6 +1640,13 @@ mod tests {
             ai_base_url: None,
             ai_api_key: None,
             ai_model: None,
+            smtp_host: None,
+            smtp_port: None,
+            smtp_encryption: None,
+            smtp_username: None,
+            smtp_password: None,
+            smtp_from: None,
+            smtp_from_name: None,
         }
     }
 }

@@ -26,6 +26,11 @@ pub fn days_ago(days: i64) -> String {
     format_at(Utc::now() - chrono::Duration::days(days))
 }
 
+/// 从现在往前推 `seconds` 秒，用于分钟级频率限制。
+pub fn seconds_ago(seconds: i64) -> String {
+    format_at(Utc::now() - chrono::Duration::seconds(seconds))
+}
+
 fn format_at(at: DateTime<Utc>) -> String {
     at.to_rfc3339_opts(SecondsFormat::Secs, true)
 }

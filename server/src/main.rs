@@ -11,6 +11,7 @@ mod api;
 mod auth;
 mod config;
 mod db;
+mod email;
 mod error;
 mod publish;
 mod release;
@@ -81,6 +82,7 @@ async fn serve_async(config: Config) -> anyhow::Result<()> {
     let db = Db::open(&config.database_path())?;
     bootstrap_admin(&config, &db)?;
     seed_ai(&config, &db)?;
+    email::seed_from_config(&config, &db)?;
     let state = AppState::new(config, db);
     if state.config.admin_token.is_none() {
         tracing::warn!("没有设置 SHELLAS_ADMIN_TOKEN，管理接口已关闭");
@@ -155,9 +157,10 @@ fn router(state: AppState) -> Router {
         .route("/api/v1/auth/register", post(api::register))
         .route("/api/v1/auth/login", post(api::login))
         .route("/api/v1/auth/logout", post(api::logout))
-        // 邮件找回接口位置先占住，现在返回 501。
-        .route("/api/v1/auth/password/forgot", post(api::forgot_password))
-        .route("/api/v1/auth/password/reset", post(api::reset_password))
+        // 注册前获取邮箱验证码；开关关闭时返回明确错误。
+        .route("/api/v1/auth/email/code", post(email::send_email_code))
+        .route("/api/v1/auth/password/forgot", post(email::forgot_password))
+        .route("/api/v1/auth/password/reset", post(email::reset_password))
         .route("/api/v1/me", get(api::me))
         // 账号自助：改口令会让所有会话失效；换邮箱先记待验证。
         .route("/api/v1/me/password", put(api::change_password))
@@ -237,6 +240,24 @@ fn router(state: AppState) -> Router {
         .route("/admin/api/ai/test", post(ai::admin_test))
         .route("/admin/api/ai/usage", get(ai::admin_usage))
         .route("/admin/api/ai/users/{id}", put(ai::admin_user_switch))
+        .route(
+            "/admin/api/email/settings",
+            get(email::admin_settings_get).put(email::admin_settings_put),
+        )
+        .route("/admin/api/email/test", post(email::admin_test))
+        .route(
+            "/admin/api/email/templates",
+            get(email::admin_templates_get),
+        )
+        .route(
+            "/admin/api/email/templates/{purpose}",
+            put(email::admin_template_put),
+        )
+        .route(
+            "/admin/api/email/templates/{purpose}/preview",
+            post(email::admin_template_preview),
+        )
+        .route("/admin/api/email/sends", get(email::admin_sends))
         .route(
             "/admin/api/admins",
             get(admin::admins).post(admin::create_admin),

@@ -19,6 +19,7 @@ chrono = "0.4"
 clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
 hex = "0.4"
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "rustls-tls", "rustls-native-certs", "hostname"] }
 # 发布子命令在本地给清单签名，私钥不经过服务器。
 minisign = "0.7"
 # 更新日志页渲染 CHANGELOG 里截出来的 Markdown。

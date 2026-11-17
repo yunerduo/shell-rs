@@ -83,6 +83,13 @@ pub fn valid_email(email: &str) -> bool {
     }
 }
 
+/// 手机号可选：填了就得是中国大陆的 11 位号码（`1` 开头），不填也能注册。
+/// 没有短信通道，这里只校验格式，不代表已验证。
+pub fn valid_phone(phone: &str) -> bool {
+    let phone = phone.trim();
+    phone.len() == 11 && phone.starts_with('1') && phone.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,6 +110,17 @@ mod tests {
         assert!(!valid_username("has space"));
         assert!(!valid_username("中文名"));
         assert!(!valid_username(&"a".repeat(33)));
+    }
+
+    #[test]
+    fn phone_numbers_are_mainland_mobile_format() {
+        assert!(valid_phone("13800138000"));
+        assert!(valid_phone("19912345678"));
+        assert!(!valid_phone("23800138000"));
+        assert!(!valid_phone("1380013800"));
+        assert!(!valid_phone("138001380000"));
+        assert!(!valid_phone("1380013800a"));
+        assert!(!valid_phone("+8613800138000"));
     }
 
     #[test]
