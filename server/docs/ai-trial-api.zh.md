@@ -21,15 +21,26 @@
 | 上游根地址 | `baseUrl` | string | — | 形如 `https://host/v1`，服务端拼 `/chat/completions`；只允许 `http`/`https` |
 | 上游 Key | `apiKey` | string | — | 只存服务端；读取接口不回传，只回 `hasApiKey` |
 | 模型 id | `model` | string | — | 用户请求里的 `model` 必须为空或等于它 |
-| 最大上下文 | `maxContextTokens` | int | `32000` | 输入估算 + `max_tokens` 不得超过它 |
+| 最大上下文 | `maxContextTokens` | int | `131072` | 128k；输入估算 + `max_tokens` 不得超过它 |
 | 输出上限 | `maxOutputTokens` | int | `4096` | 夹紧客户端传的 `max_tokens` |
+| 单请求输入上限 | `maxInputTokens` | int | `122880` | 输入估算超过它直接 400 `input_too_long` |
 | 温度 | `temperature` | float? | `null` | 客户端不传时用；`null` 表示用上游默认 |
-| 上游超时 | `timeoutSeconds` | int | `60` | 单次上游请求的总预算 |
+| Top P | `topP` | float? | `null` | 0–1；客户端不传时用；`null` 表示不透传 |
+| 同时传两个采样参数 | `samplingBoth` | bool | `false` | 关闭时两者都在只保留 `temperature` |
+| 透传 include_usage | `streamIncludeUsage` | bool | `true` | 流式请求补 `stream_options.include_usage` |
+| 上游超时 | `timeoutSeconds` | int | `60` | 单次上游请求的总预算（含读取响应体） |
+| 连接超时 | `connectTimeoutSeconds` | int | `10` | 建立 TCP/TLS 连接的预算，必须 ≤ 整体超时 |
 | 失败重试 | `retryCount` | int | `1` | 仅连接失败/5xx，且尚未向客户端写出字节时 |
+| 重试退避 | `retryBackoffMs` | int | `300` | 第 n 次重试等待 `base × 2^(n-1)`，最多 10 秒 |
+| 自定义请求头 | `customHeaders` | object | `{}` | 只能是非敏感头；拒绝 `Authorization`、`Cookie` 及名称含 key/token/secret 的头 |
 | 每日请求限额 | `dailyRequestLimit` | int | `200` | 0 = 不限 |
 | 每日 token 限额 | `dailyTokenLimit` | int | `0` | 0 = 不限；输入+输出合计 |
+| 全站每日 token 上限 | `globalDailyTokenLimit` | int | `0` | 0 = 不限；所有用户当日合计 |
 | 单用户并发 | `maxConcurrentPerUser` | int | `2` | 超过返回 429 |
 | 请求体上限 | `maxRequestBytes` | int | `262144` | 超过返回 413 |
+| 最小请求间隔 | `minIntervalSeconds` | int | `1` | 0 = 不限；超限 429 `too_frequent` |
+| 间隔计数口径 | `minIntervalScope` | string | `user` | `user` 或 `email`；按邮箱时同邮箱多账号共用节流 |
+| 可读上游提示 | `readableUpstreamHint` | bool | `true` | 失败时把上游一句话原因脱敏、截断后带给客户端 |
 | 更新时间 | `updatedAt` | string | — | RFC 3339 |
 
 初始播种（可选，仅当数据库没有配置时读一次）：
@@ -60,8 +71,9 @@
   "available": true,
   "reason": null,
   "model": "<后台配置的模型 id>",
-  "maxContextTokens": 32000,
+  "maxContextTokens": 131072,
   "maxOutputTokens": 4096,
+  "maxInputTokens": 122880,
   "dailyRequestLimit": 200,
   "dailyTokenLimit": 0,
   "requestsUsedToday": 3,
@@ -71,7 +83,7 @@
 }
 ```
 
-- `available=false` 时 `reason` 取值：`disabled`（全局关）、`user_disabled`（该用户被关）、`not_configured`（缺地址/Key/模型）、`daily_limit_reached`。
+- `available=false` 时 `reason` 取值：`disabled`（全局关）、`user_disabled`（该用户被关）、`not_configured`（缺地址/Key/模型）、`daily_limit_reached`、`tokens_exhausted`、`global_limit_reached`。
 - `dailyTokenLimit` 为 0 时 `tokensRemainingToday` 为 `null`（表示不限）；有上限时给出剩余值（不小于 0）。
 - `tokensUsedToday` 始终给出当日已消耗 token（输入 + 输出，按第 5 节的真实值或估算）。
 - 客户端据此决定是否展示「内置 AI · 试用」入口；`available=false` 仍返回 200。
@@ -89,15 +101,16 @@
 | `messages` | 必填，非空数组；`content` 允许字符串或 parts 数组（文本、`image_url` 原样透传） |
 | `stream` | 可选，默认 `false`；`true` 时响应 `text/event-stream` |
 | `max_tokens` | 可选；夹紧到 `maxOutputTokens`，默认 `maxOutputTokens` |
-| `temperature` | 可选；未传用后台配置，后台也没配则不透传 |
-| `top_p` / `stop` / `tools` / `tool_choice` / `response_format` | 原样透传 |
+| `temperature` | 可选；未传用后台配置，后台也没配则不透传；必须在 0–2，否则 400 `invalid_sampling` |
+| `top_p` | 可选；未传用后台配置；必须在 0–1，否则 400 `invalid_sampling`。默认不与 `temperature` 同时发给上游（详见 5.4） |
+| `stop` / `tools` / `tool_choice` / `response_format` | 原样透传 |
 | `n` | 只允许 1（缺省或 `1`），其他值 400 `unsupported_parameter` |
 | 其余字段 | 忽略 |
 
 响应：
 
 - `stream=false`：返回上游 200 的 JSON 原样（`id` / `choices` / `usage` 等不做改写）。
-- `stream=true`：SSE 原样转发；服务端会向上游补 `stream_options: {"include_usage": true}`，若上游在最后一个 chunk 给了 `usage` 就采信。
+- `stream=true`：SSE 原样转发；`streamIncludeUsage=true` 时服务端向上游补 `stream_options: {"include_usage": true}`，若上游在最后一个 chunk 给了 `usage` 就采信；关闭则不改写，缺 `usage` 时按文本估算。
 - 无论流式与否，错误体统一为 OpenAI 形状：
 
 ```json
@@ -120,15 +133,26 @@
   "baseUrl": "https://api.example.com/v1",
   "model": "<后台配置的模型 id>",
   "hasApiKey": true,
-  "maxContextTokens": 32000,
+  "maxContextTokens": 131072,
   "maxOutputTokens": 4096,
+  "maxInputTokens": 122880,
   "temperature": null,
+  "topP": null,
+  "samplingBoth": false,
+  "streamIncludeUsage": true,
   "timeoutSeconds": 60,
+  "connectTimeoutSeconds": 10,
   "retryCount": 1,
+  "retryBackoffMs": 300,
+  "customHeaders": {},
   "dailyRequestLimit": 200,
   "dailyTokenLimit": 0,
+  "globalDailyTokenLimit": 0,
   "maxConcurrentPerUser": 2,
   "maxRequestBytes": 262144,
+  "minIntervalSeconds": 1,
+  "minIntervalScope": "user",
+  "readableUpstreamHint": true,
   "updatedAt": "2026-11-17T08:00:00Z"
 }
 ```
@@ -139,7 +163,8 @@
 
 - `apiKey` 省略或空字符串 = 不修改；非空 = 覆盖。
 - `clearApiKey: true` = 清空（与 `apiKey` 同时出现时以 `clearApiKey` 为准）。
-- 写入前校验：`baseUrl` 只允许 http/https 且无查询串；`maxContextTokens` ≥ 1024；`maxOutputTokens` ≥ 1 且 ≤ `maxContextTokens`；`timeoutSeconds` 5–600；`retryCount` 0–3；限额 ≥ 0；`maxRequestBytes` 4 KiB–1 MiB。
+- 写入前校验：`baseUrl` 只允许 http/https 且无查询串；`maxContextTokens` ≥ 1024；`maxOutputTokens` / `maxInputTokens` 均 ≥ 1 且 ≤ `maxContextTokens`；`temperature` 0–2；`topP` 0–1；`timeoutSeconds` 5–600；`connectTimeoutSeconds` 1–60 且 ≤ `timeoutSeconds`；`retryCount` 0–3；`retryBackoffMs` 0–5000；`customHeaders` 必须是字符串到字符串的 JSON 对象，且不含敏感头；限额 ≥ 0；`maxConcurrentPerUser` 1–100；`maxRequestBytes` 4 KiB–1 MiB；`minIntervalSeconds` 0–3600；`minIntervalScope` 只能是 `user` / `email`。
+- `customHeaders` 保存时就会被拒绝的典型值：`Authorization`、`Proxy-Authorization`、`Cookie`、`Set-Cookie`、`Host`、`Content-Type`、`Content-Length`、逐跳头，以及名称含 `token` / `key` / `secret` / `password` / `session` / `auth` 的头。发送前还会再过滤一次。
 - 成功返回 200 + 新配置（同样不含 Key）。失败 400 `bad_request`，`message` 指出具体字段。
 
 ### 4.3 连通性自检
@@ -213,12 +238,44 @@
   - 否则按字符估算：`ceil(字符数 / 4)`，流式输出累计文本同样估算；一条 `image_url` 记 1000 token；
   - 输入、输出、合计三者都记录。
 - **并发**：按用户的在途请求计数（单实例内存）；超限 429 `too_concurrent`，`Retry-After: 1`。
+- **输入上限**：按第 5 节的估算，`inputTokens > maxInputTokens` → 400 `input_too_long`，附 `used` / `limit`；不动用上游额度。
 - **每日请求限额**：超限 429 `daily_limit_reached`，`retryAfterSeconds` + `used`/`limit`。
 - **每日 token 限额**：调用前按已用判断，超限 429 `tokens_exhausted`；本次请求的 token 在完成后补记（可能略微超出，属「大概」范围）。
+- **全站每日 token 上限**：按当天所有用户的 `input+output` 合计判断，超限 429 `global_tokens_exhausted`，附全站 `used`/`limit` 与 `retryAfterSeconds`。
+- **最小请求间隔**：按 `minIntervalScope` 取 `user:<id>` 或 `email:<小写邮箱>` 作为节流键，键的最近一次请求时间存在 `ai_throttle` 表；间隔不足 429 `too_frequent`，`Retry-After` 给剩余秒数。
 - **关闭语义**：
   - 全局关 → 403 `ai_disabled`；
   - 单用户关 → 403 `ai_trial_disabled`；
   - 都发生在调用上游之前，不产生用量。
+
+### 采样参数与上游边界
+
+- 客户端传了 `temperature` / `top_p` 就先用客户端的；没传才补后台配置值；后台为 `null` 时不透传。
+- `temperature` 超出 0–2、`top_p` 超出 0–1、或类型不是数字 → 400 `invalid_sampling`。
+- `samplingBoth=false`（默认）时，如果最终两个参数都在，只发 `temperature`、去掉 `top_p`；只有 `top_p` 时才发 `top_p`。这是为了避免部分模型同时收到两者直接 400。
+- 上游仍可能因为模型自身的参数边界拒绝请求（例如只接受其中一个、或温度上限更低）：此时按第 6 节返回 `upstream_rejected`；开启 `readableUpstreamHint` 时，`message` 末尾附上游的一句话原因（已脱敏、截断到 200 字）。
+- 改动这些配置不需要重启：保存后下一条请求就按新值构造 payload。
+
+### 用户侧错误码一览
+
+| HTTP | `code` | 场景 |
+| --- | --- | --- |
+| 400 | `invalid_request` | JSON 不合法、`messages` 为空等 |
+| 400 | `model_not_allowed` | 客户端指定的模型与后台不一致 |
+| 400 | `unsupported_parameter` | `n` 不为 1 等不支持的参数 |
+| 400 | `invalid_sampling` | `temperature` / `top_p` 类型或范围不合法 |
+| 400 | `input_too_long` | 输入估算超过 `maxInputTokens` |
+| 400 | `context_too_long` | 输入 + 输出上限超过 `maxContextTokens` |
+| 403 | `ai_disabled` / `ai_trial_disabled` | 全局 / 单用户开关关闭 |
+| 413 | `request_too_large` | 请求体超过 `maxRequestBytes` |
+| 429 | `too_concurrent` | 超过单用户并发 |
+| 429 | `too_frequent` | 小于最小请求间隔 |
+| 429 | `daily_limit_reached` | 每用户日请求次数用完 |
+| 429 | `tokens_exhausted` | 每用户日 token 用完 |
+| 429 | `global_tokens_exhausted` | 全站日 token 用完 |
+| 502 | `upstream_auth_failed` / `upstream_rejected` / `upstream_rate_limited` | 上游拒绝 |
+| 504 | `upstream_unreachable` / `upstream_timeout` | 连不上 / 超时 |
+| 503 | `not_configured` | 后台还没配置好 |
 
 ## 6. 上游错误的映射与脱敏
 
@@ -229,8 +286,10 @@
 | 401 / 403 | 502 `upstream_auth_failed`（提示「服务端上游密钥无效」，不暗示用户口令问题） | 否 |
 | 429 | 502 `upstream_rejected`（附 `retryAfterSeconds`，若上游给了） | 否 |
 | 其他 4xx | 502 `upstream_rejected` | 否 |
-| 5xx | 502 `upstream_error` | 是（`retryCount` 次，指数退避 200ms/500ms） |
+| 5xx | 502 `upstream_error` | 是（`retryCount` 次，退避 `retryBackoffMs × 2^(n-1)`，最多 10 秒） |
 
+- 超时拆成两段：`connectTimeoutSeconds` 管建连，`timeoutSeconds` 管整次请求（含读响应体）。连接超时按连接失败处理并参与重试；整体超时不重试。
+- 开启 `readableUpstreamHint` 时，上游 4xx/5xx 的 `error.message`（或 `message`）会被截断到 200 字、替换掉 API Key 后附在客户端 `message` 末尾；关闭时只给通用文案。后台自检的 `detail` 走同一套脱敏规则。
 - 一律**不**把上游响应体、`Authorization`、真实 `baseUrl` 回给客户端或写进日志。
 - 连接失败与鉴权失败必须分开：前者 `upstream_unreachable`，后者 `upstream_auth_failed`。后台自检同样按第 4.3 节分类。
 - 重试只在尚未向客户端写出任何响应字节时进行；流式一旦开始写就不再重试，改为发送一个 `data: {"error": ...}` 结束帧（OpenAI 兼容客户端能识别）。

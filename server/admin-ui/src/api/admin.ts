@@ -167,13 +167,24 @@ export interface AiSettings {
   hasApiKey: boolean;
   maxContextTokens: number;
   maxOutputTokens: number;
+  maxInputTokens: number;
   temperature: number | null;
+  topP: number | null;
+  samplingBoth: boolean;
+  streamIncludeUsage: boolean;
   timeoutSeconds: number;
+  connectTimeoutSeconds: number;
   retryCount: number;
+  retryBackoffMs: number;
+  customHeaders: Record<string, string>;
   dailyRequestLimit: number;
   dailyTokenLimit: number;
+  globalDailyTokenLimit: number;
   maxConcurrentPerUser: number;
   maxRequestBytes: number;
+  minIntervalSeconds: number;
+  minIntervalScope: "user" | "email";
+  readableUpstreamHint: boolean;
   updatedAt: string;
 }
 
@@ -185,14 +196,26 @@ export interface AiSettingsPayload {
   model?: string;
   maxContextTokens?: number;
   maxOutputTokens?: number;
+  maxInputTokens?: number;
   temperature?: number;
   clearTemperature?: boolean;
+  topP?: number;
+  clearTopP?: boolean;
+  samplingBoth?: boolean;
+  streamIncludeUsage?: boolean;
   timeoutSeconds?: number;
+  connectTimeoutSeconds?: number;
   retryCount?: number;
+  retryBackoffMs?: number;
+  customHeaders?: Record<string, string>;
   dailyRequestLimit?: number;
   dailyTokenLimit?: number;
+  globalDailyTokenLimit?: number;
   maxConcurrentPerUser?: number;
   maxRequestBytes?: number;
+  minIntervalSeconds?: number;
+  minIntervalScope?: "user" | "email";
+  readableUpstreamHint?: boolean;
 }
 
 export interface AiTestResult {

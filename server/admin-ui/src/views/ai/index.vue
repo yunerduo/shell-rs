@@ -11,6 +11,7 @@ import {
   type AiTestResult,
   type AiUsageRow
 } from "@/api/admin";
+import { formatFullDateTime, formatShortDateTime } from "@/utils/datetime";
 
 defineOptions({ name: "AiTrial" });
 
@@ -31,15 +32,48 @@ interface Copy {
   modelHint: string;
   limits: string;
   maxContext: string;
+  maxContextHint: string;
   maxOutput: string;
+  maxOutputHint: string;
+  inputLimit: string;
+  inputLimitHint: string;
   temperature: string;
+  temperatureHint: string;
   useTemperature: string;
+  topP: string;
+  topPHint: string;
+  useTopP: string;
+  samplingBoth: string;
+  samplingBothHint: string;
+  streamIncludeUsage: string;
+  streamIncludeUsageHint: string;
   timeout: string;
+  timeoutHint: string;
+  connectTimeout: string;
+  connectTimeoutHint: string;
   retry: string;
+  retryHint: string;
+  retryBackoff: string;
+  backoffHint: string;
+  customHeaders: string;
+  customHeadersHint: string;
+  customHeadersInvalid: string;
+  globalDailyTokens: string;
+  globalDailyTokensHint: string;
+  minInterval: string;
+  minIntervalScope: string;
+  scopeUser: string;
+  scopeEmail: string;
+  intervalHint: string;
+  readableHint: string;
+  readableUpstream: string;
+  readonlyHint: string;
   dailyRequests: string;
+  dailyRequestsHint: string;
   dailyTokens: string;
-  unlimited: string;
+  dailyTokensHint: string;
   concurrency: string;
+  concurrencyHint: string;
   maxRequestBytes: string;
   bytesHint: string;
   save: string;
@@ -86,16 +120,52 @@ const zh: Copy = {
   model: "模型 id",
   modelHint: "用户只能用到这一个模型，传其他模型会被拒绝。",
   limits: "限额与防护",
-  maxContext: "最大上下文（token）",
-  maxOutput: "输出上限（token）",
-  temperature: "温度",
-  useTemperature: "使用自定义温度",
-  timeout: "超时（秒）",
-  retry: "失败重试次数",
-  dailyRequests: "每用户每日请求上限",
-  dailyTokens: "每用户每日 token 上限",
-  unlimited: "0 表示不限",
-  concurrency: "每用户并发上限",
+  maxContext: "上下文窗口（token）",
+  maxContextHint: "128k = 131072。客户端按它算使用率。",
+  maxOutput: "最大输出（token）",
+  maxOutputHint: "默认 4096；客户端传得再大也会被夹到这个值。",
+  inputLimit: "单请求最大输入（token）",
+  inputLimitHint: "默认 122880；不能超过上下文窗口。",
+  temperature: "Temperature",
+  temperatureHint: "默认不设置，沿用客户端传入值；范围 0–2。",
+  useTemperature: "使用自定义 Temperature",
+  topP: "Top P",
+  topPHint: "默认不设置；范围 0–1。",
+  useTopP: "使用自定义 Top P",
+  samplingBoth: "同时传 Temperature 与 Top P",
+  samplingBothHint:
+    "默认关闭。部分模型不接受两者同时出现；关闭时只传 Temperature（有 Top P 也优先保留 Temperature）。",
+  streamIncludeUsage: "流式请求补 include_usage",
+  streamIncludeUsageHint:
+    "默认开启。开启时向上游补 stream_options.include_usage，计量用上游返回的真实 token；关闭则按文本估算。",
+  timeout: "整体超时（秒）",
+  timeoutHint: "默认 60 秒；连接成功后的总时长上限。",
+  connectTimeout: "连接超时（秒）",
+  connectTimeoutHint: "默认 10 秒。",
+  retry: "失败重试次数（次）",
+  retryHint: "默认 1 次；只重试连接失败和上游 5xx。",
+  retryBackoff: "重试退避（毫秒）",
+  backoffHint: "默认 300 毫秒；按 2 的幂递增，最多 10 秒；0 表示立即重试。",
+  customHeaders: "自定义请求头（JSON 对象）",
+  customHeadersHint:
+    '例如 {"X-Title":"ShellAs"}。只允许非敏感头，Authorization、Cookie、含 key/token/secret 的头会被拒绝。',
+  customHeadersInvalid: "自定义请求头必须是 JSON 对象，且值都是字符串",
+  globalDailyTokens: "全站每日 token 上限（token）",
+  globalDailyTokensHint: "默认 0（不限）；按当天全站输入 + 输出 token 计。",
+  minInterval: "最小请求间隔（秒）",
+  minIntervalScope: "间隔按什么计",
+  scopeUser: "按用户",
+  scopeEmail: "按邮箱",
+  intervalHint: "默认 1 秒；0 表示不限；超限返回 429 too_frequent。",
+  readableHint: "默认开启。上游失败时把上游的一句话原因带给客户端（已脱敏、截断）。",
+  readableUpstream: "可读的上游错误提示",
+  readonlyHint: "连接超时按实际秒数缓存连接池，保存后下一条请求生效。",
+  dailyRequests: "每用户每日请求上限（次）",
+  dailyRequestsHint: "默认 200 次；0 表示不限。",
+  dailyTokens: "每用户每日 token 上限（token）",
+  dailyTokensHint: "默认 0（不限）。",
+  concurrency: "每用户并发上限（个）",
+  concurrencyHint: "默认 2 个；超限返回 429 too_concurrent。",
   maxRequestBytes: "请求体上限（字节）",
   bytesHint: "范围 4 KiB – 1 MiB，默认 262144。",
   save: "保存并立即生效",
@@ -150,16 +220,55 @@ const en: Copy = {
   model: "Model id",
   modelHint: "Users can only use this model; other ids are rejected.",
   limits: "Limits & protection",
-  maxContext: "Max context (tokens)",
+  maxContext: "Context window (tokens)",
+  maxContextHint: "128k = 131072. Clients use it to compute usage.",
   maxOutput: "Max output (tokens)",
+  maxOutputHint: "Default 4096; larger client values are clamped to it.",
+  inputLimit: "Max input per request (tokens)",
+  inputLimitHint: "Default 122880; cannot exceed the context window.",
   temperature: "Temperature",
+  temperatureHint: "Unset by default (client value is used); range 0–2.",
   useTemperature: "Use a custom temperature",
-  timeout: "Timeout (seconds)",
+  topP: "Top P",
+  topPHint: "Unset by default; range 0–1.",
+  useTopP: "Use a custom top_p",
+  samplingBoth: "Send temperature and top_p together",
+  samplingBothHint:
+    "Off by default. Some models reject sending both. When off, only temperature is sent (temperature wins if both are set).",
+  streamIncludeUsage: "Add include_usage to streamed requests",
+  streamIncludeUsageHint:
+    "On by default. Adds stream_options.include_usage so usage uses upstream token counts; when off, tokens are estimated from text.",
+  timeout: "Overall timeout (seconds)",
+  timeoutHint: "Default 60 s; total time allowed after connecting.",
+  connectTimeout: "Connect timeout (seconds)",
+  connectTimeoutHint: "Default 10 s.",
   retry: "Retries on failure",
+  retryHint: "Default 1; only connection failures and upstream 5xx are retried.",
+  retryBackoff: "Retry backoff (ms)",
+  backoffHint: "Default 300 ms; doubles per attempt, capped at 10 s; 0 retries immediately.",
+  customHeaders: "Custom request headers (JSON object)",
+  customHeadersHint:
+    'For example {"X-Title":"ShellAs"}. Only non-sensitive headers; Authorization, Cookie and names containing key/token/secret are rejected.',
+  customHeadersInvalid: "Custom headers must be a JSON object of string values",
+  globalDailyTokens: "Global daily token limit (tokens)",
+  globalDailyTokensHint:
+    "Default 0 (unlimited); counts all input + output tokens for the day.",
+  minInterval: "Minimum interval (seconds)",
+  minIntervalScope: "Interval counted per",
+  scopeUser: "User",
+  scopeEmail: "Email",
+  intervalHint: "Default 1 s; 0 means unlimited; over the limit returns 429 too_frequent.",
+  readableHint:
+    "On by default. Pass a one-line upstream reason to clients on failure (redacted and truncated).",
+  readableUpstream: "Readable upstream error hint",
+  readonlyHint:
+    "Connection pools are cached per timeout value; the next request uses the new one.",
   dailyRequests: "Daily requests per user",
+  dailyRequestsHint: "Default 200; 0 means unlimited.",
   dailyTokens: "Daily tokens per user",
-  unlimited: "0 means unlimited",
+  dailyTokensHint: "Default 0 (unlimited).",
   concurrency: "Concurrent requests per user",
+  concurrencyHint: "Default 2; over the limit returns 429 too_concurrent.",
   maxRequestBytes: "Max request body (bytes)",
   bytesHint: "4 KiB – 1 MiB, default 262144.",
   save: "Save and apply",
@@ -208,6 +317,8 @@ const testing = ref(false);
 const testResult = ref<AiTestResult | null>(null);
 const hasApiKey = ref(false);
 const customTemperature = ref(false);
+const customTopP = ref(false);
+const customHeadersText = ref("{}");
 
 const cfg = ref({
   enabled: false,
@@ -215,15 +326,25 @@ const cfg = ref({
   model: "",
   apiKey: "",
   clearApiKey: false,
-  maxContextTokens: 32000,
+  maxContextTokens: 131072,
   maxOutputTokens: 4096,
+  maxInputTokens: 122880,
   temperature: 0.7,
+  topP: 0.9,
+  samplingBoth: false,
+  streamIncludeUsage: true,
   timeoutSeconds: 60,
+  connectTimeoutSeconds: 10,
   retryCount: 1,
+  retryBackoffMs: 300,
   dailyRequestLimit: 200,
   dailyTokenLimit: 0,
+  globalDailyTokenLimit: 0,
   maxConcurrentPerUser: 2,
-  maxRequestBytes: 262144
+  maxRequestBytes: 262144,
+  minIntervalSeconds: 1,
+  minIntervalScope: "user" as "user" | "email",
+  readableUpstreamHint: true
 });
 
 const usageRows = ref<AiUsageRow[]>([]);
@@ -250,14 +371,26 @@ async function load() {
     cfg.value.clearApiKey = false;
     cfg.value.maxContextTokens = data.maxContextTokens;
     cfg.value.maxOutputTokens = data.maxOutputTokens;
+    cfg.value.maxInputTokens = data.maxInputTokens;
     customTemperature.value = data.temperature !== null;
     cfg.value.temperature = data.temperature ?? 0.7;
+    customTopP.value = data.topP !== null;
+    cfg.value.topP = data.topP ?? 0.9;
+    cfg.value.samplingBoth = data.samplingBoth;
+    cfg.value.streamIncludeUsage = data.streamIncludeUsage;
     cfg.value.timeoutSeconds = data.timeoutSeconds;
+    cfg.value.connectTimeoutSeconds = data.connectTimeoutSeconds;
     cfg.value.retryCount = data.retryCount;
+    cfg.value.retryBackoffMs = data.retryBackoffMs;
+    customHeadersText.value = JSON.stringify(data.customHeaders ?? {}, null, 2);
     cfg.value.dailyRequestLimit = data.dailyRequestLimit;
     cfg.value.dailyTokenLimit = data.dailyTokenLimit;
+    cfg.value.globalDailyTokenLimit = data.globalDailyTokenLimit;
     cfg.value.maxConcurrentPerUser = data.maxConcurrentPerUser;
     cfg.value.maxRequestBytes = data.maxRequestBytes;
+    cfg.value.minIntervalSeconds = data.minIntervalSeconds;
+    cfg.value.minIntervalScope = data.minIntervalScope;
+    cfg.value.readableUpstreamHint = data.readableUpstreamHint;
     hasApiKey.value = data.hasApiKey;
   } catch (error: any) {
     ElMessage.error(error?.response?.data?.message || copy.value.loadFailed);
@@ -267,6 +400,22 @@ async function load() {
 }
 
 async function save() {
+  let headers: Record<string, string>;
+  try {
+    const parsed = JSON.parse(customHeadersText.value || "{}");
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed) ||
+      Object.values(parsed).some(value => typeof value !== "string")
+    ) {
+      throw new Error("invalid");
+    }
+    headers = parsed as Record<string, string>;
+  } catch {
+    ElMessage.error(copy.value.customHeadersInvalid);
+    return;
+  }
   saving.value = true;
   try {
     const payload: AiSettingsPayload = {
@@ -275,12 +424,22 @@ async function save() {
       model: cfg.value.model,
       maxContextTokens: cfg.value.maxContextTokens,
       maxOutputTokens: cfg.value.maxOutputTokens,
+      maxInputTokens: cfg.value.maxInputTokens,
+      samplingBoth: cfg.value.samplingBoth,
+      streamIncludeUsage: cfg.value.streamIncludeUsage,
       timeoutSeconds: cfg.value.timeoutSeconds,
+      connectTimeoutSeconds: cfg.value.connectTimeoutSeconds,
       retryCount: cfg.value.retryCount,
+      retryBackoffMs: cfg.value.retryBackoffMs,
+      customHeaders: headers,
       dailyRequestLimit: cfg.value.dailyRequestLimit,
       dailyTokenLimit: cfg.value.dailyTokenLimit,
+      globalDailyTokenLimit: cfg.value.globalDailyTokenLimit,
       maxConcurrentPerUser: cfg.value.maxConcurrentPerUser,
-      maxRequestBytes: cfg.value.maxRequestBytes
+      maxRequestBytes: cfg.value.maxRequestBytes,
+      minIntervalSeconds: cfg.value.minIntervalSeconds,
+      minIntervalScope: cfg.value.minIntervalScope,
+      readableUpstreamHint: cfg.value.readableUpstreamHint
     };
     if (cfg.value.apiKey.trim()) payload.apiKey = cfg.value.apiKey.trim();
     if (cfg.value.clearApiKey) payload.clearApiKey = true;
@@ -288,6 +447,11 @@ async function save() {
       payload.temperature = cfg.value.temperature;
     } else {
       payload.clearTemperature = true;
+    }
+    if (customTopP.value) {
+      payload.topP = cfg.value.topP;
+    } else {
+      payload.clearTopP = true;
     }
     const result = await saveAiSettings(payload);
     hasApiKey.value = result.data.hasApiKey;
@@ -353,7 +517,7 @@ function formatNumber(value: number) {
 
 function formatTime(value: string | null) {
   if (!value) return copy.value.never;
-  return value.replace("T", " ").replace("Z", "");
+  return formatShortDateTime(value);
 }
 
 function onSearch() {
@@ -365,11 +529,17 @@ type TextKey = "baseUrl" | "model" | "apiKey";
 type NumberKey =
   | "maxContextTokens"
   | "maxOutputTokens"
+  | "maxInputTokens"
   | "temperature"
+  | "topP"
   | "timeoutSeconds"
+  | "connectTimeoutSeconds"
   | "retryCount"
+  | "retryBackoffMs"
   | "dailyRequestLimit"
   | "dailyTokenLimit"
+  | "globalDailyTokenLimit"
+  | "minIntervalSeconds"
   | "maxConcurrentPerUser"
   | "maxRequestBytes";
 
@@ -467,9 +637,10 @@ onMounted(() => {
             :model-value="cfg.maxContextTokens as number"
             :min="1024"
             :max="2000000"
-            :step="1000"
+            :step="1024"
             @update:model-value="value => setNumber('maxContextTokens', value)"
           />
+          <span class="muted small">{{ copy.maxContextHint }}</span>
         </el-form-item>
         <el-form-item :label="copy.maxOutput">
           <el-input-number
@@ -479,59 +650,17 @@ onMounted(() => {
             :step="256"
             @update:model-value="value => setNumber('maxOutputTokens', value)"
           />
+          <span class="muted small">{{ copy.maxOutputHint }}</span>
         </el-form-item>
-        <el-form-item :label="copy.timeout">
+        <el-form-item :label="copy.inputLimit">
           <el-input-number
-            :model-value="cfg.timeoutSeconds"
-            :min="5"
-            :max="600"
-            @update:model-value="value => setNumber('timeoutSeconds', value)"
-          />
-        </el-form-item>
-        <el-form-item :label="copy.retry">
-          <el-input-number
-            :model-value="cfg.retryCount"
-            :min="0"
-            :max="3"
-            @update:model-value="value => setNumber('retryCount', value)"
-          />
-        </el-form-item>
-        <el-form-item :label="copy.dailyRequests">
-          <el-input-number
-            :model-value="cfg.dailyRequestLimit"
-            :min="0"
-            :max="100000"
-            @update:model-value="value => setNumber('dailyRequestLimit', value)"
-          />
-          <span class="muted small">{{ copy.unlimited }}</span>
-        </el-form-item>
-        <el-form-item :label="copy.dailyTokens">
-          <el-input-number
-            :model-value="cfg.dailyTokenLimit"
-            :min="0"
-            :max="100000000"
-            :step="100000"
-            @update:model-value="value => setNumber('dailyTokenLimit', value)"
-          />
-          <span class="muted small">{{ copy.unlimited }}</span>
-        </el-form-item>
-        <el-form-item :label="copy.concurrency">
-          <el-input-number
-            :model-value="cfg.maxConcurrentPerUser"
+            :model-value="cfg.maxInputTokens"
             :min="1"
-            :max="100"
-            @update:model-value="value => setNumber('maxConcurrentPerUser', value)"
+            :max="2000000"
+            :step="1024"
+            @update:model-value="value => setNumber('maxInputTokens', value)"
           />
-        </el-form-item>
-        <el-form-item :label="copy.maxRequestBytes">
-          <el-input-number
-            :model-value="cfg.maxRequestBytes"
-            :min="4096"
-            :max="1048576"
-            :step="4096"
-            @update:model-value="value => setNumber('maxRequestBytes', value)"
-          />
-          <span class="muted small">{{ copy.bytesHint }}</span>
+          <span class="muted small">{{ copy.inputLimitHint }}</span>
         </el-form-item>
         <el-form-item :label="copy.temperature">
           <div class="temperature">
@@ -545,6 +674,151 @@ onMounted(() => {
               :precision="2"
               @update:model-value="value => setNumber('temperature', value)"
             />
+          </div>
+          <span class="muted small">{{ copy.temperatureHint }}</span>
+        </el-form-item>
+        <el-form-item :label="copy.topP">
+          <div class="temperature">
+            <el-switch v-model="customTopP" :active-text="copy.useTopP" />
+            <el-input-number
+              v-if="customTopP"
+              :model-value="cfg.topP"
+              :min="0"
+              :max="1"
+              :step="0.05"
+              :precision="2"
+              @update:model-value="value => setNumber('topP', value)"
+            />
+          </div>
+          <span class="muted small">{{ copy.topPHint }}</span>
+        </el-form-item>
+        <el-form-item :label="copy.samplingBoth" class="wide">
+          <div class="temperature">
+            <el-switch v-model="cfg.samplingBoth" />
+            <span class="muted small">{{ copy.samplingBothHint }}</span>
+          </div>
+        </el-form-item>
+        <el-form-item :label="copy.streamIncludeUsage" class="wide">
+          <div class="temperature">
+            <el-switch v-model="cfg.streamIncludeUsage" />
+            <span class="muted small">{{ copy.streamIncludeUsageHint }}</span>
+          </div>
+        </el-form-item>
+        <el-form-item :label="copy.timeout">
+          <el-input-number
+            :model-value="cfg.timeoutSeconds"
+            :min="5"
+            :max="600"
+            @update:model-value="value => setNumber('timeoutSeconds', value)"
+          />
+          <span class="muted small">{{ copy.timeoutHint }}</span>
+        </el-form-item>
+        <el-form-item :label="copy.connectTimeout">
+          <el-input-number
+            :model-value="cfg.connectTimeoutSeconds"
+            :min="1"
+            :max="60"
+            @update:model-value="value => setNumber('connectTimeoutSeconds', value)"
+          />
+          <span class="muted small">{{ copy.connectTimeoutHint }} {{ copy.readonlyHint }}</span>
+        </el-form-item>
+        <el-form-item :label="copy.retry">
+          <el-input-number
+            :model-value="cfg.retryCount"
+            :min="0"
+            :max="3"
+            @update:model-value="value => setNumber('retryCount', value)"
+          />
+          <span class="muted small">{{ copy.retryHint }}</span>
+        </el-form-item>
+        <el-form-item :label="copy.retryBackoff">
+          <el-input-number
+            :model-value="cfg.retryBackoffMs"
+            :min="0"
+            :max="5000"
+            :step="100"
+            @update:model-value="value => setNumber('retryBackoffMs', value)"
+          />
+          <span class="muted small">{{ copy.backoffHint }}</span>
+        </el-form-item>
+        <el-form-item :label="copy.dailyRequests">
+          <el-input-number
+            :model-value="cfg.dailyRequestLimit"
+            :min="0"
+            :max="100000"
+            @update:model-value="value => setNumber('dailyRequestLimit', value)"
+          />
+          <span class="muted small">{{ copy.dailyRequestsHint }}</span>
+        </el-form-item>
+        <el-form-item :label="copy.dailyTokens">
+          <el-input-number
+            :model-value="cfg.dailyTokenLimit"
+            :min="0"
+            :max="100000000"
+            :step="100000"
+            @update:model-value="value => setNumber('dailyTokenLimit', value)"
+          />
+          <span class="muted small">{{ copy.dailyTokensHint }}</span>
+        </el-form-item>
+        <el-form-item :label="copy.globalDailyTokens">
+          <el-input-number
+            :model-value="cfg.globalDailyTokenLimit"
+            :min="0"
+            :max="1000000000"
+            :step="100000"
+            @update:model-value="value => setNumber('globalDailyTokenLimit', value)"
+          />
+          <span class="muted small">{{ copy.globalDailyTokensHint }}</span>
+        </el-form-item>
+        <el-form-item :label="copy.minInterval">
+          <el-input-number
+            :model-value="cfg.minIntervalSeconds"
+            :min="0"
+            :max="3600"
+            @update:model-value="value => setNumber('minIntervalSeconds', value)"
+          />
+          <span class="muted small">{{ copy.intervalHint }}</span>
+        </el-form-item>
+        <el-form-item :label="copy.minIntervalScope">
+          <el-select v-model="cfg.minIntervalScope" class="scope-select">
+            <el-option :label="copy.scopeUser" value="user" />
+            <el-option :label="copy.scopeEmail" value="email" />
+          </el-select>
+          <span class="muted small">{{ copy.intervalHint }}</span>
+        </el-form-item>
+        <el-form-item :label="copy.concurrency">
+          <el-input-number
+            :model-value="cfg.maxConcurrentPerUser"
+            :min="1"
+            :max="100"
+            @update:model-value="value => setNumber('maxConcurrentPerUser', value)"
+          />
+          <span class="muted small">{{ copy.concurrencyHint }}</span>
+        </el-form-item>
+        <el-form-item :label="copy.maxRequestBytes">
+          <el-input-number
+            :model-value="cfg.maxRequestBytes"
+            :min="4096"
+            :max="1048576"
+            :step="4096"
+            @update:model-value="value => setNumber('maxRequestBytes', value)"
+          />
+          <span class="muted small">{{ copy.bytesHint }}</span>
+        </el-form-item>
+        <el-form-item :label="copy.customHeaders" class="wide">
+          <el-input
+            v-model="customHeadersText"
+            type="textarea"
+            :rows="3"
+            spellcheck="false"
+            placeholder='{"X-Title": "ShellAs"}'
+          />
+          <span class="muted small">{{ copy.customHeadersHint }}</span>
+        </el-form-item>
+        <el-form-item :label="copy.readableUpstream" class="wide">
+          <div class="temperature">
+            <el-switch v-model="cfg.readableUpstreamHint" />
+            <span class="muted small">{{ copy.readableHint }}</span>
           </div>
         </el-form-item>
       </el-form>
@@ -613,7 +887,16 @@ onMounted(() => {
           </template>
         </el-table-column>
         <el-table-column :label="copy.lastUsed" min-width="180">
-          <template #default="{ row }">{{ formatTime(row.lastUsedAt) }}</template>
+          <template #default="{ row }">
+            <el-tooltip
+              v-if="row.lastUsedAt"
+              :content="formatFullDateTime(row.lastUsedAt)"
+              placement="top"
+            >
+              <span>{{ formatTime(row.lastUsedAt) }}</span>
+            </el-tooltip>
+            <span v-else>{{ copy.never }}</span>
+          </template>
         </el-table-column>
       </el-table>
 
@@ -678,6 +961,9 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+.scope-select {
+  width: 100%;
 }
 .clear-key {
   margin-top: 6px;

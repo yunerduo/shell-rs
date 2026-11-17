@@ -14,7 +14,7 @@ use thiserror::Error;
 use crate::util;
 
 /// 正在升级的库版本，见 [`migrate`]。
-const SCHEMA_VERSION: i64 = 10;
+const SCHEMA_VERSION: i64 = 11;
 
 #[derive(Clone, Debug)]
 pub struct User {
@@ -181,13 +181,32 @@ pub struct AiSettings {
     pub model: String,
     pub max_context_tokens: i64,
     pub max_output_tokens: i64,
+    pub max_input_tokens: i64,
     pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    /// 同时把 temperature 和 top_p 传给上游。默认只传一个：有些模型
+    /// 拒绝这两个参数同时出现。
+    pub sampling_both: bool,
+    /// 流式请求是否向上游补 `stream_options.include_usage`。
+    pub stream_include_usage: bool,
     pub timeout_seconds: i64,
+    pub connect_timeout_seconds: i64,
     pub retry_count: i64,
+    /// 重试的基础退避毫秒数，按 2 的幂递增。
+    pub retry_backoff_ms: i64,
+    /// 自定义请求头，JSON 对象文本；保存前校验，禁止敏感头。
+    pub custom_headers: String,
     pub daily_request_limit: i64,
     pub daily_token_limit: i64,
+    pub global_daily_token_limit: i64,
     pub max_concurrent_per_user: i64,
     pub max_request_bytes: i64,
+    /// 两次请求之间的最小间隔秒数，0 表示不限。
+    pub min_interval_seconds: i64,
+    /// 最小间隔按 `user` 还是 `email` 计。
+    pub min_interval_scope: String,
+    /// 上游失败时是否把上游的一句话原因带给客户端。
+    pub readable_upstream_hint: bool,
     pub updated_at: String,
 }
 
@@ -199,15 +218,27 @@ impl AiSettings {
             base_url: String::new(),
             api_key: String::new(),
             model: String::new(),
-            max_context_tokens: 32_000,
+            // 128k 上下文，输入默认留 120k，其余给输出与误差。
+            max_context_tokens: 131_072,
             max_output_tokens: 4_096,
+            max_input_tokens: 122_880,
             temperature: None,
+            top_p: None,
+            sampling_both: false,
+            stream_include_usage: true,
             timeout_seconds: 60,
+            connect_timeout_seconds: 10,
             retry_count: 1,
+            retry_backoff_ms: 300,
+            custom_headers: "{}".into(),
             daily_request_limit: 200,
             daily_token_limit: 0,
+            global_daily_token_limit: 0,
             max_concurrent_per_user: 2,
             max_request_bytes: 256 * 1024,
+            min_interval_seconds: 1,
+            min_interval_scope: "user".into(),
+            readable_upstream_hint: true,
             updated_at: String::new(),
         }
     }
@@ -306,6 +337,10 @@ pub enum AiQuotaError {
     Requests { used: i64, limit: i64 },
     #[error("今日 token 已用完")]
     Tokens { used: i64, limit: i64 },
+    #[error("全局 token 配额已用完")]
+    GlobalTokens { used: i64, limit: i64 },
+    #[error("请求太频繁")]
+    Interval { retry_after: i64 },
     #[error(transparent)]
     Sql(#[from] rusqlite::Error),
 }
@@ -2035,7 +2070,10 @@ impl Db {
                 "SELECT enabled, base_url, api_key, model, max_context_tokens,
                         max_output_tokens, temperature, timeout_seconds, retry_count,
                         daily_request_limit, daily_token_limit, max_concurrent_per_user,
-                        max_request_bytes, updated_at
+                        max_request_bytes, updated_at, top_p, sampling_both,
+                        stream_include_usage, connect_timeout_seconds, retry_backoff_ms,
+                        custom_headers, global_daily_token_limit, max_input_tokens,
+                        min_interval_seconds, min_interval_scope, readable_upstream_hint
                  FROM ai_settings WHERE id = 1",
                 [],
                 |row| {
@@ -2054,6 +2092,17 @@ impl Db {
                         max_concurrent_per_user: row.get(11)?,
                         max_request_bytes: row.get(12)?,
                         updated_at: row.get(13)?,
+                        top_p: row.get(14)?,
+                        sampling_both: row.get(15)?,
+                        stream_include_usage: row.get(16)?,
+                        connect_timeout_seconds: row.get(17)?,
+                        retry_backoff_ms: row.get(18)?,
+                        custom_headers: row.get(19)?,
+                        global_daily_token_limit: row.get(20)?,
+                        max_input_tokens: row.get(21)?,
+                        min_interval_seconds: row.get(22)?,
+                        min_interval_scope: row.get(23)?,
+                        readable_upstream_hint: row.get(24)?,
                     })
                 },
             )
@@ -2066,8 +2115,12 @@ impl Db {
                id, enabled, base_url, api_key, model, max_context_tokens,
                max_output_tokens, temperature, timeout_seconds, retry_count,
                daily_request_limit, daily_token_limit, max_concurrent_per_user,
-               max_request_bytes, updated_at
-             ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+               max_request_bytes, updated_at, top_p, sampling_both,
+               stream_include_usage, connect_timeout_seconds, retry_backoff_ms,
+               custom_headers, global_daily_token_limit, max_input_tokens,
+               min_interval_seconds, min_interval_scope, readable_upstream_hint
+             ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                       ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
              ON CONFLICT(id) DO UPDATE SET
                enabled = excluded.enabled,
                base_url = excluded.base_url,
@@ -2082,7 +2135,18 @@ impl Db {
                daily_token_limit = excluded.daily_token_limit,
                max_concurrent_per_user = excluded.max_concurrent_per_user,
                max_request_bytes = excluded.max_request_bytes,
-               updated_at = excluded.updated_at",
+               updated_at = excluded.updated_at,
+               top_p = excluded.top_p,
+               sampling_both = excluded.sampling_both,
+               stream_include_usage = excluded.stream_include_usage,
+               connect_timeout_seconds = excluded.connect_timeout_seconds,
+               retry_backoff_ms = excluded.retry_backoff_ms,
+               custom_headers = excluded.custom_headers,
+               global_daily_token_limit = excluded.global_daily_token_limit,
+               max_input_tokens = excluded.max_input_tokens,
+               min_interval_seconds = excluded.min_interval_seconds,
+               min_interval_scope = excluded.min_interval_scope,
+               readable_upstream_hint = excluded.readable_upstream_hint",
             params![
                 settings.enabled,
                 settings.base_url,
@@ -2098,6 +2162,17 @@ impl Db {
                 settings.max_concurrent_per_user,
                 settings.max_request_bytes,
                 settings.updated_at,
+                settings.top_p,
+                settings.sampling_both,
+                settings.stream_include_usage,
+                settings.connect_timeout_seconds,
+                settings.retry_backoff_ms,
+                settings.custom_headers,
+                settings.global_daily_token_limit,
+                settings.max_input_tokens,
+                settings.min_interval_seconds,
+                settings.min_interval_scope,
+                settings.readable_upstream_hint,
             ],
         )?;
         Ok(())
@@ -2163,14 +2238,28 @@ impl Db {
         )
     }
 
-    /// 接受一次请求：先看今日限额，再同时给当天和累计的请求数 +1。
-    /// 上游失败也照算，避免失败重试变成免费额度。
+    /// 今天全站消耗的 token 合计。
+    pub fn ai_global_tokens(&self, day: &str) -> rusqlite::Result<i64> {
+        self.conn().query_row(
+            "SELECT COALESCE(SUM(input_tokens + output_tokens), 0)
+             FROM ai_usage_daily WHERE day = ?1",
+            [day],
+            |row| row.get(0),
+        )
+    }
+
+    /// 接受一次请求：先看今日限额与最小间隔，再同时给当天和累计的
+    /// 请求数 +1。上游失败也照算，避免失败重试变成免费额度。
+    #[allow(clippy::too_many_arguments)] // 限额、全局限额与节流键必须一次判定。
     pub fn ai_claim_request(
         &self,
         user_id: i64,
         day: &str,
         request_limit: i64,
         token_limit: i64,
+        global_token_limit: i64,
+        throttle_key: &str,
+        min_interval_seconds: i64,
     ) -> Result<AiUsage, AiQuotaError> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
@@ -2195,6 +2284,41 @@ impl Db {
                 limit: token_limit,
             });
         }
+        if global_token_limit > 0 {
+            let global: i64 = tx.query_row(
+                "SELECT COALESCE(SUM(input_tokens + output_tokens), 0)
+                 FROM ai_usage_daily WHERE day = ?1",
+                [day],
+                |row| row.get(0),
+            )?;
+            if global >= global_token_limit {
+                return Err(AiQuotaError::GlobalTokens {
+                    used: global,
+                    limit: global_token_limit,
+                });
+            }
+        }
+        if min_interval_seconds > 0 && !throttle_key.is_empty() {
+            let last: Option<String> = tx
+                .query_row(
+                    "SELECT last_request_at FROM ai_throttle WHERE key = ?1",
+                    [throttle_key],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if let Some(last) = last
+                && let Ok(last) = chrono::DateTime::parse_from_rfc3339(&last)
+            {
+                let elapsed = (chrono::Utc::now() - last.with_timezone(&chrono::Utc))
+                    .num_seconds()
+                    .max(0);
+                if elapsed < min_interval_seconds {
+                    return Err(AiQuotaError::Interval {
+                        retry_after: min_interval_seconds - elapsed,
+                    });
+                }
+            }
+        }
         let now = util::now();
         tx.execute(
             "INSERT INTO ai_usage_daily (user_id, day, requests) VALUES (?1, ?2, 1)
@@ -2207,6 +2331,13 @@ impl Db {
                requests = requests + 1, last_used_at = excluded.last_used_at",
             params![user_id, now],
         )?;
+        if !throttle_key.is_empty() {
+            tx.execute(
+                "INSERT INTO ai_throttle (key, last_request_at) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET last_request_at = excluded.last_request_at",
+                params![throttle_key, now],
+            )?;
+        }
         tx.commit()?;
         drop(conn);
         Ok(self.ai_usage(user_id, day)?)
@@ -2634,6 +2765,33 @@ Agree ShellAs',
                 strftime('%Y-%m-%dT%H:%M:%SZ','now'));
              PRAGMA user_version = 10;
              COMMIT;"#,
+        )?;
+    }
+    if version < 11 {
+        // 内置 AI 的上游参数与防护补齐：采样参数、连接超时、退避、
+        // 自定义请求头、输入上限、全局限额与按用户/邮箱的最小间隔。
+        // 上下文默认值从 32k 提到 128k，只改仍是老默认值的库。
+        conn.execute_batch(
+            "BEGIN;
+             ALTER TABLE ai_settings ADD COLUMN top_p REAL;
+             ALTER TABLE ai_settings ADD COLUMN sampling_both INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE ai_settings ADD COLUMN stream_include_usage INTEGER NOT NULL DEFAULT 1;
+             ALTER TABLE ai_settings ADD COLUMN connect_timeout_seconds INTEGER NOT NULL DEFAULT 10;
+             ALTER TABLE ai_settings ADD COLUMN retry_backoff_ms INTEGER NOT NULL DEFAULT 300;
+             ALTER TABLE ai_settings ADD COLUMN custom_headers TEXT NOT NULL DEFAULT '{}';
+             ALTER TABLE ai_settings ADD COLUMN global_daily_token_limit INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE ai_settings ADD COLUMN max_input_tokens INTEGER NOT NULL DEFAULT 122880;
+             ALTER TABLE ai_settings ADD COLUMN min_interval_seconds INTEGER NOT NULL DEFAULT 1;
+             ALTER TABLE ai_settings ADD COLUMN min_interval_scope TEXT NOT NULL DEFAULT 'user';
+             ALTER TABLE ai_settings ADD COLUMN readable_upstream_hint INTEGER NOT NULL DEFAULT 1;
+             UPDATE ai_settings SET max_context_tokens = 131072
+               WHERE max_context_tokens = 32000;
+             CREATE TABLE IF NOT EXISTS ai_throttle (
+               key             TEXT PRIMARY KEY,
+               last_request_at TEXT NOT NULL
+             );
+             PRAGMA user_version = 11;
+             COMMIT;",
         )?;
     }
     Ok(())
@@ -3104,23 +3262,52 @@ mod tests {
         let db = db();
         let user = user(&db);
         let day = "2026-11-17";
-        let usage = db.ai_claim_request(user.id, day, 2, 0).unwrap();
+        let usage = db
+            .ai_claim_request(user.id, day, 2, 0, 0, "user:1", 0)
+            .unwrap();
         assert_eq!(usage.requests_today, 1);
         db.ai_record_tokens(user.id, day, 10, 5).unwrap();
-        let usage = db.ai_claim_request(user.id, day, 2, 50).unwrap();
+        let usage = db
+            .ai_claim_request(user.id, day, 2, 50, 0, "user:1", 0)
+            .unwrap();
         assert_eq!(usage.requests_today, 2);
         assert_eq!(usage.tokens_today, 15);
         assert!(matches!(
-            db.ai_claim_request(user.id, day, 2, 50),
+            db.ai_claim_request(user.id, day, 2, 50, 0, "user:1", 0),
             Err(AiQuotaError::Requests { used: 2, limit: 2 })
         ));
         assert!(matches!(
-            db.ai_claim_request(user.id, day, 0, 10),
+            db.ai_claim_request(user.id, day, 0, 10, 0, "user:1", 0),
             Err(AiQuotaError::Tokens {
                 used: 15,
                 limit: 10
             })
         ));
+        assert!(matches!(
+            db.ai_claim_request(user.id, day, 0, 0, 10, "user:1", 0),
+            Err(AiQuotaError::GlobalTokens {
+                used: 15,
+                limit: 10
+            })
+        ));
+    }
+
+    #[test]
+    fn ai_claims_honour_the_minimum_interval_per_key() {
+        let db = db();
+        let user = user(&db);
+        let day = "2026-11-17";
+        db.ai_claim_request(user.id, day, 0, 0, 0, "email:alice@example.com", 60)
+            .unwrap();
+        assert!(matches!(
+            db.ai_claim_request(user.id, day, 0, 0, 0, "email:alice@example.com", 60),
+            Err(AiQuotaError::Interval {
+                retry_after: 1..=60
+            })
+        ));
+        // 另一个键不受影响。
+        db.ai_claim_request(user.id, day, 0, 0, 0, "email:bob@example.com", 60)
+            .unwrap();
     }
 
     #[test]

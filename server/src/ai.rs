@@ -11,7 +11,7 @@ use std::time::Duration;
 use axum::Json;
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use chrono::{FixedOffset, TimeZone as _, Utc};
 use futures_util::StreamExt as _;
@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::api::{self, AppState};
-use crate::db::{AiQuotaError, AiSettings, AiUsageRow};
+use crate::db::{AiQuotaError, AiSettings, AiUsageRow, User};
 use crate::error::ApiError;
 use crate::util;
 
@@ -49,26 +49,40 @@ impl UpstreamCategory {
 }
 
 /// 按用户的在途请求计数与共用的 HTTP 客户端。计数在单实例内存里，
-/// 够用来挡住单个用户把并发打满。
+/// 够用来挡住单个用户把并发打满。连接超时可在后台调整，所以按秒数
+/// 缓存几个客户端，避免每次请求都重建连接池。
 pub struct AiRuntime {
-    http: reqwest::Client,
+    clients: Mutex<HashMap<u64, reqwest::Client>>,
     in_flight: Mutex<HashMap<i64, usize>>,
 }
 
 impl Default for AiRuntime {
     fn default() -> Self {
-        let http = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .build()
-            .expect("构建内置 AI 的 HTTP 客户端失败");
         Self {
-            http,
+            clients: Mutex::new(HashMap::new()),
             in_flight: Mutex::new(HashMap::new()),
         }
     }
 }
 
 impl AiRuntime {
+    fn client(&self, connect_timeout_seconds: i64) -> reqwest::Client {
+        let seconds = connect_timeout_seconds.clamp(1, 60) as u64;
+        let mut clients = self
+            .clients
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        clients
+            .entry(seconds)
+            .or_insert_with(|| {
+                reqwest::Client::builder()
+                    .connect_timeout(Duration::from_secs(seconds))
+                    .build()
+                    .expect("构建内置 AI 的 HTTP 客户端失败")
+            })
+            .clone()
+    }
+
     fn acquire(self: &Arc<Self>, user_id: i64, limit: i64) -> Option<InFlight> {
         let mut in_flight = self
             .in_flight
@@ -111,6 +125,7 @@ impl Drop for InFlight {
 // ---- 错误 ----
 
 /// 用户侧错误统一成 OpenAI 形状：`{"error":{"message","type","code"}}`。
+#[derive(Debug)]
 pub struct AiError {
     status: StatusCode,
     code: &'static str,
@@ -213,6 +228,39 @@ impl AiError {
         error.limit = Some(limit);
         error
     }
+
+    fn global_tokens_exhausted(used: i64, limit: i64) -> Self {
+        let mut error = Self::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "global_tokens_exhausted",
+            "内置 AI 试用今天的总用量已到上限，明天再来",
+        );
+        error.retry_after = Some(seconds_until_tomorrow());
+        error.used = Some(used);
+        error.limit = Some(limit);
+        error
+    }
+
+    fn too_frequent(retry_after: i64) -> Self {
+        let mut error = Self::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too_frequent",
+            "请求太频繁，请稍后再试",
+        );
+        error.retry_after = Some(retry_after.max(1) as u64);
+        error
+    }
+
+    fn input_too_long(tokens: i64, limit: i64) -> Self {
+        let mut error = Self::new(
+            StatusCode::BAD_REQUEST,
+            "input_too_long",
+            "输入内容超过了单次请求的 token 上限",
+        );
+        error.used = Some(tokens);
+        error.limit = Some(limit);
+        error
+    }
 }
 
 impl From<rusqlite::Error> for AiError {
@@ -267,7 +315,31 @@ fn map_transport(error: &reqwest::Error) -> AiError {
     }
 }
 
-fn map_status(status: StatusCode, retry_after: Option<u64>) -> AiError {
+/// 从上游错误体里取一句话原因，脱敏并截断。只有后台允许「可读提示」时
+/// 才返回；绝不含 Key、地址或整段响应体。
+fn upstream_hint(body: &[u8], api_key: &str, readable: bool) -> Option<String> {
+    if !readable {
+        return None;
+    }
+    let value: Value = serde_json::from_slice(body).ok()?;
+    let message = value
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .and_then(Value::as_str)
+        .or_else(|| value.get("message").and_then(Value::as_str))?
+        .trim();
+    if message.is_empty() {
+        return None;
+    }
+    let mut message = message.to_string();
+    if !api_key.is_empty() {
+        message = message.replace(api_key, "***");
+    }
+    let message: String = message.chars().take(200).collect();
+    Some(message.replace(['\n', '\r'], " "))
+}
+
+fn map_status(status: StatusCode, retry_after: Option<u64>, hint: Option<&str>) -> AiError {
     match status.as_u16() {
         401 | 403 => AiError::new(
             StatusCode::BAD_GATEWAY,
@@ -275,6 +347,9 @@ fn map_status(status: StatusCode, retry_after: Option<u64>) -> AiError {
             "服务端上游密钥无效，请联系管理员",
         ),
         _ => {
+            let suffix = hint
+                .map(|hint| format!("（上游：{hint}）"))
+                .unwrap_or_default();
             let mut error = AiError::new(
                 StatusCode::BAD_GATEWAY,
                 if status.as_u16() == 429 {
@@ -282,7 +357,7 @@ fn map_status(status: StatusCode, retry_after: Option<u64>) -> AiError {
                 } else {
                     "upstream_rejected"
                 },
-                "上游拒绝了这次请求，请稍后再试",
+                format!("上游拒绝了这次请求，请稍后再试{suffix}"),
             );
             error.retry_after = retry_after;
             error
@@ -478,11 +553,69 @@ fn upstream_url(settings: &AiSettings) -> String {
     )
 }
 
-fn retry_backoff(attempt: u32) -> Duration {
-    match attempt {
-        1 => Duration::from_millis(200),
-        _ => Duration::from_millis(500),
+/// 自定义请求头只允许非敏感头：认证、Cookie、内容协商和逐跳头一律
+/// 拒绝，尤其是 `Authorization` 不能被覆盖。
+fn is_sensitive_header(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    const DENY: &[&str] = &[
+        "authorization",
+        "proxy-authorization",
+        "cookie",
+        "set-cookie",
+        "host",
+        "content-length",
+        "content-type",
+        "connection",
+        "transfer-encoding",
+        "upgrade",
+        "te",
+        "trailer",
+        "expect",
+        "accept-encoding",
+    ];
+    DENY.contains(&name.as_str())
+        || ["token", "key", "secret", "password", "session", "auth"]
+            .iter()
+            .any(|part| name.contains(part))
+}
+
+/// 解析并校验自定义请求头。保存接口用它给出明确错误，发送前再用一次
+/// （库里的历史值也可能是手改的）。
+fn parse_custom_headers(raw: &str) -> Result<Vec<(String, String)>, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(Vec::new());
     }
+    let value: Value =
+        serde_json::from_str(raw).map_err(|_| "自定义请求头必须是 JSON 对象".to_string())?;
+    let Value::Object(map) = value else {
+        return Err("自定义请求头必须是 JSON 对象".into());
+    };
+    let mut headers = Vec::with_capacity(map.len());
+    for (name, value) in map {
+        let name = name.trim().to_string();
+        if HeaderName::from_bytes(name.as_bytes()).is_err() {
+            return Err(format!("请求头名称不合法：{name}"));
+        }
+        if is_sensitive_header(&name) {
+            return Err(format!("请求头 {name} 属于敏感头，不允许自定义"));
+        }
+        let Some(value) = value.as_str() else {
+            return Err(format!("请求头 {name} 的值必须是字符串"));
+        };
+        if value.contains(['\r', '\n']) {
+            return Err(format!("请求头 {name} 的值不能换行"));
+        }
+        headers.push((name, value.to_string()));
+    }
+    Ok(headers)
+}
+
+/// 指数退避：基础毫秒数 × 2^(n-1)，最多 10 秒。
+fn retry_backoff(settings: &AiSettings, attempt: u32) -> Duration {
+    let base = settings.retry_backoff_ms.max(0) as u64;
+    let shift = attempt.saturating_sub(1).min(5);
+    Duration::from_millis(base.saturating_mul(1u64 << shift).min(10_000))
 }
 
 async fn send_upstream(
@@ -491,18 +624,32 @@ async fn send_upstream(
     payload: &Value,
 ) -> Result<reqwest::Response, reqwest::Error> {
     let url = upstream_url(settings);
+    let client = runtime.client(settings.connect_timeout_seconds);
     let timeout = Duration::from_secs(settings.timeout_seconds.max(1) as u64);
+    let headers = parse_custom_headers(&settings.custom_headers).unwrap_or_default();
     let mut attempt = 0u32;
     loop {
-        let mut request = runtime.http.post(&url).timeout(timeout).json(payload);
+        let mut request = client.post(&url).timeout(timeout).json(payload);
         if !settings.api_key.is_empty() {
             request = request.bearer_auth(&settings.api_key);
+        }
+        for (name, value) in &headers {
+            // 校验阶段已经拦过敏感头；这里再挡一次，防止旧数据或手改库。
+            if is_sensitive_header(name) {
+                continue;
+            }
+            if let (Ok(name), Ok(value)) = (
+                HeaderName::from_bytes(name.as_bytes()),
+                HeaderValue::from_str(value),
+            ) {
+                request = request.header(name, value);
+            }
         }
         match request.send().await {
             Ok(response) => {
                 if response.status().is_server_error() && attempt < settings.retry_count as u32 {
                     attempt += 1;
-                    tokio::time::sleep(retry_backoff(attempt)).await;
+                    tokio::time::sleep(retry_backoff(settings, attempt)).await;
                     continue;
                 }
                 return Ok(response);
@@ -511,7 +658,7 @@ async fn send_upstream(
                 // 只重试连接阶段的失败；整体超时不再重试。
                 if error.is_connect() && attempt < settings.retry_count as u32 {
                     attempt += 1;
-                    tokio::time::sleep(retry_backoff(attempt)).await;
+                    tokio::time::sleep(retry_backoff(settings, attempt)).await;
                     continue;
                 }
                 return Err(error);
@@ -548,6 +695,7 @@ pub async fn status(
     let user = api::require_user(&state, &headers).map_err(AiError::from_api)?;
     let day = shanghai_day();
     let usage = state.db.ai_usage(user.id, &day)?;
+    let global_tokens = state.db.ai_global_tokens(&day)?;
     let settings = state.db.ai_settings()?;
     let user_enabled = state.db.ai_user_enabled(user.id)?;
 
@@ -576,6 +724,20 @@ pub async fn status(
             reason = Some("daily_limit_reached");
             false
         }
+        Some(settings)
+            if settings.daily_token_limit > 0
+                && usage.tokens_today >= settings.daily_token_limit =>
+        {
+            reason = Some("tokens_exhausted");
+            false
+        }
+        Some(settings)
+            if settings.global_daily_token_limit > 0
+                && global_tokens >= settings.global_daily_token_limit =>
+        {
+            reason = Some("global_limit_reached");
+            false
+        }
         Some(_) => true,
     };
     let settings = settings.unwrap_or_else(AiSettings::defaults);
@@ -595,6 +757,7 @@ pub async fn status(
         "model": settings.model,
         "maxContextTokens": settings.max_context_tokens,
         "maxOutputTokens": settings.max_output_tokens,
+        "maxInputTokens": settings.max_input_tokens,
         "dailyRequestLimit": settings.daily_request_limit,
         "dailyTokenLimit": settings.daily_token_limit,
         "requestsUsedToday": usage.requests_today,
@@ -687,6 +850,12 @@ pub async fn chat(
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let input_tokens = estimate_messages_tokens(messages);
+    if settings.max_input_tokens > 0 && input_tokens > settings.max_input_tokens {
+        return Err(AiError::input_too_long(
+            input_tokens,
+            settings.max_input_tokens,
+        ));
+    }
     let max_output = clamp_output(&mut payload, &settings);
     if input_tokens + max_output > settings.max_context_tokens {
         return Err(AiError::new(
@@ -698,19 +867,16 @@ pub async fn chat(
 
     payload.insert("model".into(), json!(settings.model.clone()));
     payload.insert("max_tokens".into(), json!(max_output));
-    if stream {
+    if stream && settings.stream_include_usage {
         let options = payload.entry("stream_options").or_insert_with(|| json!({}));
         if let Some(options) = options.as_object_mut() {
             options.insert("include_usage".into(), json!(true));
         }
     }
-    if !payload.contains_key("temperature")
-        && let Some(temperature) = settings.temperature
-    {
-        payload.insert("temperature".into(), json!(temperature));
-    }
+    apply_sampling(&mut payload, &settings)?;
 
     let day = shanghai_day();
+    let throttle_key = throttle_key(&user, &settings.min_interval_scope);
     let usage = state
         .db
         .ai_claim_request(
@@ -718,10 +884,17 @@ pub async fn chat(
             &day,
             settings.daily_request_limit,
             settings.daily_token_limit,
+            settings.global_daily_token_limit,
+            &throttle_key,
+            settings.min_interval_seconds,
         )
         .map_err(|error| match error {
             AiQuotaError::Requests { used, limit } => AiError::daily_limit(used, limit),
             AiQuotaError::Tokens { used, limit } => AiError::tokens_exhausted(used, limit),
+            AiQuotaError::GlobalTokens { used, limit } => {
+                AiError::global_tokens_exhausted(used, limit)
+            }
+            AiQuotaError::Interval { retry_after } => AiError::too_frequent(retry_after),
             AiQuotaError::Sql(error) => AiError::internal(error),
         })?;
     tracing::info!(
@@ -747,12 +920,16 @@ pub async fn chat(
     let upstream_status = response.status();
     if !upstream_status.is_success() {
         let retry_after = parse_retry_after(response.headers());
+        // 只有后台允许可读提示时才读错误体；读不完也无所谓。
+        let hint = response.bytes().await.ok().and_then(|body| {
+            upstream_hint(&body, &settings.api_key, settings.readable_upstream_hint)
+        });
         tracing::warn!(
             user = %user.username,
             status = upstream_status.as_u16(),
             "内置 AI 上游返回错误"
         );
-        return Err(map_status(upstream_status, retry_after));
+        return Err(map_status(upstream_status, retry_after, hint.as_deref()));
     }
 
     if stream {
@@ -825,6 +1002,78 @@ fn clamp_output(payload: &mut Map<String, Value>, settings: &AiSettings) -> i64 
         .get("max_tokens")
         .and_then(Value::as_i64)
         .unwrap_or(configured)
+}
+
+/// 采样参数：先补后台默认值，再校验范围；默认不同时传 temperature 与
+/// top_p（有些模型会直接拒绝这种组合），只保留 temperature。
+fn apply_sampling(payload: &mut Map<String, Value>, settings: &AiSettings) -> Result<(), AiError> {
+    for key in ["temperature", "top_p"] {
+        if payload.get(key).is_some_and(Value::is_null) {
+            payload.remove(key);
+        }
+    }
+    if let Some(value) = payload.get("temperature") {
+        let Some(value) = value.as_f64() else {
+            return Err(AiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_sampling",
+                "temperature 必须是 0 到 2 之间的数字",
+            ));
+        };
+        if !(0.0..=2.0).contains(&value) {
+            return Err(AiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_sampling",
+                "temperature 要在 0 到 2 之间",
+            ));
+        }
+    }
+    if let Some(value) = payload.get("top_p") {
+        let Some(value) = value.as_f64() else {
+            return Err(AiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_sampling",
+                "top_p 必须是 0 到 1 之间的数字",
+            ));
+        };
+        if !(0.0..=1.0).contains(&value) {
+            return Err(AiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_sampling",
+                "top_p 要在 0 到 1 之间",
+            ));
+        }
+    }
+    if !payload.contains_key("temperature")
+        && let Some(temperature) = settings.temperature
+    {
+        payload.insert("temperature".into(), json!(temperature));
+    }
+    if !payload.contains_key("top_p")
+        && let Some(top_p) = settings.top_p
+    {
+        payload.insert("top_p".into(), json!(top_p));
+    }
+    if !settings.sampling_both
+        && payload.contains_key("temperature")
+        && payload.contains_key("top_p")
+    {
+        payload.remove("top_p");
+    }
+    Ok(())
+}
+
+/// 最小间隔按用户还是按邮箱计；按邮箱时同一邮箱的多个账号共用节流。
+fn throttle_key(user: &User, scope: &str) -> String {
+    if scope == "email"
+        && let Some(email) = user.email.as_deref()
+    {
+        let email = email.trim();
+        if !email.is_empty() {
+            return format!("email:{}", email.to_ascii_lowercase());
+        }
+    }
+    format!("user:{}", user.id)
 }
 
 fn stream_response(
@@ -902,13 +1151,24 @@ struct SettingsDto {
     has_api_key: bool,
     max_context_tokens: i64,
     max_output_tokens: i64,
+    max_input_tokens: i64,
     temperature: Option<f64>,
+    top_p: Option<f64>,
+    sampling_both: bool,
+    stream_include_usage: bool,
     timeout_seconds: i64,
+    connect_timeout_seconds: i64,
     retry_count: i64,
+    retry_backoff_ms: i64,
+    custom_headers: Value,
     daily_request_limit: i64,
     daily_token_limit: i64,
+    global_daily_token_limit: i64,
     max_concurrent_per_user: i64,
     max_request_bytes: i64,
+    min_interval_seconds: i64,
+    min_interval_scope: String,
+    readable_upstream_hint: bool,
     updated_at: String,
 }
 
@@ -920,13 +1180,25 @@ fn settings_dto(settings: &AiSettings) -> SettingsDto {
         has_api_key: !settings.api_key.is_empty(),
         max_context_tokens: settings.max_context_tokens,
         max_output_tokens: settings.max_output_tokens,
+        max_input_tokens: settings.max_input_tokens,
         temperature: settings.temperature,
+        top_p: settings.top_p,
+        sampling_both: settings.sampling_both,
+        stream_include_usage: settings.stream_include_usage,
         timeout_seconds: settings.timeout_seconds,
+        connect_timeout_seconds: settings.connect_timeout_seconds,
         retry_count: settings.retry_count,
+        retry_backoff_ms: settings.retry_backoff_ms,
+        custom_headers: serde_json::from_str(&settings.custom_headers)
+            .unwrap_or_else(|_| json!({})),
         daily_request_limit: settings.daily_request_limit,
         daily_token_limit: settings.daily_token_limit,
+        global_daily_token_limit: settings.global_daily_token_limit,
         max_concurrent_per_user: settings.max_concurrent_per_user,
         max_request_bytes: settings.max_request_bytes,
+        min_interval_seconds: settings.min_interval_seconds,
+        min_interval_scope: settings.min_interval_scope.clone(),
+        readable_upstream_hint: settings.readable_upstream_hint,
         updated_at: settings.updated_at.clone(),
     }
 }
@@ -953,14 +1225,26 @@ pub struct SettingsForm {
     model: Option<String>,
     max_context_tokens: Option<i64>,
     max_output_tokens: Option<i64>,
+    max_input_tokens: Option<i64>,
     temperature: Option<f64>,
     clear_temperature: Option<bool>,
+    top_p: Option<f64>,
+    clear_top_p: Option<bool>,
+    sampling_both: Option<bool>,
+    stream_include_usage: Option<bool>,
     timeout_seconds: Option<i64>,
+    connect_timeout_seconds: Option<i64>,
     retry_count: Option<i64>,
+    retry_backoff_ms: Option<i64>,
+    custom_headers: Option<Value>,
     daily_request_limit: Option<i64>,
     daily_token_limit: Option<i64>,
+    global_daily_token_limit: Option<i64>,
     max_concurrent_per_user: Option<i64>,
     max_request_bytes: Option<i64>,
+    min_interval_seconds: Option<i64>,
+    min_interval_scope: Option<String>,
+    readable_upstream_hint: Option<bool>,
 }
 
 fn merge_settings(form: SettingsForm, current: AiSettings) -> Result<AiSettings, String> {
@@ -988,16 +1272,39 @@ fn merge_settings(form: SettingsForm, current: AiSettings) -> Result<AiSettings,
     if let Some(value) = form.max_output_tokens {
         settings.max_output_tokens = value;
     }
+    if let Some(value) = form.max_input_tokens {
+        settings.max_input_tokens = value;
+    }
     if form.clear_temperature == Some(true) {
         settings.temperature = None;
     } else if let Some(temperature) = form.temperature {
         settings.temperature = Some(temperature);
     }
+    if form.clear_top_p == Some(true) {
+        settings.top_p = None;
+    } else if let Some(top_p) = form.top_p {
+        settings.top_p = Some(top_p);
+    }
+    if let Some(value) = form.sampling_both {
+        settings.sampling_both = value;
+    }
+    if let Some(value) = form.stream_include_usage {
+        settings.stream_include_usage = value;
+    }
     if let Some(value) = form.timeout_seconds {
         settings.timeout_seconds = value;
     }
+    if let Some(value) = form.connect_timeout_seconds {
+        settings.connect_timeout_seconds = value;
+    }
     if let Some(value) = form.retry_count {
         settings.retry_count = value;
+    }
+    if let Some(value) = form.retry_backoff_ms {
+        settings.retry_backoff_ms = value;
+    }
+    if let Some(value) = form.custom_headers {
+        settings.custom_headers = value.to_string();
     }
     if let Some(value) = form.daily_request_limit {
         settings.daily_request_limit = value;
@@ -1005,11 +1312,23 @@ fn merge_settings(form: SettingsForm, current: AiSettings) -> Result<AiSettings,
     if let Some(value) = form.daily_token_limit {
         settings.daily_token_limit = value;
     }
+    if let Some(value) = form.global_daily_token_limit {
+        settings.global_daily_token_limit = value;
+    }
     if let Some(value) = form.max_concurrent_per_user {
         settings.max_concurrent_per_user = value;
     }
     if let Some(value) = form.max_request_bytes {
         settings.max_request_bytes = value;
+    }
+    if let Some(value) = form.min_interval_seconds {
+        settings.min_interval_seconds = value;
+    }
+    if let Some(value) = form.min_interval_scope {
+        settings.min_interval_scope = value.trim().to_ascii_lowercase();
+    }
+    if let Some(value) = form.readable_upstream_hint {
+        settings.readable_upstream_hint = value;
     }
     validate_settings(&settings)?;
     settings.updated_at = util::now();
@@ -1035,18 +1354,38 @@ fn validate_settings(settings: &AiSettings) -> Result<(), String> {
     if settings.max_output_tokens < 1 || settings.max_output_tokens > settings.max_context_tokens {
         return Err("输出上限要在 1 到最大上下文之间".into());
     }
+    if settings.max_input_tokens < 1 || settings.max_input_tokens > settings.max_context_tokens {
+        return Err("输入上限要在 1 到最大上下文之间".into());
+    }
     if let Some(temperature) = settings.temperature
         && !(0.0..=2.0).contains(&temperature)
     {
         return Err("温度要在 0 到 2 之间".into());
     }
+    if let Some(top_p) = settings.top_p
+        && !(0.0..=1.0).contains(&top_p)
+    {
+        return Err("top_p 要在 0 到 1 之间".into());
+    }
     if !(5..=600).contains(&settings.timeout_seconds) {
         return Err("超时要在 5 到 600 秒之间".into());
+    }
+    if !(1..=60).contains(&settings.connect_timeout_seconds)
+        || settings.connect_timeout_seconds > settings.timeout_seconds
+    {
+        return Err("连接超时要在 1 到 60 秒之间，且不能超过整体超时".into());
     }
     if !(0..=3).contains(&settings.retry_count) {
         return Err("重试次数要在 0 到 3 之间".into());
     }
-    if settings.daily_request_limit < 0 || settings.daily_token_limit < 0 {
+    if !(0..=5000).contains(&settings.retry_backoff_ms) {
+        return Err("重试退避要在 0 到 5000 毫秒之间".into());
+    }
+    parse_custom_headers(&settings.custom_headers)?;
+    if settings.daily_request_limit < 0
+        || settings.daily_token_limit < 0
+        || settings.global_daily_token_limit < 0
+    {
         return Err("每日限额不能是负数".into());
     }
     if !(1..=100).contains(&settings.max_concurrent_per_user) {
@@ -1054,6 +1393,12 @@ fn validate_settings(settings: &AiSettings) -> Result<(), String> {
     }
     if !(4096..=1024 * 1024).contains(&settings.max_request_bytes) {
         return Err("请求体上限要在 4 KiB 到 1 MiB 之间".into());
+    }
+    if !(0..=3600).contains(&settings.min_interval_seconds) {
+        return Err("最小请求间隔要在 0 到 3600 秒之间".into());
+    }
+    if settings.min_interval_scope != "user" && settings.min_interval_scope != "email" {
+        return Err("最小请求间隔只能按 user 或 email 计".into());
     }
     Ok(())
 }
@@ -1137,7 +1482,10 @@ pub async fn admin_test(
                 )
             } else {
                 let category = classify_status(status);
-                let detail = match category {
+                let hint = response.bytes().await.ok().and_then(|body| {
+                    upstream_hint(&body, &settings.api_key, settings.readable_upstream_hint)
+                });
+                let mut detail = match category {
                     UpstreamCategory::AuthFailed => {
                         format!("上游返回 {}，密钥无效或无权限", status.as_u16())
                     }
@@ -1146,6 +1494,9 @@ pub async fn admin_test(
                     }
                     _ => format!("上游返回错误（HTTP {}）", status.as_u16()),
                 };
+                if let Some(hint) = hint {
+                    detail.push_str(&format!("：{hint}"));
+                }
                 (false, category, detail)
             }
         }
@@ -1352,5 +1703,82 @@ mod tests {
         };
         assert_eq!(clamp_output(payload, &settings), 100);
         assert_eq!(payload.get("max_tokens"), Some(&json!(100)));
+    }
+
+    #[test]
+    fn sampling_keeps_only_one_knob_by_default() {
+        let settings = AiSettings {
+            temperature: Some(0.2),
+            top_p: Some(0.9),
+            ..AiSettings::defaults()
+        };
+        let Value::Object(mut payload) = json!({}) else {
+            unreachable!()
+        };
+        apply_sampling(&mut payload, &settings).unwrap();
+        assert_eq!(payload.get("temperature"), Some(&json!(0.2)));
+        assert!(
+            !payload.contains_key("top_p"),
+            "默认不同时传 top_p，避免模型拒绝这个组合"
+        );
+
+        let both = AiSettings {
+            sampling_both: true,
+            ..settings
+        };
+        let Value::Object(mut payload) = json!({}) else {
+            unreachable!()
+        };
+        apply_sampling(&mut payload, &both).unwrap();
+        assert_eq!(payload.get("temperature"), Some(&json!(0.2)));
+        assert_eq!(payload.get("top_p"), Some(&json!(0.9)));
+    }
+
+    #[test]
+    fn sampling_rejects_out_of_range_values() {
+        let settings = AiSettings::defaults();
+        let Value::Object(mut payload) = json!({"temperature": 3}) else {
+            unreachable!()
+        };
+        assert!(apply_sampling(&mut payload, &settings).is_err());
+        let Value::Object(mut payload) = json!({"top_p": 1.5}) else {
+            unreachable!()
+        };
+        assert!(apply_sampling(&mut payload, &settings).is_err());
+    }
+
+    #[test]
+    fn custom_headers_allow_plain_but_never_authorization() {
+        let headers = parse_custom_headers(r#"{"X-Title":"ShellAs","X-Trace":"on"}"#).unwrap();
+        assert_eq!(headers.len(), 2);
+
+        for denied in [
+            r#"{"Authorization":"Bearer leaked"}"#,
+            r#"{"X-Api-Key":"leaked"}"#,
+            r#"{"Cookie":"a=b"}"#,
+            r#"{"X-Bad":"a\r\nb"}"#,
+        ] {
+            assert!(parse_custom_headers(denied).is_err(), "{denied} 应被拒绝");
+        }
+        assert!(parse_custom_headers("[]").is_err());
+    }
+
+    #[test]
+    fn retry_backoff_grows_and_is_capped() {
+        let settings = AiSettings {
+            retry_backoff_ms: 300,
+            ..AiSettings::defaults()
+        };
+        assert_eq!(retry_backoff(&settings, 1), Duration::from_millis(300));
+        assert_eq!(retry_backoff(&settings, 2), Duration::from_millis(600));
+        assert_eq!(retry_backoff(&settings, 3), Duration::from_millis(1200));
+        assert_eq!(retry_backoff(&settings, 9), Duration::from_millis(9_600));
+    }
+
+    #[test]
+    fn defaults_use_a_128k_context() {
+        assert_eq!(AiSettings::defaults().max_context_tokens, 131_072);
+        assert_eq!(AiSettings::defaults().max_input_tokens, 122_880);
+        assert_eq!(AiSettings::defaults().min_interval_seconds, 1);
     }
 }
