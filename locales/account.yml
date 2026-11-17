@@ -1,0 +1,292 @@
+_version: 2
+
+# The optional account. Signed out is the default and the only state
+# offline: none of this text may imply that signing in is required.
+
+account.button.tooltip:
+  zh-CN: 账号
+  en: Account
+account.signed_out:
+  zh-CN: 未登录
+  en: Not signed in
+account.sign_in:
+  zh-CN: 登录
+  en: Sign in
+account.register:
+  zh-CN: 注册
+  en: Create account
+account.settings:
+  zh-CN: 账号设置
+  en: Account settings
+account.sign_out:
+  zh-CN: 退出登录
+  en: Sign out
+
+account.tab.sign_in:
+  zh-CN: 登录
+  en: Sign in
+account.tab.register:
+  zh-CN: 注册
+  en: Create account
+account.dialog.description:
+  zh-CN: 登录后可以同步设置与主机、在其他设备上继续使用。不登录也能使用本机的全部功能。
+  en: Sign in to sync settings and hosts across devices. Everything on this computer works without an account.
+account.dialog.sign_in_title:
+  zh-CN: 登录
+  en: Sign in
+account.dialog.register_title:
+  zh-CN: 创建账号
+  en: Create account
+account.dialog.sign_in:
+  zh-CN: 登录
+  en: Sign in
+account.dialog.register:
+  zh-CN: 创建账号
+  en: Create account
+
+account.field.username:
+  zh-CN: 用户名
+  en: Username
+account.field.password:
+  zh-CN: 密码
+  en: Password
+account.field.new_password:
+  zh-CN: 密码（至少 8 位）
+  en: Password (at least 8 characters)
+account.field.email:
+  zh-CN: 邮箱（可选）
+  en: Email (optional)
+
+account.form.username.empty:
+  zh-CN: 请输入用户名
+  en: Enter a username
+account.form.username.short:
+  zh-CN: 用户名至少 3 个字符
+  en: Use at least 3 characters
+account.form.username.long:
+  zh-CN: 用户名最多 32 个字符
+  en: Use at most 32 characters
+account.form.username.plain:
+  zh-CN: 用户名只能用字母、数字、下划线和连字符
+  en: Use letters, digits, underscores and hyphens only
+account.form.password.empty:
+  zh-CN: 请输入密码
+  en: Enter a password
+account.form.password.short:
+  zh-CN: 密码至少 8 个字符
+  en: Use at least 8 characters
+account.form.password.long:
+  zh-CN: 密码最多 128 个字符
+  en: Use at most 128 characters
+account.form.email.invalid:
+  zh-CN: 邮箱地址格式不对
+  en: That email address is not valid
+
+account.popover.signed_out_hint:
+  zh-CN: 登录后可同步设置与主机。本机功能不受影响。
+  en: Sign in to sync settings and hosts. Local features stay as they are.
+account.popover.cloud_on:
+  zh-CN: 云同步已开启
+  en: Cloud sync on
+account.popover.cloud_off:
+  zh-CN: 云同步已关闭
+  en: Cloud sync off
+
+account.notice.expired:
+  zh-CN: 登录已失效，请重新登录。本地功能不受影响。
+  en: Your sign-in has expired. Sign in again when you want to sync; local features are unaffected.
+account.notice.unreachable:
+  zh-CN: 暂时连不上服务器，已按未登录使用。
+  en: The server cannot be reached right now, so ShellAs is working as signed out.
+
+account.error.network:
+  zh-CN: 网络不可用，请检查网络或代理。
+  en: Network unavailable. Check the connection or proxy.
+account.error.expired:
+  zh-CN: 登录已失效，请重新登录。
+  en: Your sign-in has expired. Sign in again.
+account.error.credentials:
+  zh-CN: 用户名或密码不对。
+  en: Wrong username or password.
+account.error.disabled:
+  zh-CN: 这个账号已被停用。
+  en: This account is disabled.
+account.error.too_many:
+  zh-CN: 尝试次数太多，请稍后再试。
+  en: Too many attempts. Try again later.
+account.error.too_large:
+  zh-CN: 云端空间不够了。
+  en: The cloud quota is full.
+account.error.quota:
+  zh-CN: 云端空间不够了（已用 %{used}，共 %{quota}）。
+  en: The cloud quota is full (%{used} used of %{quota}).
+account.error.server:
+  zh-CN: 服务器出了点问题，请稍后再试。
+  en: The server had a problem. Try again later.
+account.error.conflict:
+  zh-CN: 云端已有更新的版本。
+  en: The cloud has a newer version.
+account.error.cloud_conflict:
+  zh-CN: 云端已有更新的版本，请打开账号设置处理。
+  en: The cloud has a newer version; open account settings to choose.
+
+account.avatar.prompt:
+  zh-CN: 选择头像
+  en: Choose a picture
+account.avatar.failed:
+  zh-CN: 头像没有换成：%{error}
+  en: "The picture could not be used: %{error}"
+
+account.kind.settings:
+  zh-CN: 设置
+  en: settings
+account.kind.hosts:
+  zh-CN: 主机
+  en: hosts
+account.notify.uploaded:
+  zh-CN: "%{kind}已同步到云端（版本 %{version}）。"
+  en: "%{kind} synced to the cloud (version %{version})."
+account.notify.settings_downloaded:
+  zh-CN: 已应用云端的设置。
+  en: The cloud settings are now in use.
+account.notify.hosts_downloaded:
+  zh-CN: 云端主机列表已保存到 %{path}，可在这里查看。
+  en: The cloud hosts were saved to %{path} for review.
+
+account.conflict.title:
+  zh-CN: 云端有更新的版本
+  en: A newer version is in the cloud
+account.conflict.description:
+  zh-CN: 云端已有更新的%{kind}（版本 %{version}）。要用哪一份？
+  en: The cloud already has a newer %{kind} (version %{version}). Which one should be kept?
+account.conflict.later:
+  zh-CN: 稍后处理
+  en: Later
+account.conflict.download:
+  zh-CN: 下载云端版本
+  en: Download the cloud version
+account.conflict.overwrite:
+  zh-CN: 以本机覆盖云端
+  en: Overwrite the cloud with this computer
+
+account.sync_password.title:
+  zh-CN: 输入同步密码
+  en: Enter the sync password
+account.sync_password.description:
+  zh-CN: 同步内容用账号密码加密。为了继续上传，请再输入一次账号密码。
+  en: Synced documents are encrypted with your account password. Enter it once more to continue the upload.
+account.sync_password.commit:
+  zh-CN: 继续
+  en: Continue
+
+# 设置 › 账号
+settings.category.account:
+  zh-CN: 账号
+  en: Account
+settings.account.signed_out:
+  zh-CN: 未登录
+  en: Not signed in
+settings.account.signed_out_description:
+  zh-CN: 登录只用于同步设置与主机、跨设备使用。主机、终端、SFTP、AI 助手和设置都不用登录。
+  en: An account is only for syncing settings and hosts across devices. Hosts, terminals, SFTP, the assistant and settings need no account.
+settings.account.local_first:
+  zh-CN: 本地优先
+  en: Local first
+settings.account.local_first_description:
+  zh-CN: 未登录、离线或内网环境下，本机功能全部可用，不会要求登录。
+  en: Signed out, offline, or on an intranet, everything on this computer works and nothing asks you to sign in.
+settings.account.notice:
+  zh-CN: 账号状态
+  en: Account status
+settings.account.group.account:
+  zh-CN: 账号
+  en: Account
+settings.account.avatar:
+  zh-CN: 头像
+  en: Picture
+settings.account.change_avatar:
+  zh-CN: 更换头像…
+  en: Change picture…
+settings.account.nickname:
+  zh-CN: 昵称
+  en: Nickname
+settings.account.nickname_empty:
+  zh-CN: 未设置
+  en: Not set
+settings.account.nickname_description:
+  zh-CN: AI 助手会用昵称称呼你。
+  en: The assistant uses it to address you.
+settings.account.edit_nickname:
+  zh-CN: 修改…
+  en: Edit…
+settings.account.nickname_title:
+  zh-CN: 修改昵称
+  en: Edit nickname
+settings.account.save_nickname:
+  zh-CN: 保存
+  en: Save
+settings.account.nickname_too_long:
+  zh-CN: 昵称最多 40 个字符
+  en: Use at most 40 characters
+settings.account.username:
+  zh-CN: 用户名
+  en: Username
+settings.account.email:
+  zh-CN: 邮箱
+  en: Email
+settings.account.email_empty:
+  zh-CN: 未设置
+  en: Not set
+settings.account.email_description:
+  zh-CN: 用于找回账号。
+  en: Used to recover the account.
+settings.account.password:
+  zh-CN: 密码
+  en: Password
+settings.account.change_password:
+  zh-CN: 修改…
+  en: Change…
+settings.account.change_email:
+  zh-CN: 修改邮箱
+  en: Change email
+settings.account.change_unavailable:
+  zh-CN: 服务端暂未开放。
+  en: Not available yet.
+settings.account.group.cloud:
+  zh-CN: 云同步
+  en: Cloud sync
+settings.account.cloud_sync:
+  zh-CN: 同步设置与主机
+  en: Sync settings and hosts
+settings.account.cloud_sync_description:
+  zh-CN: 上传到云端，并在其他登录同一账号的设备上使用。
+  en: Upload here and use them on other devices signed in to the same account.
+settings.account.remember_password:
+  zh-CN: 记住同步密码
+  en: Remember the sync password
+settings.account.remember_password_description:
+  zh-CN: 下次启动后自动继续同步。密码保存在系统钥匙串。
+  en: Keep syncing after a restart. The password is kept in the system keychain.
+settings.account.sync_now:
+  zh-CN: 立即同步
+  en: Sync now
+settings.account.sync_now_description:
+  zh-CN: 用本机的设置与主机更新云端。
+  en: Update the cloud with this computer's settings and hosts.
+settings.account.upload_now:
+  zh-CN: 立即上传
+  en: Upload now
+settings.account.last_sync:
+  zh-CN: 上次同步：%{at}
+  en: Last synced %{at}
+settings.account.never_synced:
+  zh-CN: 还没有同步过
+  en: Not synced yet
+settings.account.sync_off:
+  zh-CN: 云同步已关闭
+  en: Cloud sync is off
+
+# Given to the model when the user has an account, instead of 「你」.
+assistant.instruction.address_user:
+  zh-CN: 用户已登录账号，昵称是%{name}。用「%{name}」称呼用户，不要用「你」。
+  en: The user is signed in; their name is %{name}. Address them as %{name} instead of "you".

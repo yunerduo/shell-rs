@@ -54,6 +54,10 @@ pub enum SettingsPanelEvent {
     Closed,
 }
 
+/// The 账号 category's place in `CATEGORIES`, for the account entry in the
+/// sidebar popover to open settings on it.
+pub const ACCOUNT_CATEGORY_INDEX: usize = 6;
+
 /// The 设置 tab in the center. There is at most one: opening settings again
 /// brings this tab forward.
 ///
@@ -69,6 +73,8 @@ pub struct SettingsPanel {
     updater: Entity<Updater>,
     /// Where sync stands, for 同步.
     sync: Entity<SyncService>,
+    /// The optional account, for 账号.
+    account: Entity<crate::account::AccountStore>,
     /// The rule table of 关键字高亮, whose fields keep their state across
     /// the page's renders.
     highlight_rules: Entity<HighlightRulesEditor>,
@@ -87,7 +93,7 @@ pub struct SettingsPanel {
     shown_category: Rc<Cell<usize>>,
     focus_handle: FocusHandle,
     tab_group: Option<WeakEntity<TabGroup>>,
-    _subscriptions: [Subscription; 7],
+    _subscriptions: [Subscription; 8],
     _font_scan: Task<()>,
     _lock_subscription: Option<Subscription>,
 }
@@ -98,6 +104,7 @@ impl SettingsPanel {
         integration: Entity<CliIntegration>,
         updater: Entity<Updater>,
         sync: Entity<SyncService>,
+        account: Entity<crate::account::AccountStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -113,6 +120,7 @@ impl SettingsPanel {
             cx.observe(&integration, |_, _, cx| cx.notify()),
             cx.observe(&updater, |_, _, cx| cx.notify()),
             cx.observe(&sync, |_, _, cx| cx.notify()),
+            cx.observe(&account, |_, _, cx| cx.notify()),
         ];
         // Loading every family takes a moment the first time; the process
         // keeps the answer, so later tabs have it at once.
@@ -134,6 +142,7 @@ impl SettingsPanel {
             integration,
             updater,
             sync,
+            account,
             highlight_rules,
             background_images,
             shortcuts,
@@ -149,6 +158,17 @@ impl SettingsPanel {
 
     pub fn tab_group(&self) -> Option<WeakEntity<TabGroup>> {
         self.tab_group.clone()
+    }
+
+    /// The account 设置 › 账号 edits.
+    pub fn account(&self) -> &Entity<crate::account::AccountStore> {
+        &self.account
+    }
+
+    /// Start on the category at `index` the next time the `Settings` element
+    /// is built. Used when the account entry opens 设置 › 账号.
+    pub fn start_at(&mut self, index: usize) {
+        self.shown_category.set(index);
     }
 
     /// Take the focus, and tell the workspace this is the tab ⌘W closes.
@@ -266,7 +286,7 @@ struct Category {
 type CategoryGroups = fn(&SettingsPanel, &App) -> Vec<SettingGroup>;
 
 /// The categories, in the order the left column lists them.
-const CATEGORIES: [Category; 9] = [
+const CATEGORIES: [Category; 10] = [
     Category {
         title: "settings.category.appearance",
         icon: CatalogIcon::Palette,
@@ -296,6 +316,11 @@ const CATEGORIES: [Category; 9] = [
         title: "settings.category.external_cli",
         icon: CatalogIcon::SquareTerminal,
         groups: external_cli_groups,
+    },
+    Category {
+        title: "settings.category.account",
+        icon: CatalogIcon::CircleUser,
+        groups: crate::account::account_groups,
     },
     Category {
         title: "settings.category.sync",
@@ -1095,7 +1120,7 @@ fn app_lock_group(store: &Entity<SettingsStore>, cx: &App) -> SettingGroup {
     SettingGroup::new().title(t!("app_lock.title")).items(items)
 }
 
-/// 外部 CLI: whether the `shellrs` command may use the saved hosts, the
+/// 外部 CLI: whether the `shellas` command may use the saved hosts, the
 /// command itself, and the skill that teaches agents to use it.
 fn external_cli_groups(panel: &SettingsPanel, cx: &App) -> Vec<SettingGroup> {
     let (reader, writer) = (panel.store.clone(), panel.store.clone());
@@ -1335,7 +1360,7 @@ fn build_description() -> String {
     t!("settings.about.build", build = build, platform = platform).to_string()
 }
 
-/// Where the `shellrs` command stands, with the one thing to do about it.
+/// Where the `shellas` command stands, with the one thing to do about it.
 fn binary_item(bin_link: Option<String>, status: Option<IntegrationStatus>) -> SettingItem {
     SettingItem::render(move |_, _, cx| {
         let binary = status.as_ref().map(|status| &status.binary);
