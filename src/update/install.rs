@@ -32,7 +32,7 @@ pub enum InstallKind {
     WindowsSetup {
         exe: PathBuf,
     },
-    /// A portable copy on Windows: the folder holding `shellrs.exe` and its
+    /// A portable copy on Windows: the folder holding `shellas.exe` and its
     /// `data`, in a place the user can write to.
     WindowsPortable {
         root: PathBuf,
@@ -324,7 +324,7 @@ fn is_writable(path: &Path) -> bool {
     // `Program Files` takes a file is only known by trying.
     #[cfg(not(unix))]
     {
-        let probe = path.join(format!(".shellrs-write-{}", uuid::Uuid::new_v4().simple()));
+        let probe = path.join(format!(".shellas-write-{}", uuid::Uuid::new_v4().simple()));
         let created = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -370,8 +370,8 @@ mod tests {
 
     #[test]
     fn an_app_in_applications_replaces_itself() {
-        let exe = Path::new("/Applications/ShellRS.app/Contents/MacOS/shellrs");
-        let bundle = Path::new("/Applications/ShellRS.app");
+        let exe = Path::new("/Applications/ShellAs.app/Contents/MacOS/shellas");
+        let bundle = Path::new("/Applications/ShellAs.app");
         let kind = detect(&Surroundings {
             bundle: Some(bundle),
             ..at("macos", exe)
@@ -386,9 +386,9 @@ mod tests {
 
     #[test]
     fn a_translocated_or_disk_image_app_asks_to_be_moved_first() {
-        let exe = Path::new("/x/ShellRS.app/Contents/MacOS/shellrs");
+        let exe = Path::new("/x/ShellAs.app/Contents/MacOS/shellas");
         let translocated =
-            Path::new("/private/var/folders/x/T/AppTranslocation/1234/d/ShellRS.app");
+            Path::new("/private/var/folders/x/T/AppTranslocation/1234/d/ShellAs.app");
         assert_eq!(
             detect(&Surroundings {
                 bundle: Some(translocated),
@@ -396,7 +396,7 @@ mod tests {
             }),
             InstallKind::Unsupported(Unsupported::Translocated)
         );
-        let on_disk_image = Path::new("/Volumes/ShellRS/ShellRS.app");
+        let on_disk_image = Path::new("/Volumes/ShellAs/ShellAs.app");
         assert_eq!(
             detect(&Surroundings {
                 bundle: Some(on_disk_image),
@@ -405,7 +405,7 @@ mod tests {
             }),
             InstallKind::Unsupported(Unsupported::DiskImage)
         );
-        let theirs = Path::new("/Applications/ShellRS.app");
+        let theirs = Path::new("/Applications/ShellAs.app");
         assert_eq!(
             detect(&Surroundings {
                 bundle: Some(theirs),
@@ -423,7 +423,7 @@ mod tests {
 
     #[test]
     fn a_mac_build_outside_a_bundle_cannot_replace_itself() {
-        let exe = Path::new("/src/shellr/target/debug/shellrs");
+        let exe = Path::new("/src/shellas/target/debug/shellas");
         assert_eq!(
             detect(&Surroundings {
                 bundle: Some(Path::new("/src/shellr/target/debug")),
@@ -435,7 +435,7 @@ mod tests {
 
     #[test]
     fn only_a_copy_the_setup_program_installed_updates_on_windows() {
-        let exe = Path::new(r"C:\Users\me\AppData\Local\Programs\ShellRS\shellrs.exe");
+        let exe = Path::new(r"C:\Users\me\AppData\Local\Programs\ShellAs\shellas.exe");
         assert_eq!(
             detect(&Surroundings {
                 exists: &|path| path.ends_with("unins000.exe"),
@@ -451,8 +451,8 @@ mod tests {
 
     #[test]
     fn a_portable_folder_updates_itself_on_windows() {
-        let root = Path::new(r"D:\Tools\ShellRS");
-        let exe = Path::new(r"D:\Tools\ShellRS\shellrs.exe");
+        let root = Path::new(r"D:\Tools\ShellAs");
+        let exe = Path::new(r"D:\Tools\ShellAs\shellas.exe");
         let portable = Surroundings {
             portable: Some(root),
             ..at("windows", exe)
@@ -499,13 +499,13 @@ mod tests {
 
     #[test]
     fn linux_outside_an_appimage_points_to_the_download_page() {
-        let exe = Path::new("/usr/bin/shellrs");
+        let exe = Path::new("/usr/bin/shellas");
         assert_eq!(
             detect(&at("linux", exe)),
             InstallKind::Unsupported(Unsupported::NotAppImage)
         );
-        let file = Path::new("/home/me/Apps/ShellRS-x86_64.AppImage");
-        let mounted = Path::new("/tmp/.mount_ShellRabc/usr/bin/shellrs");
+        let file = Path::new("/home/me/Apps/ShellAs-x86_64.AppImage");
+        let mounted = Path::new("/tmp/.mount_ShellRabc/usr/bin/shellas");
         assert_eq!(
             detect(&Surroundings {
                 appimage: Some(file),

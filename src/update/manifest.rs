@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 
 use semver::Version;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 use super::build_info::Channel;
 
@@ -46,6 +46,11 @@ pub struct Manifest {
     /// draws its own number once and keeps it; nothing is reported back.
     #[serde(default = "everyone")]
     pub rollout: f64,
+    /// Whether this release may be postponed. Missing means 建议更新, and so
+    /// does any value this build does not know: a newer publisher must not
+    /// lock an older client out of itself by naming a severity it invents.
+    #[serde(default)]
+    pub severity: Severity,
     /// What changed, in Markdown.
     #[serde(default)]
     pub notes: String,
@@ -61,6 +66,39 @@ pub struct Manifest {
 
 fn everyone() -> f64 {
     1.0
+}
+
+/// How strongly a manifest asks this machine to take the release.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Severity {
+    /// 建议更新: the person decides when to install it.
+    #[default]
+    Recommended,
+    /// 强制更新: the app is blocked until the release is installed.
+    Required,
+}
+
+impl Severity {
+    pub fn is_required(self) -> bool {
+        self == Self::Required
+    }
+}
+
+/// Only `required` means 强制更新. Everything else — a missing field, another
+/// spelling, or a value a later manifest format adds — is 建议更新, so an
+/// update server cannot break older clients by accident.
+impl<'de> Deserialize<'de> for Severity {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(if value.eq_ignore_ascii_case("required") {
+            Self::Required
+        } else {
+            Self::Recommended
+        })
+    }
 }
 
 /// A package: where to get it and how to recognise it.
@@ -82,6 +120,8 @@ pub struct Release {
     pub notes_url: Option<String>,
     pub asset: Asset,
     pub installer: Option<String>,
+    /// 强制更新: it must be installed before the app may be used.
+    pub required: bool,
 }
 
 impl Release {
@@ -103,6 +143,10 @@ pub enum Offer {
     Manual {
         version: Version,
         installer: Option<String>,
+        /// What changed, in Markdown.
+        notes: String,
+        /// 强制更新: it must be installed before the app may be used.
+        required: bool,
     },
 }
 
@@ -130,6 +174,7 @@ impl Manifest {
             return Offer::UpToDate;
         }
         let installer = self.installers.get(platform).cloned();
+        let required = self.severity.is_required();
         let too_old = self
             .minimum_version
             .as_ref()
@@ -142,10 +187,13 @@ impl Manifest {
                 notes_url: self.notes_url.clone(),
                 asset: asset.clone(),
                 installer,
+                required,
             }),
             Some(_) => Offer::Manual {
                 version: self.version.clone(),
                 installer,
+                notes: self.notes.clone(),
+                required,
             },
             None => Offer::UpToDate,
         }
@@ -247,6 +295,29 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn severity_defaults_to_recommended_and_only_required_blocks() {
+        let text = manifest_text("0.2.0");
+        assert!(!manifest("0.2.0").severity.is_required());
+
+        let required = parse(&text.replace(r#""notes""#, r#""severity": "required", "notes""#))
+            .unwrap()
+            .unwrap();
+        let Offer::Update(release) = required.offer(&v("0.1.0"), "macos-aarch64", 0.5) else {
+            panic!("a required update");
+        };
+        assert!(release.required);
+
+        // A value this build does not know is 建议更新, not a lock-out.
+        let unknown = parse(&text.replace(r#""notes""#, r#""severity": "urgent", "notes""#))
+            .unwrap()
+            .unwrap();
+        let Offer::Update(release) = unknown.offer(&v("0.1.0"), "macos-aarch64", 0.5) else {
+            panic!("a recommended update");
+        };
+        assert!(!release.required);
+    }
+
+    #[test]
     fn a_draw_above_the_rollout_waits() {
         let mut manifest = manifest("0.2.0");
         manifest.rollout = 0.25;
@@ -273,6 +344,8 @@ pub(crate) mod tests {
             Offer::Manual {
                 version: v("0.5.0"),
                 installer: Some("https://dl.shellrs.com/a.dmg".into()),
+                notes: "### 新增\n- 在线升级".into(),
+                required: false,
             }
         );
         assert!(matches!(

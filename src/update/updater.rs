@@ -130,6 +130,10 @@ pub enum Stage {
 pub struct ManualUpdate {
     pub version: Version,
     pub installer: Option<String>,
+    /// What changed, in Markdown.
+    pub notes: String,
+    /// 强制更新: it must be installed before the app may be used.
+    pub required: bool,
 }
 
 /// Everything the settings page, the title bar and the dialog show, as a
@@ -246,9 +250,7 @@ impl Updater {
             }
             loop {
                 let looked = this.update(cx, |this, cx| {
-                    if this.automatic {
-                        this.check(cx);
-                    }
+                    this.check(cx);
                 });
                 if looked.is_err() {
                     break;
@@ -309,14 +311,17 @@ impl Updater {
     }
 
     /// 自动升级: look on a schedule and download what is found. Turning it
-    /// off stops a download in progress; turning it on downloads a version
-    /// already found.
+    /// off stops a download in progress unless the version is 强制更新;
+    /// turning it on downloads a version already found.
     pub fn set_automatic(&mut self, automatic: bool, cx: &mut Context<Self>) {
         if self.automatic == automatic {
             return;
         }
         self.automatic = automatic;
-        if !automatic && matches!(self.phase, Phase::Downloading { .. }) {
+        if !automatic
+            && matches!(self.phase, Phase::Downloading { .. })
+            && !self.snapshot().required()
+        {
             self.cancel_job();
             self.phase = Phase::Available;
         } else if automatic && self.phase == Phase::Available {
@@ -327,7 +332,7 @@ impl Updater {
 
     /// 更新渠道. The other channel offers other versions, so what was found,
     /// downloaded or is downloading is dropped, and the new channel is looked
-    /// at right away when looking is automatic.
+    /// at right away; 自动升级 only decides whether what is found downloads.
     pub fn set_channel(&mut self, channel: Channel, cx: &mut Context<Self>) {
         if self.channel == channel {
             return;
@@ -342,10 +347,7 @@ impl Updater {
         self.staged = None;
         self.download_failures = 0;
         self.phase = Phase::Idle;
-        if self.automatic {
-            self.check(cx);
-        }
-        self.changed(cx);
+        self.check(cx);
     }
 
     /// Look for a newer version now.
@@ -538,7 +540,7 @@ impl Updater {
         let cancel = Arc::new(AtomicBool::new(false));
         let worker_cancel = cancel.clone();
         let spawned = std::thread::Builder::new()
-            .name("shellrs-update".into())
+            .name("shellas-update".into())
             .spawn(move || job(&sender, &worker_cancel));
         if let Err(error) = spawned {
             self.phase = Phase::Failed {
@@ -652,6 +654,10 @@ impl Updater {
             Ok(Opened::NewerFormat { version }) if version > services.current => Offer::Manual {
                 version,
                 installer: None,
+                // A manifest newer than this build cannot be read, so there
+                // is nothing to quote and it never blocks by itself.
+                notes: String::new(),
+                required: false,
             },
             Ok(Opened::NewerFormat { .. }) => Offer::UpToDate,
             Err(error) => {
@@ -673,16 +679,27 @@ impl Updater {
                 if self.release.as_ref().map(|known| &known.version) != Some(&release.version) {
                     self.download_failures = 0;
                 }
+                let required = release.required;
                 self.release = Some(release);
                 self.manual = None;
                 self.phase = Phase::Available;
-                if self.automatic && self.installable() {
+                if (self.automatic || required) && self.installable() {
                     self.download(cx);
                 }
             }
-            Offer::Manual { version, installer } => {
+            Offer::Manual {
+                version,
+                installer,
+                notes,
+                required,
+            } => {
                 self.release = None;
-                self.manual = Some(ManualUpdate { version, installer });
+                self.manual = Some(ManualUpdate {
+                    version,
+                    installer,
+                    notes,
+                    required,
+                });
                 self.phase = Phase::Available;
             }
         }
@@ -809,7 +826,7 @@ pub fn start_handed_over() {
     if let Some(launch) = launch
         && let Err(error) = launch.spawn()
     {
-        eprintln!("shellrs: could not start the update installer: {error}");
+        eprintln!("shellas: could not start the update installer: {error}");
     }
 }
 
@@ -836,6 +853,7 @@ mod tests {
                 sha256: String::new(),
             },
             installer: None,
+            required: false,
         }
     }
 
@@ -843,9 +861,9 @@ mod tests {
     fn a_package_is_named_after_its_address() {
         assert_eq!(
             package_name(&release(&[
-                "https://dl.shellrs.com/releases/0.2.0/ShellRS-0.2.0-macos-universal.app.zip"
+                "https://dl.shellrs.com/releases/0.2.0/ShellAs-0.2.0-macos-universal.app.zip"
             ])),
-            "ShellRS-0.2.0-macos-universal.app.zip"
+            "ShellAs-0.2.0-macos-universal.app.zip"
         );
         assert_eq!(package_name(&release(&["https://x/a b?.exe"])), "a_b_.exe");
         assert_eq!(package_name(&release(&["https://x/.."])), "package");

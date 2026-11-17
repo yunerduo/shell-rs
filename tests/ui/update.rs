@@ -9,7 +9,7 @@ use crate::support::*;
 const RUNNING_VERSION: &str = "0.1.0";
 
 /// Where the fake installer says the restart goes.
-const INSTALLED_BUNDLE: &str = "/Applications/ShellRS.app";
+const INSTALLED_BUNDLE: &str = "/Applications/ShellAs.app";
 
 /// Serves each channel's manifest, signed when asked for, and one package,
 /// and counts the requests.
@@ -19,6 +19,8 @@ struct FakeUpdateFeed {
     /// channel not listed answers 404.
     offers: Mutex<Vec<(Channel, Result<String, UpdateError>)>>,
     package: Vec<u8>,
+    /// Whether the manifest says 强制更新.
+    required: bool,
     fetches: AtomicUsize,
     /// The channels asked for, in order.
     channels: Mutex<Vec<Channel>>,
@@ -38,7 +40,9 @@ impl UpdateFeed for FakeUpdateFeed {
             .iter()
             .find(|(offered, _)| *offered == channel)
             .map_or(Err(UpdateError::Http(404)), |(_, offer)| offer.clone());
-        offer.map(|version| signed_manifest(&self.pair, channel, &version, &self.package))
+        offer.map(|version| {
+            signed_manifest(&self.pair, channel, &version, &self.package, self.required)
+        })
     }
 
     fn download(
@@ -107,7 +111,7 @@ impl Installer for FakeInstaller {
     fn clean_up(&self, _: &Version) {}
 }
 
-/// A copy of ShellRS that can install updates itself.
+/// A copy of ShellAs that can install updates itself.
 fn installable() -> InstallKind {
     InstallKind::MacBundle {
         bundle: INSTALLED_BUNDLE.into(),
@@ -159,6 +163,7 @@ fn signed_manifest(
     channel: Channel,
     version: &str,
     package: &[u8],
+    required: bool,
 ) -> Vec<u8> {
     use sha2::Digest as _;
     let platform = shellrs::update::platform::platform_key();
@@ -171,6 +176,7 @@ fn signed_manifest(
         "channel": channel.key(),
         "version": version,
         "published_at": "2026-10-20T08:00:00Z",
+        "severity": if required { "required" } else { "recommended" },
         "notes": "### 新增\n\n- 在线升级：新版本在后台下载好后，标题栏会提示。",
         "assets": {
             platform: {
@@ -194,7 +200,7 @@ fn signed_manifest(
         Some(&pair.pk),
         &pair.sk,
         std::io::Cursor::new(manifest.as_bytes()),
-        Some(&format!("shellrs-manifest {} {version}", channel.key())),
+        Some(&format!("shellas-manifest {} {version}", channel.key())),
         None,
     )
     .unwrap()
@@ -224,6 +230,34 @@ fn serve_updates_as(
     kind: InstallKind,
     platform: &'static str,
 ) -> UpdateFixture {
+    serve_updates_with(cx, workspace, offered, kind, platform, false)
+}
+
+/// [`serve_updates`] with a manifest that says 强制更新.
+fn serve_required_updates(
+    cx: &mut TestAppContext,
+    workspace: &Entity<Workspace>,
+    offered: Result<&str, UpdateError>,
+    kind: InstallKind,
+) -> UpdateFixture {
+    serve_updates_with(
+        cx,
+        workspace,
+        offered,
+        kind,
+        shellrs::update::platform::platform_key(),
+        true,
+    )
+}
+
+fn serve_updates_with(
+    cx: &mut TestAppContext,
+    workspace: &Entity<Workspace>,
+    offered: Result<&str, UpdateError>,
+    kind: InstallKind,
+    platform: &'static str,
+    required: bool,
+) -> UpdateFixture {
     let pair = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
     let keys = TrustedKeys::new([pair.pk.to_base64().as_str()]);
     let feed = Arc::new(FakeUpdateFeed {
@@ -232,7 +266,8 @@ fn serve_updates_as(
             Channel::Stable,
             offered.map(|version| version.to_string()),
         )]),
-        package: b"the new ShellRS".to_vec(),
+        package: b"the new ShellAs".to_vec(),
+        required,
         fetches: AtomicUsize::new(0),
         channels: Mutex::default(),
         downloads: AtomicUsize::new(0),
@@ -388,7 +423,7 @@ async fn a_found_update_downloads_by_itself_and_the_title_bar_offers_it(cx: &mut
     );
     assert_eq!(
         update_status(cx, handle),
-        "新版本 0.2.0 已下载，重启 Agree ShellAS 即可完成更新。"
+        "新版本 0.2.0 已下载，重启 ShellAs 即可完成更新。"
     );
     in_frame(cx, handle, |window, _| {
         // One button: restarting takes the place of 检查更新.
@@ -410,8 +445,9 @@ async fn with_automatic_updates_off_a_found_update_waits_for_download(cx: &mut T
     });
     wait_for_update_status(cx, handle, |status| status == "发现新版本 0.2.0。").await;
     assert_eq!(fixture.downloads(), 0);
+    // Found but not downloaded: the title bar says so until it is.
     in_frame(cx, handle, |window, _| {
-        assert!(window.try_find("update-available").is_none());
+        assert!(window.try_find("update-available").is_some());
     });
 
     in_frame(cx, handle, |window, cx| window.click("download-update", cx));
@@ -442,6 +478,9 @@ async fn the_update_dialog_links_the_changelog_and_restarts_into_the_new_version
     in_frame(cx, handle, |window, _| {
         assert!(window.try_find("update-ready").is_some());
         assert!(window.try_find("restart-to-update").is_some());
+        // The version's notes are in the dialog, not only on the website.
+        assert!(window.try_find("update-notes").is_some());
+        assert!(window.try_find("update-required").is_none());
     });
 
     // What changed is on the website's changelog, in the interface's
@@ -560,7 +599,7 @@ async fn an_unsupported_install_offers_the_download_page(cx: &mut TestAppContext
         window.click("check-for-updates", cx)
     });
     wait_for_update_status(cx, handle, |status| {
-        status == "发现新版本 0.2.0。这份 Agree ShellAS 不是 AppImage，请用安装它的方式更新。"
+        status == "发现新版本 0.2.0。这份 ShellAs 不是 AppImage，请用安装它的方式更新。"
     })
     .await;
     assert_eq!(fixture.downloads(), 0);
@@ -582,7 +621,7 @@ async fn a_portable_copy_downloads_the_portable_zip(cx: &mut TestAppContext) {
         &workspace,
         Ok("0.2.0"),
         InstallKind::WindowsPortable {
-            root: r"D:\Tools\ShellRS".into(),
+            root: r"D:\Tools\ShellAs".into(),
         },
         WINDOWS_PORTABLE,
     );
@@ -606,7 +645,7 @@ async fn a_read_only_portable_copy_links_the_portable_zip(cx: &mut TestAppContex
         cx,
         &workspace,
         Ok("0.2.0"),
-        InstallKind::Unsupported(Unsupported::ReadOnly(r"C:\Program Files\ShellRS".into())),
+        InstallKind::Unsupported(Unsupported::ReadOnly(r"C:\Program Files\ShellAs".into())),
         WINDOWS_PORTABLE,
     );
     open_about_settings(cx, handle);
@@ -614,7 +653,7 @@ async fn a_read_only_portable_copy_links_the_portable_zip(cx: &mut TestAppContex
         window.click("check-for-updates", cx)
     });
     wait_for_update_status(cx, handle, |status| {
-        status == r"发现新版本 0.2.0。没有权限写入 C:\Program Files\ShellRS，无法自动更新。"
+        status == r"发现新版本 0.2.0。没有权限写入 C:\Program Files\ShellAs，无法自动更新。"
     })
     .await;
     assert_eq!(fixture.downloads(), 0);
@@ -647,9 +686,10 @@ async fn a_failed_check_says_why_on_the_about_page(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-async fn turning_automatic_updates_off_stops_the_schedule(cx: &mut TestAppContext) {
+async fn automatic_downloads_off_still_checks_and_announces(cx: &mut TestAppContext) {
     let (handle, workspace) = open_workspace(cx);
-    let fixture = serve_updates(cx, &workspace, Ok(RUNNING_VERSION), installable());
+    set_automatic_updates(cx, &workspace, false);
+    let fixture = serve_updates(cx, &workspace, Ok("0.2.0"), installable());
     workspace.update(cx, |workspace, cx| {
         workspace
             .updater()
@@ -658,22 +698,31 @@ async fn turning_automatic_updates_off_stops_the_schedule(cx: &mut TestAppContex
     cx.run_until_parked();
     assert_eq!(fixture.fetches(), 0, "nothing before the first wait");
 
+    // The schedule checks whether or not automatic downloads are on.
     cx.executor().advance_clock(Duration::from_secs(31));
     open_about_settings(cx, handle);
-    wait_for_update_status(cx, handle, |status| status == "当前已是最新版本。").await;
+    wait_for_update_status(cx, handle, |status| status == "发现新版本 0.2.0。").await;
     assert_eq!(fixture.fetches(), 1);
+    assert_eq!(fixture.downloads(), 0, "nothing downloads by itself");
 
-    set_automatic_updates(cx, &workspace, false);
-    cx.executor()
-        .advance_clock(Duration::from_secs(7 * 60 * 60));
-    cx.run_until_parked();
-    assert_eq!(fixture.fetches(), 1);
+    // What was found is announced in the title bar, ready to act on.
+    in_frame(cx, handle, |window, _| {
+        assert!(window.try_find("update-available").is_some());
+    });
 
-    set_automatic_updates(cx, &workspace, true);
+    // Six hours later it looks again, still without downloading.
     cx.executor()
         .advance_clock(Duration::from_secs(7 * 60 * 60));
     cx.wait_for(handle.into(), Duration::from_secs(3), |_, _| {
         fixture.fetches() == 2
+    })
+    .await;
+    assert_eq!(fixture.downloads(), 0);
+
+    // Switching automatic downloads on takes the version already found.
+    set_automatic_updates(cx, &workspace, true);
+    cx.wait_for(handle.into(), Duration::from_secs(3), |_, _| {
+        fixture.downloads() == 1
     })
     .await;
 }
@@ -693,7 +742,7 @@ async fn switching_the_update_channel_looks_at_that_channel(cx: &mut TestAppCont
     // With 自动升级 on, the other channel is looked at right away.
     set_update_channel(cx, &workspace, Channel::Beta);
     wait_for_update_status(cx, handle, |status| {
-        status == "新版本 0.2.0-beta.1 已下载，重启 Agree ShellAS 即可完成更新。"
+        status == "新版本 0.2.0-beta.1 已下载，重启 ShellAs 即可完成更新。"
     })
     .await;
     assert_eq!(fixture.channels(), [Channel::Stable, Channel::Beta]);
@@ -712,6 +761,42 @@ async fn switching_the_update_channel_looks_at_that_channel(cx: &mut TestAppCont
     in_frame(cx, handle, |window, _| {
         assert!(window.try_find("update-available").is_none());
     });
+}
+
+#[gpui_kit::test]
+async fn a_required_update_opens_a_dialog_that_cannot_be_dismissed(cx: &mut TestAppContext) {
+    let (handle, workspace) = open_workspace(cx);
+    let _fixture = serve_required_updates(cx, &workspace, Ok("0.2.0"), installable());
+    in_frame(cx, handle, |window, cx| {
+        window.dispatch_action(Box::new(CheckForUpdates), cx)
+    });
+
+    // No click needed: the dialog opens itself, names the version, what
+    // changed, and why it blocks.
+    cx.wait_for(handle.into(), Duration::from_secs(3), |window, _| {
+        window.try_find("update-dialog").is_some()
+            && window.try_find("update-required").is_some()
+            && window.try_find("update-notes").is_some()
+    })
+    .await;
+
+    // Neither a click beside it nor Escape gets past it.
+    in_frame(cx, handle, |window, cx| {
+        window.click("status-connection", cx)
+    });
+    in_frame(cx, handle, |window, cx| window.press("escape", cx));
+    in_frame(cx, handle, |window, _| {
+        assert!(
+            window.try_find("update-dialog").is_some(),
+            "the required update's dialog was dismissed"
+        );
+    });
+
+    // The download finishes by itself; the only step left is the restart.
+    cx.wait_for(handle.into(), Duration::from_secs(3), |window, _| {
+        window.try_find("restart-to-update").is_some()
+    })
+    .await;
 }
 
 #[gpui_kit::test]

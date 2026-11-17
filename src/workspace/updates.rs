@@ -43,10 +43,13 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let updater = self.updater.read(cx).snapshot();
-        if updater.offered_version().is_none() {
+        if self.updater.read(cx).snapshot().offered_version().is_none() {
             return;
         }
+        self.open_update(window, cx);
+    }
+
+    fn open_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let workspace = cx.weak_entity();
         let impact = Rc::new(move |cx: &App| {
             workspace
@@ -60,6 +63,21 @@ impl Workspace {
             window,
             cx,
         );
+    }
+
+    /// 强制更新: the dialog opens on its own and cannot be dismissed, so a
+    /// machine that is blocked does not have to find the title bar first.
+    fn show_required_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let snapshot = self.updater.read(cx).snapshot();
+        if !snapshot.blocking() {
+            return;
+        }
+        let version = snapshot.offered_version();
+        if version.is_none() || version == self.blocking_update {
+            return;
+        }
+        self.blocking_update = version;
+        self.open_update(window, cx);
     }
 
     pub(super) fn on_restart_to_update(
@@ -109,7 +127,10 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         match event {
-            UpdaterEvent::Changed => cx.notify(),
+            UpdaterEvent::Changed => {
+                cx.notify();
+                self.show_required_update(window, cx);
+            }
             UpdaterEvent::Updated {
                 to,
                 completed: true,

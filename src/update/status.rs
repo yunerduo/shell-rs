@@ -53,6 +53,36 @@ impl UpdateSnapshot {
         self.manual.is_some() || (self.release.is_some() && self.unsupported.is_some())
     }
 
+    /// 强制更新: the version on offer must be installed before the app may
+    /// be used. A manifest that cannot say (a newer format) is 建议更新.
+    pub fn required(&self) -> bool {
+        self.release
+            .as_ref()
+            .is_some_and(|release| release.required)
+            || self.manual.as_ref().is_some_and(|manual| manual.required)
+    }
+
+    /// The app is blocked until the required version is installed: it was
+    /// found, is downloading, is verified, or is waiting for a restart. A
+    /// failed check does not block — nothing was found — and a failure this
+    /// copy cannot repair on its own keeps blocking, because the download
+    /// page is the way on.
+    pub fn blocking(&self) -> bool {
+        self.required()
+            && matches!(
+                self.phase,
+                Phase::Available
+                    | Phase::Downloading { .. }
+                    | Phase::Verifying
+                    | Phase::Ready
+                    | Phase::Installing
+                    | Phase::Failed {
+                        stage: Stage::Download | Stage::Install,
+                        ..
+                    }
+            )
+    }
+
     /// The line under 当前版本 on 设置 › 关于.
     pub fn status_line(&self) -> (String, Tone) {
         let version = self.offered_version().unwrap_or_default();
@@ -144,14 +174,16 @@ impl UpdateSnapshot {
     }
 
     /// The title bar button's label, when the title bar shows one: a
-    /// version ready to install, one that has to be downloaded by hand, or
-    /// automatic downloads that keep failing.
+    /// version ready to install, one waiting for the person to download it
+    /// (including every version found with 自动升级 switched off), one that
+    /// has to be downloaded by hand, or automatic downloads that keep
+    /// failing.
     pub fn badge(&self) -> Option<UpdateBadge> {
         let version = self.offered_version()?;
         let version = version.as_str();
         let (label, trouble) = match &self.phase {
             Phase::Ready => (t!("update.badge.ready", version = version), false),
-            Phase::Available if self.needs_download_page() => {
+            Phase::Available if self.needs_download_page() || !self.automatic => {
                 (t!("update.badge.available", version = version), false)
             }
             Phase::Failed {
@@ -280,6 +312,7 @@ mod tests {
                     sha256: String::new(),
                 },
                 installer: None,
+                required: false,
             }),
             manual: None,
             unsupported: None,
@@ -368,7 +401,7 @@ mod tests {
             })
             .status_line()
             .0,
-            "Downloading Agree ShellAS 0.2.0… 45%"
+            "Downloading ShellAs 0.2.0… 45%"
         );
         let failed = snapshot(Phase::Failed {
             stage: Stage::Download,
@@ -376,7 +409,7 @@ mod tests {
         });
         assert_eq!(
             failed.status_line().0,
-            "Couldn’t download Agree ShellAS 0.2.0: GitHub answered HTTP 503"
+            "Couldn’t download ShellAs 0.2.0: GitHub answered HTTP 503"
         );
         let mut off = snapshot(Phase::Off);
         off.unsupported = Some(Unsupported::DevelopmentBuild);
@@ -404,7 +437,7 @@ mod tests {
         );
         assert_eq!(
             snapshot(Phase::Ready).status_line().0,
-            "新版本 0.2.0 已下载，重启 Agree ShellAS 即可完成更新。"
+            "新版本 0.2.0 已下载，重启 ShellAs 即可完成更新。"
         );
         let failed = snapshot(Phase::Failed {
             stage: Stage::Download,
@@ -470,6 +503,8 @@ mod tests {
         manual.manual = Some(ManualUpdate {
             version: Version::new(3, 0, 0),
             installer: None,
+            notes: String::new(),
+            required: false,
         });
         assert_eq!(label(&manual).as_deref(), Some("新版本 3.0.0 可用"));
 
@@ -488,6 +523,49 @@ mod tests {
             })
         );
         assert!(failing.can_download());
+    }
+
+    #[test]
+    fn only_a_required_version_blocks_and_only_once_it_is_found() {
+        let required = |phase| {
+            let mut snapshot = snapshot(phase);
+            snapshot.release.as_mut().unwrap().required = true;
+            snapshot
+        };
+        assert!(!snapshot(Phase::Ready).required());
+        assert!(required(Phase::Available).blocking());
+        assert!(required(Phase::Downloading { done: 1, total: 2 }).blocking());
+        assert!(required(Phase::Ready).blocking());
+        assert!(
+            required(Phase::Failed {
+                stage: Stage::Download,
+                error: UpdateError::Stalled,
+            })
+            .blocking()
+        );
+
+        // Nothing was found yet, or the check itself failed: no lock-out.
+        assert!(!required(Phase::Checking).blocking());
+        assert!(!required(Phase::Idle).blocking());
+        assert!(!required(Phase::UpToDate).blocking());
+        assert!(
+            !required(Phase::Failed {
+                stage: Stage::Check,
+                error: UpdateError::NotFound,
+            })
+            .blocking()
+        );
+
+        // A manifest that needs the download page still blocks.
+        let mut manual = snapshot(Phase::Available);
+        manual.release = None;
+        manual.manual = Some(ManualUpdate {
+            version: Version::new(3, 0, 0),
+            installer: None,
+            notes: String::new(),
+            required: true,
+        });
+        assert!(manual.blocking());
     }
 
     #[test]

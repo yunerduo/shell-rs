@@ -1,9 +1,9 @@
 //! macOS: the app bundle is replaced whole.
 //!
 //! The package is the stapled bundle zipped by `ditto`. It is unpacked
-//! next to the installed bundle, into `.ShellRS.app.update-<version>`, so
+//! next to the installed bundle, into `.ShellAs.app.update-<version>`, so
 //! that putting it in place is two renames on one volume: the running
-//! bundle moves aside to `.ShellRS.app.old-<id>` and the new one takes its
+//! bundle moves aside to `.ShellAs.app.old-<id>` and the new one takes its
 //! name. The running process keeps its files open, and its assets are built
 //! into the binary, so it carries on until the restart. The old bundle is
 //! removed by the next version's clean-up.
@@ -137,7 +137,7 @@ impl MacInstaller {
         self
     }
 
-    /// `ShellRS.app`, whatever the user named it.
+    /// `ShellAs.app`, whatever the user named it.
     fn name(&self) -> String {
         self.bundle
             .file_name()
@@ -265,7 +265,7 @@ mod tests {
 
     impl MacTools for FakeTools {
         fn unpack(&self, _: &Path, into: &Path) -> Result<(), UpdateError> {
-            let contents = into.join("ShellRS.app/Contents");
+            let contents = into.join("ShellAs.app/Contents");
             fs::create_dir_all(&contents)?;
             fs::write(contents.join("version"), &self.version)?;
             Ok(())
@@ -298,13 +298,14 @@ mod tests {
                 sha256: String::new(),
             },
             installer: None,
+            required: false,
         }
     }
 
     /// `/Applications`-like folder holding a running 0.1.0 bundle.
     fn installed() -> (tempfile::TempDir, PathBuf) {
         let folder = tempfile::tempdir().unwrap();
-        let bundle = folder.path().join("ShellRS.app");
+        let bundle = folder.path().join("ShellAs.app");
         fs::create_dir_all(bundle.join("Contents")).unwrap();
         fs::write(bundle.join("Contents/version"), "0.1.0").unwrap();
         (folder, bundle)
@@ -334,7 +335,7 @@ mod tests {
         assert!(
             staged
                 .path
-                .starts_with(folder.path().join(".ShellRS.app.update-0.2.0"))
+                .starts_with(folder.path().join(".ShellAs.app.update-0.2.0"))
         );
         assert_eq!(
             version_at(&bundle),
@@ -349,11 +350,11 @@ mod tests {
         assert_eq!(version_at(&bundle), "0.2.0");
         let names = names_in(folder.path());
         assert_eq!(names.len(), 2, "{names:?}");
-        assert!(names[0].starts_with(".ShellRS.app.old-"), "{names:?}");
+        assert!(names[0].starts_with(".ShellAs.app.old-"), "{names:?}");
 
         // Run by 0.2.0, once it has started.
         installer.clean_up(&Version::new(0, 2, 0));
-        assert_eq!(names_in(folder.path()), ["ShellRS.app"]);
+        assert_eq!(names_in(folder.path()), ["ShellAs.app"]);
     }
 
     /// The clean-up runs a while after start; an update downloaded and
@@ -363,9 +364,9 @@ mod tests {
         let (folder, bundle) = installed();
         let installer = MacInstaller::new(bundle.clone(), FakeTools::new("0.2.0", None));
         for stale in [
-            ".ShellRS.app.update-0.1.0",
-            ".ShellRS.app.update-later",
-            ".ShellRS.app.old-1",
+            ".ShellAs.app.update-0.1.0",
+            ".ShellAs.app.update-later",
+            ".ShellAs.app.old-1",
         ] {
             fs::create_dir(folder.path().join(stale)).unwrap();
         }
@@ -376,7 +377,7 @@ mod tests {
         installer.clean_up(&Version::new(0, 1, 0));
         assert_eq!(
             names_in(folder.path()),
-            [".ShellRS.app.update-0.2.0", "ShellRS.app"]
+            [".ShellAs.app.update-0.2.0", "ShellAs.app"]
         );
         assert_eq!(
             installer.apply(&staged, true),
@@ -403,7 +404,7 @@ mod tests {
         assert!(
             !names_in(folder.path())
                 .iter()
-                .any(|name| name.starts_with(".ShellRS.app.old-"))
+                .any(|name| name.starts_with(".ShellAs.app.old-"))
         );
     }
 
@@ -428,7 +429,7 @@ mod tests {
         ));
         assert_eq!(
             names_in(folder.path()),
-            ["ShellRS.app"],
+            ["ShellAs.app"],
             "no staging left behind"
         );
     }
@@ -437,19 +438,19 @@ mod tests {
     fn a_bundle_signed_by_another_team_is_refused() {
         let (folder, bundle) = installed();
         let tools = FakeTools::new("0.2.0", Some("SOMEONEELSE"));
-        let installer = MacInstaller::new(bundle.clone(), tools.clone()).with_team(Some("SHELLRS"));
+        let installer = MacInstaller::new(bundle.clone(), tools.clone()).with_team(Some("SHELLAS"));
         assert!(matches!(
             installer.stage(Path::new("package.zip"), &release("0.2.0")),
             Err(UpdateError::Install(_))
         ));
         assert_eq!(
             *tools.asked_for.lock().unwrap(),
-            [Some("SHELLRS".to_string())]
+            [Some("SHELLAS".to_string())]
         );
-        assert_eq!(names_in(folder.path()), ["ShellRS.app"]);
+        assert_eq!(names_in(folder.path()), ["ShellAs.app"]);
 
-        let ours = FakeTools::new("0.2.0", Some("SHELLRS"));
-        let installer = MacInstaller::new(bundle, ours).with_team(Some("SHELLRS"));
+        let ours = FakeTools::new("0.2.0", Some("SHELLAS"));
+        let installer = MacInstaller::new(bundle, ours).with_team(Some("SHELLAS"));
         assert!(
             installer
                 .stage(Path::new("package.zip"), &release("0.2.0"))
@@ -464,17 +465,17 @@ mod tests {
     fn the_system_tools_unpack_check_and_swap_a_real_bundle() {
         let work = tempfile::tempdir().unwrap();
         let bundle_at = |folder: &Path, version: &str| {
-            let app = folder.join("ShellRS.app");
+            let app = folder.join("ShellAs.app");
             fs::create_dir_all(app.join("Contents/MacOS")).unwrap();
-            fs::copy("/usr/bin/true", app.join("Contents/MacOS/shellrs")).unwrap();
+            fs::copy("/usr/bin/true", app.join("Contents/MacOS/shellas")).unwrap();
             fs::write(
                 app.join("Contents/Info.plist"),
                 format!(
                     r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>shellrs</string>
-<key>CFBundleIdentifier</key><string>com.shellrs.test</string>
+<key>CFBundleExecutable</key><string>shellas</string>
+<key>CFBundleIdentifier</key><string>com.shellas.test</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>{version}</string>
 </dict></plist>"#
@@ -493,7 +494,7 @@ mod tests {
         let bundle = bundle_at(&installed, "0.1.0");
         let built = work.path().join("built");
         let new = bundle_at(&built, "0.2.0");
-        let package = work.path().join("ShellRS-0.2.0-macos-universal.app.zip");
+        let package = work.path().join("ShellAs-0.2.0-macos-universal.app.zip");
         let zipped = Command::new("/usr/bin/ditto")
             .args(["-c", "-k", "--keepParent"])
             .arg(&new)
@@ -517,10 +518,10 @@ mod tests {
         // Signed ad hoc, so by no team.
         assert!(
             SystemTools
-                .check_signature(&bundle, Some("SHELLRS"))
+                .check_signature(&bundle, Some("SHELLAS"))
                 .is_err()
         );
         installer.clean_up(&Version::new(0, 2, 0));
-        assert_eq!(names_in(&installed), ["ShellRS.app"]);
+        assert_eq!(names_in(&installed), ["ShellAs.app"]);
     }
 }

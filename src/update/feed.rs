@@ -65,11 +65,11 @@ pub struct HttpFeed {
 
 impl HttpFeed {
     /// The feed release builds use. A debug build can be pointed at a local
-    /// server with `SHELLRS_UPDATE_URL`; a release build cannot, so nothing
+    /// server with `SHELLAS_UPDATE_URL`; a release build cannot, so nothing
     /// in the environment decides where the app updates itself from.
     pub fn system() -> Self {
         let override_url = cfg!(debug_assertions)
-            .then(|| std::env::var("SHELLRS_UPDATE_URL").ok())
+            .then(|| std::env::var("SHELLAS_UPDATE_URL").ok())
             .flatten();
         match override_url {
             Some(url) => Self {
@@ -514,7 +514,7 @@ pub(crate) mod tests {
             seen[0]
                 .user_agent
                 .as_deref()
-                .is_some_and(|agent| agent.starts_with("AgreeShellAS/")),
+                .is_some_and(|agent| agent.starts_with("AgreeShellAs/")),
             "{seen:?}"
         );
     }

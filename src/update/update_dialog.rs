@@ -1,8 +1,9 @@
-//! The update dialog: how far the newer ShellRS's download is, and
-//! restarting into it. What it changes is not listed here: a button opens
-//! the website's changelog.
+//! The update dialog: the version on offer, what changed in it, how far the
+//! download is, and restarting into it. The whole changelog is one button
+//! away.
 //!
-//! Opened from the title bar button and from 设置 › 关于. What a restart
+//! Opened from the title bar button and from 设置 › 关于, or on its own when
+//! the version is 强制更新 — then it cannot be dismissed. What a restart
 //! interrupts is written here, above the button, so restarting needs no
 //! second dialog on top of this one.
 
@@ -13,6 +14,7 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     dialog::DialogFooter,
     progress::Progress,
+    text::TextView,
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -70,6 +72,16 @@ impl Render for UpdateDialog {
             .test_support()
             .gap_3()
             .text_sm()
+            .when(snapshot.required(), |body| {
+                body.child(
+                    div()
+                        .id("update-required")
+                        .test_support()
+                        .aria_label(t!("update.dialog.required"))
+                        .text_color(cx.theme().danger)
+                        .child(t!("update.dialog.required")),
+                )
+            })
             .child(
                 v_flex()
                     .gap_1()
@@ -83,6 +95,30 @@ impl Render for UpdateDialog {
                     })
                     .child(div().text_color(muted).child(versions)),
             )
+            .when_some(notes(&snapshot), |body, notes| {
+                body.child(
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_color(muted)
+                                .child(t!("update.dialog.notes_title")),
+                        )
+                        .child(
+                            div()
+                                .id("update-notes")
+                                .test_support()
+                                .max_h(rems(14.))
+                                .overflow_y_scroll()
+                                .p_3()
+                                .rounded(cx.theme().radius)
+                                .bg(cx.theme().muted)
+                                .child(
+                                    TextView::markdown("update-notes-text", notes).selectable(true),
+                                ),
+                        ),
+                )
+            })
             .when_some(progress(&snapshot), |body, (label, value)| {
                 body.child(
                     v_flex()
@@ -141,6 +177,17 @@ fn progress(snapshot: &UpdateSnapshot) -> Option<(SharedString, f32)> {
     }
 }
 
+/// What changed in the version on offer, in Markdown, when the manifest
+/// carries anything.
+fn notes(snapshot: &UpdateSnapshot) -> Option<String> {
+    let notes = match (&snapshot.release, &snapshot.manual) {
+        (Some(release), _) => release.notes.trim(),
+        (None, Some(manual)) => manual.notes.trim(),
+        (None, None) => return None,
+    };
+    (!notes.is_empty()).then(|| notes.to_string())
+}
+
 /// Why the last step failed, or why this copy cannot install the update.
 fn problem(snapshot: &UpdateSnapshot) -> Option<SharedString> {
     match &snapshot.phase {
@@ -170,14 +217,19 @@ pub fn open_update_dialog(
     window.open_dialog(cx, move |dialog, window, cx| {
         let snapshot = updater.read(cx).snapshot();
         let title = match snapshot.offered_version() {
-            Some(version) => SharedString::from(format!("ShellRS {version}")),
+            Some(version) => SharedString::from(format!("ShellAs {version}")),
             None => t!("update.dialog.title"),
         };
+        // 建议更新: closed by its buttons, Escape or the title's close
+        // button. 强制更新: none of those — the only way on is to install it.
+        let blocking = snapshot.blocking();
         dialog
             .title(title)
             // Dialog geometry is an API boundary that takes `Pixels`; the
             // width follows the interface zoom through the rem.
             .w(rems(DIALOG_WIDTH).to_pixels(window.rem_size()))
+            .close_button(!blocking)
+            .keyboard(!blocking)
             // Closed by its buttons or Escape, not by a click beside it.
             .overlay_closable(false)
             .child(body.clone())

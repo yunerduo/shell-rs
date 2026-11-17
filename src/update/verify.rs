@@ -3,7 +3,8 @@
 //! The manifest is signed as a whole: its notes are shown with clickable
 //! links and its addresses are where the next ShellRS comes from, so none of
 //! it is believed before the signature checks out. The signature's trusted
-//! comment, `shellrs-manifest <channel> <version>`, is covered by the
+//! comment, `shellas-manifest <channel> <version>` (or the older
+//! `shellrs-manifest` spelling, still accepted), is covered by the
 //! signature too; matching it against the manifest stops an old, genuinely
 //! signed manifest from being served as a newer one, and a beta manifest
 //! from being served on the stable channel. A package is then trusted by its
@@ -42,11 +43,11 @@ impl TrustedKeys {
     }
 
     /// The keys built into this ShellRS. A debug build also trusts the key
-    /// in `SHELLRS_UPDATE_PUBLIC_KEY`, to try updating against a local
+    /// in `SHELLAS_UPDATE_PUBLIC_KEY`, to try updating against a local
     /// server; a release build trusts only the keys it was built with.
     pub fn builtin() -> Self {
         let test_key = cfg!(debug_assertions)
-            .then(|| std::env::var("SHELLRS_UPDATE_PUBLIC_KEY").ok())
+            .then(|| std::env::var("SHELLAS_UPDATE_PUBLIC_KEY").ok())
             .flatten();
         Self::new(TRUSTED_KEYS.iter().copied().chain(test_key.as_deref()))
     }
@@ -131,8 +132,16 @@ pub fn open_envelope(
 }
 
 /// The version a trusted comment vouches for on `channel`.
+///
+/// New manifests sign `shellas-manifest <channel> <version>`. The older
+/// `shellrs-manifest` prefix is still accepted so that a client can open
+/// manifests published before the rename: the comment is covered by the
+/// signature either way, so this only widens which genuinely signed
+/// manifests are understood, not which signatures are trusted.
 fn signed_version(comment: &str, channel: Channel) -> Option<Version> {
-    let rest = comment.strip_prefix("shellrs-manifest ")?;
+    let rest = comment
+        .strip_prefix("shellas-manifest ")
+        .or_else(|| comment.strip_prefix("shellrs-manifest "))?;
     let (signed_channel, version) = rest.split_once(' ')?;
     if signed_channel != channel.key() {
         return None;
@@ -210,7 +219,7 @@ pub(crate) mod tests {
             let bytes = envelope(
                 pair,
                 &manifest_text("0.2.0"),
-                "shellrs-manifest stable 0.2.0",
+                "shellas-manifest stable 0.2.0",
             );
             let Ok(Opened::Manifest(manifest)) = open_envelope(&bytes, Channel::Stable, &keys)
             else {
@@ -221,13 +230,35 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_manifest_signed_before_the_rename_is_still_accepted() {
+        let (pair, public) = test_key();
+        let keys = TrustedKeys::new([public.as_str()]);
+        let bytes = envelope(
+            &pair,
+            &manifest_text("0.2.0"),
+            "shellrs-manifest stable 0.2.0",
+        );
+        let Ok(Opened::Manifest(manifest)) = open_envelope(&bytes, Channel::Stable, &keys) else {
+            panic!("a manifest signed with the older trusted comment opens");
+        };
+        assert_eq!(manifest.version, Version::new(0, 2, 0));
+
+        // Some other comment says nothing about a version, so it is refused.
+        let unknown = envelope(&pair, &manifest_text("0.2.0"), "other stable 0.2.0");
+        assert_eq!(
+            open_envelope(&unknown, Channel::Stable, &keys),
+            Err(UpdateError::BadSignature)
+        );
+    }
+
+    #[test]
     fn a_tampered_or_unknown_key_manifest_is_rejected() {
         let (pair, public) = test_key();
         let keys = TrustedKeys::new([public.as_str()]);
         let signed = envelope(
             &pair,
             &manifest_text("0.2.0"),
-            "shellrs-manifest stable 0.2.0",
+            "shellas-manifest stable 0.2.0",
         );
         let tampered = String::from_utf8(signed)
             .unwrap()
@@ -242,7 +273,7 @@ pub(crate) mod tests {
         let unknown = envelope(
             &stranger,
             &manifest_text("0.2.0"),
-            "shellrs-manifest stable 0.2.0",
+            "shellas-manifest stable 0.2.0",
         );
         assert_eq!(
             open_envelope(&unknown, Channel::Stable, &keys),
@@ -265,7 +296,7 @@ pub(crate) mod tests {
         let replayed = envelope(
             &pair,
             &manifest_text("0.2.0"),
-            "shellrs-manifest stable 0.9.0",
+            "shellas-manifest stable 0.9.0",
         );
         assert_eq!(
             open_envelope(&replayed, Channel::Stable, &keys),
@@ -278,7 +309,7 @@ pub(crate) mod tests {
         let (pair, public) = test_key();
         let keys = TrustedKeys::new([public.as_str()]);
         let beta = manifest_text("0.3.0-beta.1").replace("\"stable\"", "\"beta\"");
-        let bytes = envelope(&pair, &beta, "shellrs-manifest beta 0.3.0-beta.1");
+        let bytes = envelope(&pair, &beta, "shellas-manifest beta 0.3.0-beta.1");
         assert_eq!(
             open_envelope(&bytes, Channel::Stable, &keys),
             Err(UpdateError::BadSignature)
@@ -293,7 +324,7 @@ pub(crate) mod tests {
     fn a_signed_manifest_in_a_newer_format_still_names_its_version() {
         let (pair, public) = test_key();
         let keys = TrustedKeys::new([public.as_str()]);
-        let bytes = envelope(&pair, r#"{"schema": 2}"#, "shellrs-manifest stable 3.0.0");
+        let bytes = envelope(&pair, r#"{"schema": 2}"#, "shellas-manifest stable 3.0.0");
         assert_eq!(
             open_envelope(&bytes, Channel::Stable, &keys),
             Ok(Opened::NewerFormat {
@@ -358,11 +389,11 @@ pub(crate) mod tests {
         let dist = dir.path().join("dist");
         std::fs::create_dir(&dist).unwrap();
         for name in [
-            "ShellRS-0.2.0-macos-aarch64.app.zip",
-            "ShellRS-0.2.0-macos-x86_64.app.zip",
-            "ShellRS-0.2.0-windows-x86_64-setup.exe",
-            "ShellRS-0.2.0-windows-x86_64-portable.zip",
-            "ShellRS-0.2.0-linux-x86_64.AppImage",
+            "ShellAs-0.2.0-macos-aarch64.app.zip",
+            "ShellAs-0.2.0-macos-x86_64.app.zip",
+            "ShellAs-0.2.0-windows-x86_64-setup.exe",
+            "ShellAs-0.2.0-windows-x86_64-portable.zip",
+            "ShellAs-0.2.0-linux-x86_64.AppImage",
         ] {
             std::fs::write(dist.join(name), name).unwrap();
         }
@@ -380,7 +411,7 @@ pub(crate) mod tests {
             .env_remove("MINISIGN_PASSWORD")
             // As the release workflow sets it.
             .env(
-                "SHELLRS_MIRROR_BASE",
+                "SHELLAS_MIRROR_BASE",
                 "https://github.com/since2006/shell-rs/releases/download/v0.2.0",
             )
             .output()
@@ -398,7 +429,7 @@ pub(crate) mod tests {
         assert_eq!(manifest.notes, "### 新增\n\n- 在线升级\n");
         for arch in ["aarch64", "x86_64"] {
             let key = format!("macos-{arch}");
-            let name = format!("ShellRS-0.2.0-{key}.app.zip");
+            let name = format!("ShellAs-0.2.0-{key}.app.zip");
             let asset = &manifest.assets[&key];
             // Each architecture has its own package and both download sources.
             assert_eq!(
@@ -413,7 +444,7 @@ pub(crate) mod tests {
             assert_eq!(verify_file(&dist.join(&name), asset), Ok(()));
             assert_eq!(
                 manifest.installers[&key],
-                format!("https://dl.shellrs.com/releases/0.2.0/ShellRS-0.2.0-{key}.dmg")
+                format!("https://dl.shellrs.com/releases/0.2.0/ShellAs-0.2.0-{key}.dmg")
             );
         }
         assert_ne!(
@@ -422,12 +453,12 @@ pub(crate) mod tests {
         );
         assert_eq!(
             verify_file(
-                &dist.join("ShellRS-0.2.0-macos-x86_64.app.zip"),
+                &dist.join("ShellAs-0.2.0-macos-x86_64.app.zip"),
                 &manifest.assets["macos-aarch64"],
             ),
             Err(UpdateError::Corrupt)
         );
-        let package = dist.join("ShellRS-0.2.0-linux-x86_64.AppImage");
+        let package = dist.join("ShellAs-0.2.0-linux-x86_64.AppImage");
         assert_eq!(
             verify_file(&package, &manifest.assets["linux-x86_64"]),
             Ok(())
@@ -438,14 +469,14 @@ pub(crate) mod tests {
             manifest.installers
         );
         // The portable copy updates from the zip a person downloads.
-        let portable = dist.join("ShellRS-0.2.0-windows-x86_64-portable.zip");
+        let portable = dist.join("ShellAs-0.2.0-windows-x86_64-portable.zip");
         assert_eq!(
             verify_file(&portable, &manifest.assets["windows-x86_64-portable"]),
             Ok(())
         );
         assert_eq!(
             manifest.installers["windows-x86_64-portable"],
-            "https://dl.shellrs.com/releases/0.2.0/ShellRS-0.2.0-windows-x86_64-portable.zip"
+            "https://dl.shellrs.com/releases/0.2.0/ShellAs-0.2.0-windows-x86_64-portable.zip"
         );
         assert_eq!(
             open_envelope(&bytes, Channel::Beta, &keys),
@@ -465,7 +496,7 @@ pub(crate) mod tests {
         let bytes = envelope(
             &pair,
             &manifest_text("0.2.0"),
-            "shellrs-manifest stable 0.2.0",
+            "shellas-manifest stable 0.2.0",
         );
         assert!(matches!(
             open(&bytes, Channel::Stable, &keys, "macos-aarch64"),
@@ -477,7 +508,7 @@ pub(crate) mod tests {
         let forged = envelope(
             &stranger,
             &manifest_text("0.2.0"),
-            "shellrs-manifest stable 0.2.0",
+            "shellas-manifest stable 0.2.0",
         );
         assert_eq!(
             open(&forged, Channel::Stable, &keys, "macos-aarch64"),
@@ -487,7 +518,7 @@ pub(crate) mod tests {
 
     #[test]
     fn open_reads_a_github_release_with_its_digest() {
-        let release = r#"{"tag_name":"v0.4.0","assets":[{"name":"ShellRS-0.4.0-macos-aarch64.app.zip","size":7,"browser_download_url":"https://github.com/yunerduo/shell-rs/releases/download/v0.4.0/ShellRS-0.4.0-macos-aarch64.app.zip","digest":"sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"}]}"#;
+        let release = r#"{"tag_name":"v0.4.0","assets":[{"name":"ShellAs-0.4.0-macos-aarch64.app.zip","size":7,"browser_download_url":"https://github.com/yunerduo/shell-rs/releases/download/v0.4.0/ShellAs-0.4.0-macos-aarch64.app.zip","digest":"sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"}]}"#;
         // No keys at all: a GitHub release needs no signature.
         let Ok(Opened::Manifest(manifest)) = open(
             release.as_bytes(),
