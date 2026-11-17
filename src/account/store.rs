@@ -39,6 +39,10 @@ pub struct CloudConflict {
 pub enum AccountEvent {
     /// `account.json` could not be written. The in-memory state stands.
     PersistFailed(String),
+    /// The account was created, but the optional phone number was not
+    /// stored: the server does not take that field yet. Worth saying, not
+    /// worth failing over.
+    PhoneNotApplied,
     /// An upload is waiting for the cloud sync password, which is only in
     /// memory after a restart.
     NeedsSyncPassword,
@@ -119,6 +123,14 @@ impl AccountStore {
         self.resume(cx);
     }
 
+    /// The server client, for the flows the login dialog drives itself:
+    /// asking for a code and resetting the password do not change the
+    /// account's state until they succeed, so their results belong to the
+    /// form, not here.
+    pub fn service(&self) -> Option<SharedAccountService> {
+        self.services.clone()
+    }
+
     /// Where `account.json` lives. Production attaches it once the workspace
     /// is built; UI tests never do, so nothing reads or writes the real
     /// account file.
@@ -145,6 +157,14 @@ impl AccountStore {
 
     pub fn login_error(&self) -> Option<&AccountError> {
         self.login_error.as_ref()
+    }
+
+    /// Forget the last request's error, e.g. when the form switches between
+    /// signing in and registering.
+    pub fn clear_login_error(&mut self, cx: &mut Context<Self>) {
+        if self.login_error.take().is_some() {
+            cx.notify();
+        }
     }
 
     pub fn notice(&self) -> Option<AccountNotice> {
@@ -248,8 +268,10 @@ impl AccountStore {
                     service.login(&request_username, request_password.as_str())
                 })
                 .await;
-            this.update(cx, |store, cx| store.apply_auth(result, Some(password), cx))
-                .ok();
+            this.update(cx, |store, cx| {
+                store.apply_auth(result, true, Some(password), cx)
+            })
+            .ok();
         })
         .detach();
     }
@@ -259,6 +281,8 @@ impl AccountStore {
         username: String,
         password: Zeroizing<String>,
         email: String,
+        phone: String,
+        verification_code: Option<String>,
         cx: &mut Context<Self>,
     ) {
         if self.phase == AccountPhase::SigningIn {
@@ -276,6 +300,10 @@ impl AccountStore {
         let request_username = username.trim().to_string();
         let request_password = password.clone();
         let request_email = email.trim().to_string();
+        let request_phone = phone.trim().to_string();
+        let request_code = verification_code
+            .map(|code| code.trim().to_string())
+            .filter(|code| !code.is_empty());
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn(async move {
@@ -283,11 +311,24 @@ impl AccountStore {
                         &request_username,
                         request_password.as_str(),
                         (!request_email.is_empty()).then_some(request_email.as_str()),
+                        (!request_phone.is_empty()).then_some(request_phone.as_str()),
+                        request_code.as_deref(),
                     )
                 })
                 .await;
-            this.update(cx, |store, cx| store.apply_auth(result, Some(password), cx))
-                .ok();
+            let phone_used = result
+                .as_ref()
+                .map(|reply| reply.phone_used)
+                .unwrap_or(true);
+            this.update(cx, |store, cx| {
+                store.apply_auth(
+                    result.map(|reply| reply.auth),
+                    phone_used,
+                    Some(password),
+                    cx,
+                )
+            })
+            .ok();
         })
         .detach();
     }
@@ -312,6 +353,22 @@ impl AccountStore {
             })
             .detach();
         }
+        cx.notify();
+    }
+
+    /// A password reset on the server ends every session of the account, so
+    /// whatever token this computer held opens nothing now. The sign-in
+    /// dialog runs the reset, and this is the one bit of store state it has
+    /// to change.
+    pub fn forget_after_reset(&mut self, cx: &mut Context<Self>) {
+        self.token = None;
+        self.phase = AccountPhase::SignedOut;
+        self.login_error = None;
+        self.sync_password = None;
+        self.pending.clear();
+        self.uploading = false;
+        self.conflict = None;
+        self.forget_token(cx);
         cx.notify();
     }
 
@@ -365,6 +422,7 @@ impl AccountStore {
     fn apply_auth(
         &mut self,
         result: Result<super::service::AuthReply, AccountError>,
+        phone_used: bool,
         password: Option<Zeroizing<String>>,
         cx: &mut Context<Self>,
     ) {
@@ -378,6 +436,9 @@ impl AccountStore {
                 self.remember_password(cx, password);
                 self.store_token(cx, reply.token);
                 self.persist(cx);
+                if !phone_used {
+                    cx.emit(AccountEvent::PhoneNotApplied);
+                }
                 self.start_next(cx);
             }
             Err(error) => {

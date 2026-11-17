@@ -1799,6 +1799,12 @@ impl Workspace {
             AccountEvent::PersistFailed(message) => {
                 window.push_notification(Notification::error(message.clone()), cx);
             }
+            AccountEvent::PhoneNotApplied => {
+                window.push_notification(
+                    Notification::warning(t!("account.notify.phone_not_applied")),
+                    cx,
+                );
+            }
             AccountEvent::NeedsSyncPassword => {
                 open_sync_password_dialog(self.account.clone(), window, cx);
             }

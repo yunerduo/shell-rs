@@ -217,11 +217,26 @@ pub enum PasswordProblem {
     TooLong,
 }
 
-/// Why an e-mail address cannot be used. Empty is fine: it is optional.
+/// Why an e-mail address cannot be used. Empty is fine unless the flow
+/// needs one, which is what `check_required_email` is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EmailProblem {
+    Required,
     TooLong,
     NotAddress,
+}
+
+/// Why a phone number cannot be used. Empty is fine: it is optional too.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PhoneProblem {
+    NotMobile,
+}
+
+/// Why a verification code cannot be used. The code is always six digits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CodeProblem {
+    Empty,
+    NotSixDigits,
 }
 
 pub const USERNAME_MIN: usize = 3;
@@ -229,6 +244,8 @@ pub const USERNAME_MAX: usize = 32;
 pub const PASSWORD_MIN: usize = 8;
 pub const PASSWORD_MAX: usize = 128;
 pub const EMAIL_MAX: usize = 254;
+pub const PHONE_DIGITS: usize = 11;
+pub const CODE_DIGITS: usize = 6;
 
 pub fn check_username(username: &str) -> Result<(), UsernameProblem> {
     let username = username.trim();
@@ -298,10 +315,56 @@ pub fn check_email(email: &str) -> Result<(), EmailProblem> {
     }
 }
 
+/// The flows that send a code — registration when the server asks for one,
+/// and password reset — have nowhere to send it without an address.
+pub fn check_required_email(email: &str) -> Result<(), EmailProblem> {
+    if email.trim().is_empty() {
+        return Err(EmailProblem::Required);
+    }
+    check_email(email)
+}
+
+/// A code from a message: exactly six digits. The server decides whether it
+/// is the right one, still fresh, or void.
+pub fn check_code(code: &str) -> Result<(), CodeProblem> {
+    let code = code.trim();
+    if code.is_empty() {
+        return Err(CodeProblem::Empty);
+    }
+    if code.chars().count() == CODE_DIGITS && code.chars().all(|ch| ch.is_ascii_digit()) {
+        Ok(())
+    } else {
+        Err(CodeProblem::NotSixDigits)
+    }
+}
+
+/// A mainland China mobile number: 11 digits, starting with a 1 and a
+/// carrier prefix from 3 to 9. Blank is fine, like the e-mail: the account
+/// already has a username, so the phone is a contact detail, not a key.
+pub fn check_phone(phone: &str) -> Result<(), PhoneProblem> {
+    let phone = phone.trim();
+    if phone.is_empty() {
+        return Ok(());
+    }
+    let mut digits = phone.chars();
+    let valid = phone.len() == PHONE_DIGITS
+        && digits.next() == Some('1')
+        && digits
+            .next()
+            .is_some_and(|digit| ('3'..='9').contains(&digit))
+        && digits.all(|digit| digit.is_ascii_digit());
+    if valid {
+        Ok(())
+    } else {
+        Err(PhoneProblem::NotMobile)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        AccountProfile, check_email, check_login_password, check_new_password, check_username,
+        AccountProfile, EmailProblem, check_code, check_email, check_login_password,
+        check_new_password, check_phone, check_required_email, check_username,
     };
 
     #[test]
@@ -372,6 +435,43 @@ mod tests {
         assert!(check_email("no-at-sign").is_err());
         assert!(check_email("a@localhost").is_err());
         assert!(check_email("a b@c.d").is_err());
+    }
+
+    #[test]
+    fn the_flows_that_mail_a_code_insist_on_an_address() {
+        assert_eq!(check_required_email(""), Err(EmailProblem::Required));
+        assert_eq!(check_required_email("  "), Err(EmailProblem::Required));
+        assert!(check_required_email("alice@example.com").is_ok());
+        assert_eq!(
+            check_required_email("no-at-sign"),
+            Err(EmailProblem::NotAddress)
+        );
+    }
+
+    #[test]
+    fn a_code_is_six_digits() {
+        assert!(check_code("123456").is_ok());
+        assert!(check_code(" 042000 ").is_ok());
+        assert!(check_code("").is_err());
+        assert!(check_code("12345").is_err());
+        assert!(check_code("1234567").is_err());
+        assert!(check_code("12345a").is_err());
+    }
+
+    #[test]
+    fn a_phone_number_is_optional_but_must_be_a_mainland_mobile() {
+        assert!(check_phone("").is_ok());
+        assert!(check_phone("   ").is_ok());
+        assert!(check_phone("13800138000").is_ok());
+        assert!(check_phone(" 19912345678 ").is_ok());
+        // Ten or twelve digits, a wrong first digit, a carrier prefix that
+        // does not exist, or anything that is not a digit is refused.
+        assert!(check_phone("1380013800").is_err());
+        assert!(check_phone("138001380001").is_err());
+        assert!(check_phone("23800138000").is_err());
+        assert!(check_phone("12800138000").is_err());
+        assert!(check_phone("1380013800a").is_err());
+        assert!(check_phone("138 0013 8000").is_err());
     }
 
     #[test]

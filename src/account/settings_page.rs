@@ -67,6 +67,8 @@ fn signed_out_groups(
             t!("settings.account.local_first"),
             SettingField::render(|_, _, _| {
                 div()
+                    .min_w_0()
+                    .whitespace_normal()
                     .text_sm()
                     .child(t!("settings.account.local_first_description"))
             }),
@@ -75,7 +77,13 @@ fn signed_out_groups(
     if let Some(notice) = notice {
         items.push(SettingItem::new(
             t!("settings.account.notice"),
-            SettingField::render(move |_, _, _| div().text_sm().child(notice_text(notice))),
+            SettingField::render(move |_, _, _| {
+                div()
+                    .min_w_0()
+                    .whitespace_normal()
+                    .text_sm()
+                    .child(notice_text(notice))
+            }),
         ));
     }
     vec![
@@ -111,29 +119,41 @@ fn profile_group(account: &Entity<AccountStore>) -> SettingGroup {
         } else {
             snapshot.nickname.into()
         };
-        h_flex().gap_2().child(div().text_sm().child(shown)).child(
-            Button::new("account-nickname-edit")
-                .outline()
-                .small()
-                .label(t!("settings.account.edit_nickname"))
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(Box::new(EditAccountNickname), cx)
-                }),
-        )
+        h_flex()
+            .min_w_0()
+            .gap_2()
+            .child(div().min_w_0().whitespace_normal().text_sm().child(shown))
+            .child(
+                Button::new("account-nickname-edit")
+                    .outline()
+                    .small()
+                    .label(t!("settings.account.edit_nickname"))
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(EditAccountNickname), cx)
+                    }),
+            )
     });
     let name_reader = account.clone();
     let name = SettingField::render(move |_, _, cx| {
         let snapshot = name_reader.read(cx).snapshot();
-        div().text_sm().child(format!("@{}", snapshot.username))
+        div()
+            .min_w_0()
+            .whitespace_normal()
+            .text_sm()
+            .child(format!("@{}", snapshot.username))
     });
     let email_reader = account.clone();
     let email = SettingField::render(move |_, _, cx| {
         let snapshot = email_reader.read(cx).snapshot();
-        div().text_sm().child(if snapshot.email.is_empty() {
-            t!("settings.account.email_empty")
-        } else {
-            snapshot.email.into()
-        })
+        div()
+            .min_w_0()
+            .whitespace_normal()
+            .text_sm()
+            .child(if snapshot.email.is_empty() {
+                t!("settings.account.email_empty")
+            } else {
+                snapshot.email.into()
+            })
     });
     SettingGroup::new()
         .title(t!("settings.account.group.account"))
@@ -209,6 +229,7 @@ fn cloud_group(account: &Entity<AccountStore>) -> SettingGroup {
             t!("settings.account.sync_off")
         };
         h_flex()
+            .min_w_0()
             .gap_2()
             .child(
                 Button::new("account-upload")
@@ -220,7 +241,7 @@ fn cloud_group(account: &Entity<AccountStore>) -> SettingGroup {
                         window.dispatch_action(Box::new(UploadCloudSyncNow), cx)
                     }),
             )
-            .child(div().text_xs().child(hint))
+            .child(div().min_w_0().whitespace_normal().text_xs().child(hint))
     });
     SettingGroup::new()
         .title(t!("settings.account.group.cloud"))
@@ -283,12 +304,21 @@ impl Render for NicknameForm {
             )
             .child(
                 div()
+                    .min_w_0()
+                    .whitespace_normal()
                     .text_xs()
                     .text_color(theme.muted_foreground)
                     .child(t!("settings.account.nickname_description")),
             )
             .when_some(self.error.clone(), |view, error| {
-                view.child(div().text_sm().text_color(theme.danger).child(error))
+                view.child(
+                    div()
+                        .min_w_0()
+                        .whitespace_normal()
+                        .text_sm()
+                        .text_color(theme.danger)
+                        .child(error),
+                )
             })
     }
 }
@@ -359,6 +389,8 @@ impl Render for SyncPasswordForm {
             .w_full()
             .child(
                 div()
+                    .min_w_0()
+                    .whitespace_normal()
                     .text_sm()
                     .text_color(theme.muted_foreground)
                     .child(t!("account.sync_password.description")),
@@ -382,6 +414,8 @@ impl Render for SyncPasswordForm {
                     div()
                         .id("account-sync-password-error")
                         .test_support()
+                        .min_w_0()
+                        .whitespace_normal()
                         .text_sm()
                         .text_color(theme.danger)
                         .child(error),

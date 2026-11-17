@@ -31,12 +31,9 @@ account.tab.register:
 account.dialog.description:
   zh-CN: 登录后可以同步设置与主机、在其他设备上继续使用。不登录也能使用本机的全部功能。
   en: Sign in to sync settings and hosts across devices. Everything on this computer works without an account.
-account.dialog.sign_in_title:
-  zh-CN: 登录
-  en: Sign in
-account.dialog.register_title:
-  zh-CN: 创建账号
-  en: Create account
+account.dialog.title:
+  zh-CN: 账号
+  en: Account
 account.dialog.sign_in:
   zh-CN: 登录
   en: Sign in
@@ -56,6 +53,21 @@ account.field.new_password:
 account.field.email:
   zh-CN: 邮箱（可选）
   en: Email (optional)
+account.field.email_required:
+  zh-CN: 邮箱
+  en: Email
+account.field.phone:
+  zh-CN: 手机号（可选）
+  en: Phone (optional)
+account.field.phone_hint:
+  zh-CN: 中国大陆 11 位手机号，先不填也可以。
+  en: An 11-digit mainland China mobile number; you can leave it out.
+account.field.verification_code:
+  zh-CN: 验证码
+  en: Verification code
+account.field.code_hint:
+  zh-CN: 6 位数字，10 分钟内有效。
+  en: Six digits, valid for ten minutes.
 
 account.form.username.empty:
   zh-CN: 请输入用户名
@@ -81,6 +93,85 @@ account.form.password.long:
 account.form.email.invalid:
   zh-CN: 邮箱地址格式不对
   en: That email address is not valid
+account.form.email.required:
+  zh-CN: 请输入邮箱
+  en: Enter your email
+account.form.code.empty:
+  zh-CN: 请输入验证码
+  en: Enter the code
+account.form.code.invalid:
+  zh-CN: 验证码是 6 位数字
+  en: The code is six digits
+account.form.phone.invalid:
+  zh-CN: 手机号应为 11 位，以 1 开头
+  en: Enter an 11-digit mobile number starting with 1
+
+account.button.send_code:
+  zh-CN: 发送验证码
+  en: Send code
+account.button.resend_code:
+  zh-CN: 重新发送
+  en: Send again
+account.button.resend_code_wait:
+  zh-CN: "%{seconds} 秒后重发"
+  en: Send again in %{seconds}s
+
+# The e-mail verification the registration may ask for, and the codes the
+# password reset uses. Four failures, four sentences: wrong, stale, void, and
+# the mail server itself.
+account.code.sent:
+  zh-CN: 验证码已发送，请查收邮件。
+  en: The code has been sent; check your email.
+account.code.required:
+  zh-CN: 注册需要先验证邮箱：获取验证码后填在这里。
+  en: "Registration verifies the email first: get a code, then enter it here."
+account.code.disabled:
+  zh-CN: 服务器现在不要求邮箱验证，直接创建账号即可。
+  en: The server no longer requires email verification; create the account as usual.
+account.code.too_many:
+  zh-CN: 发送太频繁，请稍后再试。
+  en: Too many requests. Try again shortly.
+account.code.send_failed:
+  zh-CN: 验证码邮件没有发出去，请稍后重试。
+  en: The code could not be sent. Try again later.
+account.code.service_unavailable:
+  zh-CN: 邮件服务暂不可用，请联系管理员。
+  en: Email is unavailable right now; contact the administrator.
+account.code.invalid:
+  zh-CN: 验证码不对。
+  en: That code is not right.
+account.code.expired:
+  zh-CN: 验证码已过期，请重新获取。
+  en: That code has expired; send a new one.
+account.code.locked:
+  zh-CN: 验证码输错次数太多，请重新获取。
+  en: Too many wrong codes; send a new one.
+account.code.registered:
+  zh-CN: 该邮箱已注册，请直接登录。
+  en: That email already has an account. Sign in instead.
+
+# 忘记密码: the same two steps whether or not the address has an account.
+account.forgot.link:
+  zh-CN: 忘记密码？
+  en: Forgot password?
+account.forgot.description:
+  zh-CN: 用账号的邮箱找回密码。先获取验证码，再设置新密码。
+  en: Reset the password with the account's email. Get a code first, then choose a new password.
+account.forgot.sent:
+  zh-CN: 如果该邮箱已注册，验证码已发送。输入验证码和新密码即可。
+  en: If that email has an account, a code has been sent. Enter it with a new password.
+account.forgot.reset:
+  zh-CN: 重置密码
+  en: Reset password
+account.forgot.back:
+  zh-CN: 返回登录
+  en: Back to sign in
+account.forgot.change_email:
+  zh-CN: 换一个邮箱
+  en: Use another email
+account.forgot.done:
+  zh-CN: 密码已重置，请用新密码登录。
+  en: The password was reset. Sign in with the new one.
 
 account.popover.signed_out_hint:
   zh-CN: 登录后可同步设置与主机。本机功能不受影响。
@@ -152,6 +243,9 @@ account.notify.settings_downloaded:
 account.notify.hosts_downloaded:
   zh-CN: 云端主机列表已保存到 %{path}，可在这里查看。
   en: The cloud hosts were saved to %{path} for review.
+account.notify.phone_not_applied:
+  zh-CN: 账号已创建，但手机号暂未生效。可以之后再补。
+  en: The account was created, but the phone number did not take effect. You can add it later.
 
 account.conflict.title:
   zh-CN: 云端有更新的版本

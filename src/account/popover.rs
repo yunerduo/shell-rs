@@ -27,7 +27,7 @@ pub fn account_popover(
         .id("account-popover")
         .test_support()
         .gap_3()
-        .w_64()
+        .w_72()
         .when(!snapshot.signed_in, |view| {
             view.child(signed_out(snapshot.notice, theme))
         })
@@ -43,10 +43,14 @@ fn signed_out(notice: Option<AccountNotice>, theme: &gpui_kit::component::Theme)
         .gap_3()
         .child(
             h_flex()
+                .w_full()
+                .min_w_0()
                 .gap_2()
                 .child(Avatar::new().name("?").small())
                 .child(
                     v_flex()
+                        .min_w_0()
+                        .flex_1()
                         .gap_1()
                         .child(
                             div()
@@ -56,8 +60,10 @@ fn signed_out(notice: Option<AccountNotice>, theme: &gpui_kit::component::Theme)
                         )
                         .child(
                             div()
+                                .min_w_0()
                                 .text_xs()
                                 .text_color(theme.muted_foreground)
+                                .whitespace_normal()
                                 .child(t!("account.popover.signed_out_hint")),
                         ),
                 ),
@@ -67,8 +73,11 @@ fn signed_out(notice: Option<AccountNotice>, theme: &gpui_kit::component::Theme)
                 div()
                     .id("account-notice")
                     .test_support()
+                    .w_full()
+                    .min_w_0()
                     .text_xs()
                     .text_color(theme.warning)
+                    .whitespace_normal()
                     .child(notice_text(notice)),
             )
         })
@@ -108,30 +117,42 @@ fn signed_in(snapshot: &AccountSnapshot, theme: &gpui_kit::component::Theme) -> 
         .test_support()
         .gap_3()
         .child(
-            h_flex().gap_2().child(avatar).child(
+            h_flex().w_full().min_w_0().gap_2().child(avatar).child(
                 v_flex()
+                    .min_w_0()
+                    .flex_1()
                     .gap_1()
                     .child(
                         div()
                             .id("account-name")
                             .test_support()
+                            .min_w_0()
                             .text_sm()
                             .font_medium()
+                            .whitespace_normal()
                             .child(snapshot.display_name.clone()),
                     )
-                    .child(div().text_xs().text_color(theme.muted_foreground).child(
-                        if snapshot.email.is_empty() {
-                            format!("@{}", snapshot.username)
-                        } else {
-                            snapshot.email.clone()
-                        },
-                    )),
+                    .child(
+                        div()
+                            .min_w_0()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .whitespace_normal()
+                            .child(if snapshot.email.is_empty() {
+                                format!("@{}", snapshot.username)
+                            } else {
+                                snapshot.email.clone()
+                            }),
+                    ),
             ),
         )
         .child(
             div()
+                .w_full()
+                .min_w_0()
                 .text_xs()
                 .text_color(theme.muted_foreground)
+                .whitespace_normal()
                 .child(if snapshot.cloud_sync {
                     t!("account.popover.cloud_on")
                 } else {

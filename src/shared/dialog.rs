@@ -41,6 +41,8 @@ pub fn form_error_notification(error: impl Into<SharedString>) -> Notification {
                 .id("form-error")
                 .test_support()
                 .aria_label(error.clone())
+                .min_w_0()
+                .whitespace_normal()
                 .text_sm()
                 .child(error.clone())
                 .into_any_element()
