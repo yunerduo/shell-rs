@@ -83,11 +83,11 @@ host.credential_draft.key_path:
   en: Choose a private key file for a key credential
 
 host.database.newer:
-  zh-CN: 数据库来自更新版本的 Agree ShellAS（结构版本 %{version}，本版本支持到 %{supported}），请安装最新版本
-  en: The database is from a newer version of Agree ShellAS (schema version %{version}; this version supports up to %{supported}). Install the latest version.
+  zh-CN: 数据库来自更新版本的 ShellAs（结构版本 %{version}，本版本支持到 %{supported}），请安装最新版本
+  en: The database is from a newer version of ShellAs (schema version %{version}; this version supports up to %{supported}). Install the latest version.
 host.database.too_old:
-  zh-CN: 数据库来自 Agree ShellAS 的早期开发版本（结构版本 %{version}），无法升级
-  en: The database is from an early development version of Agree ShellAS (schema version %{version}) and can’t be upgraded.
+  zh-CN: 数据库来自 ShellAs 的早期开发版本（结构版本 %{version}），无法升级
+  en: The database is from an early development version of ShellAs (schema version %{version}) and can’t be upgraded.
 
 host.forward_kind.local:
   zh-CN: 本地转发
@@ -266,8 +266,8 @@ host.dialog.logs_in_with.password:
   zh-CN: 以 %{user} 登录，使用凭据保存的密码
   en: Logs in as %{user} with the password saved in the credential
 host.dialog.logs_in_with.kept_key:
-  zh-CN: 以 %{user} 登录，使用 Agree ShellAS 保存的私钥
-  en: Logs in as %{user} with the private key Agree ShellAS keeps
+  zh-CN: 以 %{user} 登录，使用 ShellAs 保存的私钥
+  en: Logs in as %{user} with the private key ShellAs keeps
 host.dialog.logs_in_with.key:
   zh-CN: 以 %{user} 登录，使用私钥 %{path}
   en: Logs in as %{user} with the private key %{path}
@@ -294,7 +294,7 @@ host.dialog.totp:
   en: Fill in one-time codes
 host.dialog.totp_note:
   zh-CN: 启用后匹配 SSH 交互认证提示，并自动提交当前 6 位动态验证码。
-  en: When a keyboard-interactive prompt matches, Agree ShellAS sends the current 6-digit code.
+  en: When a keyboard-interactive prompt matches, ShellAs sends the current 6-digit code.
 host.dialog.totp_secret:
   zh-CN: OTP 密钥
   en: OTP secret
@@ -317,8 +317,8 @@ host.dialog.optional:
   zh-CN: 可选
   en: Optional
 host.dialog.keychain_note:
-  zh-CN: 密码保存在系统钥匙串，不会写入 Agree ShellAS 的数据库。
-  en: Passwords are kept in the system keychain, never in Agree ShellAS’s database.
+  zh-CN: 密码保存在系统钥匙串，不会写入 ShellAs 的数据库。
+  en: Passwords are kept in the system keychain, never in ShellAs’s database.
 host.dialog.no_keychain_note:
   zh-CN: 系统钥匙串不可用，这台机器上无法保存密码，每次连接都会询问。
   en: The system keychain isn’t available, so passwords can’t be saved on this computer and are asked for at each connection.
@@ -578,6 +578,12 @@ host.menu.import_known_hosts:
 host.menu.import_xshell:
   zh-CN: 从 Xshell 导入…
   en: Import from Xshell…
+host.menu.export_hosts:
+  zh-CN: 导出主机…
+  en: Export Hosts…
+host.menu.import_file:
+  zh-CN: 导入 ShellAs 文件…
+  en: Import ShellAs File…
 host.menu.connect_group:
   zh-CN: 连接组内主机
   en: Connect all in group
@@ -808,8 +814,8 @@ host.store.key_unreadable:
   zh-CN: 读不出这个私钥文件，或它太大，不像私钥
   en: Couldn’t read the key file, or it’s too large to be a key
 host.store.key_not_deleted:
-  zh-CN: Agree ShellAS 保存的私钥未能删除：%{error}
-  en: "Couldn’t delete a private key Agree ShellAS keeps: %{error}"
+  zh-CN: ShellAs 保存的私钥未能删除：%{error}
+  en: "Couldn’t delete a private key ShellAs keeps: %{error}"
 
 host.store.sync.not_saved:
   zh-CN: 同步来的改动未能保存，这一轮没有应用：%{error}
@@ -861,8 +867,8 @@ host.store.secret.sync_keyring:
 
 # 导入主机: the dialog that adds the hosts ~/.ssh/config or known_hosts names.
 host.import.key_not_copied:
-  zh-CN: 私钥未能复制到 Agree ShellAS 保存私钥的目录，凭据仍用原文件：%{error}
-  en: "Couldn’t copy a key to the folder Agree ShellAS keeps keys in, so its credential uses the file where it is: %{error}"
+  zh-CN: 私钥未能复制到 ShellAs 保存私钥的目录，凭据仍用原文件：%{error}
+  en: "Couldn’t copy a key to the folder ShellAs keeps keys in, so its credential uses the file where it is: %{error}"
 host.import.title.ssh_config:
   zh-CN: 从 ~/.ssh/config 导入
   en: Import from ~/.ssh/config
@@ -1087,3 +1093,151 @@ host.import.passwords_asked.one:
 host.import.passwords_asked.other:
   zh-CN: 有 %{count} 台主机的密码将在首次连接时输入。
   en: "%{count} hosts ask for their password on the first connection."
+
+host.portable.error.keychain:
+  zh-CN: 读取系统钥匙串失败：%{error}
+  en: "Could not read the keychain: %{error}"
+host.portable.error.write:
+  zh-CN: 无法写入文件：%{error}
+  en: "Could not write the file: %{error}"
+host.portable.error.not_archive:
+  zh-CN: 这不是 ShellAs 导出的主机文件。
+  en: This is not a host file ShellAs exported.
+host.portable.error.too_new:
+  zh-CN: 这个文件由更新版本的 ShellAs 导出，请先升级。
+  en: This file was written by a newer ShellAs. Update before importing it.
+host.portable.error.damaged:
+  zh-CN: 文件不完整或已被改动，无法读取。
+  en: The file is incomplete or has been changed since it was written.
+host.portable.error.needs_password:
+  zh-CN: 这个文件用口令加密了。
+  en: This file is sealed with a password.
+host.portable.error.wrong_password:
+  zh-CN: 口令不正确，或文件已被改动。
+  en: The password is wrong, or the file has been changed.
+host.portable.error.secret_without_password:
+  zh-CN: 文件里含密码或私钥口令，必须用口令加密后才能导出。
+  en: The file holds passwords or passphrases, which are only exported sealed.
+host.portable.export.title:
+  zh-CN: 导出主机
+  en: Export Hosts
+host.portable.export.note:
+  zh-CN: 将导出 %{hosts} 台主机和 %{groups} 个分组。
+  en: "%{hosts} hosts and %{groups} groups will be written."
+host.portable.export.skipped:
+  zh-CN: 另有 %{count} 台非 SSH 主机（Telnet 或串口）不会导出。
+  en: "%{count} hosts that are not SSH (Telnet or serial) are left out."
+host.portable.export.encrypt:
+  zh-CN: 用口令加密文件
+  en: Seal the file with a password
+host.portable.export.password:
+  zh-CN: 口令
+  en: Password
+host.portable.export.password_confirm:
+  zh-CN: 再次输入口令
+  en: Repeat the password
+host.portable.export.secrets:
+  zh-CN: 同时导出密码和私钥口令
+  en: Include passwords and key passphrases
+host.portable.export.secrets_hint:
+  zh-CN: 密码和私钥口令默认不写入文件。勾选后整份文件用上面的口令加密，只有知道口令的人才能导入。
+  en: Passwords and key passphrases stay out of the file unless you ask for them. The whole file is then sealed with the password above, and only someone who knows it can import the file.
+host.portable.export.path:
+  zh-CN: 保存到
+  en: Save to
+host.portable.export.choose:
+  zh-CN: 选择…
+  en: Choose…
+host.portable.export.commit:
+  zh-CN: 导出
+  en: Export
+host.portable.export.nothing:
+  zh-CN: 没有可导出的主机或分组。
+  en: There are no hosts or groups to export.
+host.portable.export.password_needed:
+  zh-CN: 请先输入加密用的口令。
+  en: Enter the password to seal the file with first.
+host.portable.export.password_mismatch:
+  zh-CN: 两次输入的口令不一致。
+  en: The two passwords do not match.
+host.portable.export.done_title:
+  zh-CN: 导出完成
+  en: Export Finished
+host.portable.export.done:
+  zh-CN: 已导出 %{hosts} 台主机和 %{groups} 个分组。
+  en: "Exported %{hosts} hosts and %{groups} groups."
+host.portable.export.done_skipped:
+  zh-CN: 跳过 %{count} 台非 SSH 主机。
+  en: "Left out %{count} hosts that are not SSH."
+host.portable.export.failed:
+  zh-CN: 导出失败
+  en: Export Failed
+host.portable.import.title:
+  zh-CN: 导入 ShellAs 文件
+  en: Import ShellAs File
+host.portable.import.file:
+  zh-CN: 文件
+  en: File
+host.portable.import.choose:
+  zh-CN: 选择…
+  en: Choose…
+host.portable.import.choose_prompt:
+  zh-CN: 选择 ShellAs 导出的主机文件
+  en: Choose a host file ShellAs exported
+host.portable.import.rules:
+  zh-CN: 已存在的主机（名称或地址相同）会跳过，现有主机不受改动；同名分组会并入现有分组。
+  en: Hosts that are already saved, by name or by address, are skipped and never changed; groups with the same name are merged into the saved ones.
+host.portable.import.loading:
+  zh-CN: 正在读取…
+  en: Reading…
+host.portable.import.unreadable:
+  zh-CN: 无法读取 %{path}：%{error}
+  en: "Could not read %{path}: %{error}"
+host.portable.import.locked:
+  zh-CN: 这个文件用口令加密了。请输入导出时设置的口令。
+  en: This file is sealed. Enter the password it was exported with.
+host.portable.import.password:
+  zh-CN: 口令
+  en: Password
+host.portable.import.unlock:
+  zh-CN: 解锁
+  en: Unlock
+host.portable.import.password_needed:
+  zh-CN: 请输入文件的口令。
+  en: Enter the file's password.
+host.portable.import.wrong_password:
+  zh-CN: 口令不正确，或文件已被改动。
+  en: The password is wrong, or the file has been changed.
+host.portable.import.summary:
+  zh-CN: 文件中有 %{hosts} 台主机和 %{groups} 个分组。
+  en: The file holds %{hosts} hosts and %{groups} groups.
+host.portable.import.groups_merged:
+  zh-CN: "%{count} 个分组与现有分组同名，将并入现有分组。"
+  en: "%{count} groups share a name with saved ones and will be merged."
+host.portable.import.conflicts:
+  zh-CN: 已存在、将跳过 %{count} 台：%{names}
+  en: "Already saved, skipped %{count}: %{names}"
+host.portable.import.needs_password:
+  zh-CN: 导入后需要重新输入密码 %{count} 台：%{names}
+  en: "%{count} hosts will ask for their password: %{names}"
+host.portable.import.needs_key:
+  zh-CN: 本机找不到私钥 %{count} 台，将改用 SSH 代理或默认密钥：%{names}
+  en: "%{count} hosts have no key on this machine and will try the SSH agent or the default keys: %{names}"
+host.portable.import.commit:
+  zh-CN: 导入
+  en: Import
+host.portable.import.done_title:
+  zh-CN: 导入完成
+  en: Import Finished
+host.portable.import.done:
+  zh-CN: 已导入 %{hosts} 台主机，跳过 %{skipped} 台已存在的主机。
+  en: "Imported %{hosts} hosts and skipped %{skipped} that were already saved."
+host.portable.import.done_groups:
+  zh-CN: 新建 %{added} 个分组，并入 %{reused} 个。
+  en: "Added %{added} groups and merged %{reused}."
+host.portable.import.done_needs_password:
+  zh-CN: 需要重新输入密码：%{names}
+  en: "Passwords to enter: %{names}"
+host.portable.import.done_needs_key:
+  zh-CN: 缺少私钥：%{names}
+  en: "Keys missing on this machine: %{names}"

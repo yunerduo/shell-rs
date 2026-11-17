@@ -14,6 +14,7 @@ mod secret_fields;
 mod ssh_link;
 mod state;
 mod store;
+mod transfer;
 
 pub use describe::{
     ErrorMessage, KindLabel, credential_summary, matches_credential_query, matches_forward_query,
@@ -33,3 +34,8 @@ pub use shellrs_hosts::*;
 pub use ssh_link::{LinkKind, SshLink, standard_url};
 pub use state::ConnectionState;
 pub use store::{HostStore, HostStoreEvent};
+pub use transfer::{
+    ExportDone, ExportError, ExportPlan, ExportRequest, ImportPreview, ImportSummary,
+    PendingSecret, apply_import, archive_error, default_export_dir, finish_export,
+    open_export_hosts_dialog, open_import_hosts_dialog, plan_export, preview_import,
+};

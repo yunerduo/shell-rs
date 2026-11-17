@@ -18,6 +18,7 @@ mod front;
 mod imports;
 mod links;
 mod notices;
+mod portable;
 mod projects;
 mod quit;
 mod recent_hosts;

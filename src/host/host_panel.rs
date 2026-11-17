@@ -23,9 +23,10 @@ use crate::app::{
     CatalogIcon, CollapseAllGroups, CollapseSelectedGroup, ConnectGroup, ConnectHost, ConnectHosts,
     ConnectSelected, CopyHostAddress, CopyHostAddresses, CopyHostId, CopyHostIds, DeleteGroup,
     DeleteHost, DeleteHosts, DuplicateHost, DuplicateHosts, EditHost, ExpandAllGroups,
-    ExpandSelectedGroup, HOST_PANEL_CONTEXT, HOST_TREE_CONTEXT, ImportKnownHosts, ImportSshConfig,
-    ImportXshell, MoveHostNode, NewChildGroup, NewGroup, NewHost, NewHostInGroup, OpenExplorer,
-    OpenExplorerHosts, RenameGroup, SelectNextHostRow, SelectPreviousHostRow, ToggleHostDetails,
+    ExpandSelectedGroup, ExportHosts, HOST_PANEL_CONTEXT, HOST_TREE_CONTEXT, ImportHostsFile,
+    ImportKnownHosts, ImportSshConfig, ImportXshell, MoveHostNode, NewChildGroup, NewGroup,
+    NewHost, NewHostInGroup, OpenExplorer, OpenExplorerHosts, RenameGroup, SelectNextHostRow,
+    SelectPreviousHostRow, ToggleHostDetails,
 };
 
 use crate::i18n::{UiLocale, t, tn};
@@ -1585,8 +1586,8 @@ fn build_context_menu(
     }
 }
 
-/// The import commands, one per source: under the blank space's menu and
-/// in the dock's 「…」 menu while the host list shows.
+/// The import and export commands: under the blank space's menu and in the
+/// dock's 「…」 menu while the host list shows.
 pub fn import_menu_items(menu: PopupMenu) -> PopupMenu {
     menu.menu_with_icon(
         t!("host.menu.import_ssh_config"),
@@ -1602,6 +1603,17 @@ pub fn import_menu_items(menu: PopupMenu) -> PopupMenu {
         t!("host.menu.import_xshell"),
         Icon::new(CatalogIcon::Import),
         Box::new(ImportXshell),
+    )
+    .separator()
+    .menu_with_icon(
+        t!("host.menu.export_hosts"),
+        Icon::new(CatalogIcon::Upload),
+        Box::new(ExportHosts),
+    )
+    .menu_with_icon(
+        t!("host.menu.import_file"),
+        Icon::new(CatalogIcon::Download),
+        Box::new(ImportHostsFile),
     )
 }
 

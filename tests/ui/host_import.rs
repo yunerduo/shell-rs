@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use shellrs::analytics::{Analytics, Counter, Signal};
-use shellrs::app::{ImportKnownHosts, ImportSshConfig};
+use shellrs::app::{ExportHosts, ImportKnownHosts, ImportSshConfig};
 
 use crate::support::*;
 
@@ -372,5 +372,31 @@ async fn without_a_file_or_a_selection_nothing_can_be_imported(cx: &mut TestAppC
     in_frame(cx, handle, |window, _| {
         assert_eq!(window.find(("import-select", 1usize)).checked(), Some(true));
         assert!(enabled(&window.find("commit")));
+    });
+}
+
+#[gpui_kit::test]
+async fn exporting_hosts_opens_the_dialog_with_its_choices(cx: &mut TestAppContext) {
+    let (handle, _workspace) = open_workspace(cx);
+    in_frame(cx, handle, |window, cx| {
+        window.dispatch_action(Box::new(ExportHosts), cx)
+    });
+    cx.wait_for(handle.into(), Duration::from_secs(2), |window, cx| {
+        window.render_frame(cx);
+        window.try_find("export-encrypt").is_some()
+    })
+    .await;
+    in_frame(cx, handle, |window, cx| {
+        assert!(window.try_find("export-encrypt").is_some());
+        assert!(window.try_find("export-secrets").is_some());
+        // Secrets cannot travel unsealed, so the box starts out disabled.
+        assert!(!enabled(&window.find("export-secrets")));
+        window.click("export-encrypt", cx);
+    });
+    in_frame(cx, handle, |window, cx| {
+        window.render_frame(cx);
+        assert!(enabled(&window.find("export-secrets")));
+        assert!(window.try_find("export-password").is_some());
+        assert!(window.try_find("export-password-confirm").is_some());
     });
 }
