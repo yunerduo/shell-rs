@@ -1,5 +1,5 @@
 // Copied beside the generated Kotlin interface by scripts/build-android.sh.
-package com.shellrs.core
+package com.shellas.core
 
 /**
  * Android's own certificate checks for sync over HTTPS (WebDAV, S3), as the

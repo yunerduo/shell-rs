@@ -22,5 +22,5 @@ pub use model::{
     TerminalBackgroundSettings, TerminalFontSettings, TerminalHighlightSettings,
     TerminalThemeSettings, UpdateSettings, WindowSettings,
 };
-pub use settings_panel::{SettingsPanel, SettingsPanelEvent};
+pub use settings_panel::{ACCOUNT_CATEGORY_INDEX, SettingsPanel, SettingsPanelEvent};
 pub use store::{SettingsProblem, SettingsStore, SettingsStoreEvent};

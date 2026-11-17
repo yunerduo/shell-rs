@@ -13,7 +13,7 @@ use zeroize::Zeroizing;
 
 use crate::support::*;
 
-const FOLDER: &str = "/Users/me/Dropbox/ShellRS";
+const FOLDER: &str = "/Users/me/Dropbox/ShellAs";
 const PASSWORD: &str = "correct horse battery";
 
 fn at_folder() -> SyncLocation {
@@ -609,7 +609,7 @@ async fn a_new_password_and_key_are_asked_for_on_the_other_computer(cx: &mut Tes
     assert!(host_names(&laptop.store, cx).contains(&"cache-01".to_string()));
 }
 
-const DAV: &str = "https://dav.example/dav/ShellRS";
+const DAV: &str = "https://dav.example/dav/ShellAs";
 const DAV_USER: &str = "me@example.com";
 const S3_ENDPOINT: &str = "https://abc123.r2.cloudflarestorage.com";
 const S3_KEY: &str = "AKIAEXAMPLE";
@@ -901,7 +901,7 @@ async fn sync_is_set_up_in_an_s3_bucket(cx: &mut TestAppContext) {
             endpoint: S3_ENDPOINT.into(),
             region: "auto".into(),
             bucket: "shellrs".into(),
-            prefix: "ShellRS".into(),
+            prefix: "ShellAs".into(),
             path_style: false,
             access_key: S3_KEY.into(),
         })
@@ -912,7 +912,7 @@ async fn sync_is_set_up_in_an_s3_bucket(cx: &mut TestAppContext) {
     in_frame(cx, handle, |window, _| {
         assert_eq!(
             window.find("sync-s3-location").label(),
-            Some(format!("shellrs/ShellRS · {S3_ENDPOINT}").as_str())
+            Some(format!("shellrs/ShellAs · {S3_ENDPOINT}").as_str())
         );
         assert!(window.try_find("change-sync-login").is_some());
     });
@@ -1060,7 +1060,7 @@ async fn what_is_not_a_setup_code_is_refused_at_once(cx: &mut TestAppContext) {
 
     for (pasted, said) in [
         (
-            "https://dav.example/dav/ShellRS".to_owned(),
+            "https://dav.example/dav/ShellAs".to_owned(),
             "这不是有效的配置码，可能没有复制完整。",
         ),
         (
@@ -1070,7 +1070,7 @@ async fn what_is_not_a_setup_code_is_refused_at_once(cx: &mut TestAppContext) {
         // "SRSC", then version 2.
         (
             "shellrs-sync:U1JTQwI".to_owned(),
-            "这个配置码来自更新版本的 Agree ShellAS，升级后才能使用。",
+            "这个配置码来自更新版本的 ShellAs，升级后才能使用。",
         ),
     ] {
         cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string(pasted)));

@@ -10,26 +10,26 @@ use shellrs::settings::{SettingsProblem, SettingsStore};
 
 fn main() {
     let args = shellrs::cli::command_line_arguments().unwrap_or_default();
-    // `ShellRS ssh://user@host:port` or `ShellRS -url … -newtab 名称`: a
-    // bastion host opening ShellRS the way it opens Xshell. On every build,
+    // `ShellAs ssh://user@host:port` or `ShellAs -url … -newtab 名称`: a
+    // bastion host opening ShellAs the way it opens Xshell. On every build,
     // a Windows release build above all, where bastion hosts run it.
     let link = shellrs::cli::link_arguments(&args);
-    // `shellrs hosts list`, `shellrs exec …`: the command, not the app. Not in a
+    // `shellas hosts list`, `shellas exec …`: the command, not the app. Not in a
     // Windows release build, which has nowhere to print: there the command
-    // is `shellrs-cli.exe`, which 设置 → 外部 CLI puts on the PATH.
+    // is `shellas-cli.exe`, which 设置 → 外部 CLI puts on the PATH.
     #[cfg(any(not(windows), debug_assertions))]
     if link.is_none() && !args.is_empty() {
         std::process::exit(shellrs::cli::main(args));
     }
-    // One ShellRS per data directory. Each keeps the hosts in memory and
+    // One ShellAs per data directory. Each keeps the hosts in memory and
     // writes its changes through, so a second one would write over the
-    // first one's; opened again, ShellRS brings the running one forward
+    // first one's; opened again, ShellAs brings the running one forward
     // and hands it the link.
     if shellrs::cli::activate_running_app(&shellrs::app::cli_socket_path(), link.clone()) {
         return;
     }
     let app = gpui_kit::application().with_assets(shellrs::app::AppAssets);
-    // macOS: the Dock icon of a ShellRS whose window was closed, which only
+    // macOS: the Dock icon of a ShellAs whose window was closed, which only
     // hid it (see `hide_when_closed`).
     app.on_reopen(|cx| {
         if let Some(shellrs::app::MainWindow(window)) = cx.try_global().copied() {
@@ -68,7 +68,7 @@ fn main() {
             let window = cx
                 .open_window(options, |window, cx| {
                     window.activate_window();
-                    window.set_window_title(shellrs::app::PRODUCT_NAME);
+                    window.set_window_title(shellrs::app::WINDOW_TITLE);
                     #[cfg(windows)]
                     shellrs::app::listen_for_tray(window, cx);
                     shellrs::app::hide_when_closed(window, cx);
@@ -173,7 +173,7 @@ fn open_store() -> (HostStore, Option<SharedString>) {
             (store, problem)
         }
         Err(error) => {
-            eprintln!("shellrs: cannot open the local database: {error}");
+            eprintln!("shellas: cannot open the local database: {error}");
             (
                 HostStore::empty().with_secrets(secrets),
                 Some(shellrs::app::database_unavailable(&error)),

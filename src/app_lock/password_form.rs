@@ -292,7 +292,7 @@ impl Render for UnlockScreen {
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .child(TitleBar::new().child(crate::app::PRODUCT_NAME))
+            .child(TitleBar::new().child(crate::app::WINDOW_TITLE))
             .child(
                 v_flex()
                     .flex_1()

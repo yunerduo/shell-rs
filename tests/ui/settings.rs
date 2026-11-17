@@ -208,12 +208,12 @@ fn without_a_home_to_install_into_the_external_cli_offers_nothing(cx: &mut TestA
 fn agent_skills_install_where_each_agent_looks_and_come_off_again(cx: &mut TestAppContext) {
     let (handle, workspace) = open_workspace(cx);
     let root = tempfile::tempdir().unwrap();
-    let exe = root.path().join("app").join("shellrs");
+    let exe = root.path().join("app").join("shellas");
     std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
     std::fs::write(&exe, "binary").unwrap();
     let paths = IntegrationPaths {
         home: root.path().join("home"),
-        bin_link: root.path().join("bin").join("shellrs"),
+        bin_link: root.path().join("bin").join("shellas"),
         exe,
         user_path: None,
     };
@@ -354,7 +354,7 @@ fn terminal_themes_follow_the_appearance_and_a_card_chooses_one(cx: &mut TestApp
     let dark = TerminalTheme::for_mode(ThemeMode::Dark).nth(1).unwrap();
 
     set_appearance(Appearance::Light, cx);
-    assert_eq!(in_effect(cx), "shellrs-light");
+    assert_eq!(in_effect(cx), "shellas-light");
     in_frame(cx, handle, |window, cx| window.click("open-settings", cx));
     // 外观 is the first category; its second group holds both columns.
     in_frame(cx, handle, |window, cx| {
@@ -362,11 +362,11 @@ fn terminal_themes_follow_the_appearance_and_a_card_chooses_one(cx: &mut TestApp
     });
     in_frame(cx, handle, |window, cx| {
         assert_eq!(
-            window.find("terminal-theme-shellrs-light").checked(),
+            window.find("terminal-theme-shellas-light").checked(),
             Some(true)
         );
         assert_eq!(
-            window.find("terminal-theme-shellrs-dark").checked(),
+            window.find("terminal-theme-shellas-dark").checked(),
             Some(true)
         );
         assert_eq!(window.find(card(light)).checked(), Some(false));
@@ -384,14 +384,14 @@ fn terminal_themes_follow_the_appearance_and_a_card_chooses_one(cx: &mut TestApp
     let neutral = |cx: &mut TestAppContext| {
         cx.update(|cx| {
             let name = cx.theme().theme_name().clone();
-            name == "Default Light" || name == "Agree ShellAS Dark"
+            name == "Default Light" || name == "ShellAs Dark"
         })
     };
     assert!(neutral(cx));
     in_frame(cx, handle, |window, cx| {
         assert_eq!(window.find(card(light)).checked(), Some(true));
         assert_eq!(
-            window.find("terminal-theme-shellrs-light").checked(),
+            window.find("terminal-theme-shellas-light").checked(),
             Some(false)
         );
         window.click(card(dark), cx);
@@ -441,9 +441,9 @@ fn terminal_themes_follow_the_appearance_and_a_card_chooses_one(cx: &mut TestApp
 
     // Back on the default, the app is gpui-kit's own light theme again.
     in_frame(cx, handle, |window, cx| {
-        window.click("terminal-theme-shellrs-light", cx)
+        window.click("terminal-theme-shellas-light", cx)
     });
-    assert_eq!(in_effect(cx), "shellrs-light");
+    assert_eq!(in_effect(cx), "shellas-light");
     cx.update(|cx| assert_eq!(cx.theme().theme_name().as_ref(), "Default Light"));
 }
 

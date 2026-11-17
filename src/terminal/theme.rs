@@ -156,9 +156,9 @@ impl TerminalColors {
 /// The app's light theme around a terminal: white, `neutral-950` text, the
 /// `primary` cursor and the `selection` over white, with ANSI colors from
 /// the same Tailwind palette, dark enough to read on white.
-const SHELLRS_LIGHT: TerminalTheme = TerminalTheme {
-    key: "shellrs-light",
-    name: "Agree ShellAS Light",
+const SHELLAS_LIGHT: TerminalTheme = TerminalTheme {
+    key: "shellas-light",
+    name: "ShellAs Light",
     mode: ThemeMode::Light,
     foreground: 0x0a0a0a,
     background: 0xffffff,
@@ -173,9 +173,9 @@ const SHELLRS_LIGHT: TerminalTheme = TerminalTheme {
 /// The app's dark theme around a terminal: its charcoal background and soft
 /// text and cursor, the `selection` over the background, with ANSI colors
 /// light enough to read on it; black is the app's borders.
-const SHELLRS_DARK: TerminalTheme = TerminalTheme {
-    key: "shellrs-dark",
-    name: "Agree ShellAS Dark",
+const SHELLAS_DARK: TerminalTheme = TerminalTheme {
+    key: "shellas-dark",
+    name: "ShellAs Dark",
     mode: ThemeMode::Dark,
     foreground: 0xe0e0e4,
     background: 0x1e1e1f,
@@ -191,7 +191,7 @@ const SHELLRS_DARK: TerminalTheme = TerminalTheme {
 /// The light and dark versions of one theme share a row; a theme without the
 /// other version comes after them.
 static THEMES: [TerminalTheme; 20] = [
-    SHELLRS_LIGHT,
+    SHELLAS_LIGHT,
     SOLARIZED_LIGHT,
     TOKYO_DAY,
     CATPPUCCIN_LATTE,
@@ -201,7 +201,7 @@ static THEMES: [TerminalTheme; 20] = [
     KANAGAWA_LOTUS,
     ROSE_PINE_DAWN,
     EVERFOREST_LIGHT,
-    SHELLRS_DARK,
+    SHELLAS_DARK,
     SOLARIZED_DARK,
     TOKYO_NIGHT,
     CATPPUCCIN_MOCHA,

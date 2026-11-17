@@ -2,7 +2,7 @@ _version: 2
 
 app.database_unavailable:
   zh-CN: 无法打开本地数据库，本次运行的改动不会被保存：%{error}
-  en: "Couldn’t open the local database, so changes last only until Agree ShellAS quits: %{error}"
+  en: "Couldn’t open the local database, so changes last only until ShellAs quits: %{error}"
 
 # What the Windows shutdown screen says the session is waiting for.
 app.shutdown.blocked:
@@ -22,14 +22,14 @@ app.tray.failed:
 # The macOS menu bar, worded as macOS words these items in every app: in
 # English in title case, as native menu commands are.
 app.menu.about:
-  zh-CN: 关于 Agree ShellAS
-  en: About Agree ShellAS
+  zh-CN: 关于 ShellAs
+  en: About ShellAs
 app.menu.settings:
   zh-CN: 设置…
   en: Settings…
 app.menu.hide:
-  zh-CN: 隐藏 Agree ShellAS
-  en: Hide Agree ShellAS
+  zh-CN: 隐藏 ShellAs
+  en: Hide ShellAs
 app.menu.hide_others:
   zh-CN: 隐藏其他
   en: Hide Others
@@ -37,8 +37,8 @@ app.menu.show_all:
   zh-CN: 全部显示
   en: Show All
 app.menu.quit:
-  zh-CN: 退出 Agree ShellAS
-  en: Quit Agree ShellAS
+  zh-CN: 退出 ShellAs
+  en: Quit ShellAs
 app.menu.window:
   zh-CN: 窗口
   en: Window
@@ -75,8 +75,8 @@ app.shortcut.restore_window:
   zh-CN: 还原窗口
   en: Restore window
 app.shortcut.show_hide_app:
-  zh-CN: 显示或隐藏 Agree ShellAS（全局）
-  en: Show or hide Agree ShellAS (system-wide)
+  zh-CN: 显示或隐藏 ShellAs（全局）
+  en: Show or hide ShellAs (system-wide)
 app.shortcut.focus_search:
   zh-CN: 聚焦搜索
   en: Focus search

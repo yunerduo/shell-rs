@@ -37,7 +37,7 @@ where
     let stop = Arc::new(AtomicBool::new(false));
     let bridge_stop = stop.clone();
     let bridge = thread::Builder::new()
-        .name("shellrs-ssh-command-bridge".into())
+        .name("shellas-ssh-command-bridge".into())
         .spawn(move || {
             while !bridge_stop.load(Ordering::Acquire) {
                 match commands.recv_timeout(Duration::from_millis(20)) {

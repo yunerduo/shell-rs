@@ -14,7 +14,7 @@ use crate::i18n::t;
 /// The line the setup is marked with, at its start and end, in the file it
 /// goes into: how a check knows it is there, and a setup does not add it
 /// twice. Never changed once released.
-const MARKER: &str = "ShellRS directory follow";
+const MARKER: &str = "ShellAs directory follow";
 
 /// What the check runs: the login shell, the host's name as its shell
 /// reports it (`uname -n`, which bash's `$HOSTNAME` and zsh's `$HOST` are
@@ -45,11 +45,11 @@ pub struct FollowCheck {
     /// The host's name, which the folders it reports carry.
     pub hostname: String,
     /// The setup to offer; none when the shell reports already, or is not
-    /// one ShellRS sets up.
+    /// one ShellAs sets up.
     pub setup: Option<FollowSetup>,
 }
 
-/// A setup ShellRS can make: which shell, into which file.
+/// A setup ShellAs can make: which shell, into which file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FollowSetup {
     pub shell: SetupShell,
@@ -146,19 +146,19 @@ fn snippet(shell: SetupShell) -> String {
         SetupShell::Bash => (
             "HOSTNAME",
             "case \";${PROMPT_COMMAND-};\" in\n  \
-             *\";__shellrs_osc7;\"*) ;;\n  \
-             *) PROMPT_COMMAND=\"__shellrs_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}\" ;;\n\
+             *\";__shellas_osc7;\"*) ;;\n  \
+             *) PROMPT_COMMAND=\"__shellas_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}\" ;;\n\
              esac\n",
         ),
         SetupShell::Zsh => (
             "HOST",
-            "autoload -Uz add-zsh-hook && add-zsh-hook precmd __shellrs_osc7\n",
+            "autoload -Uz add-zsh-hook && add-zsh-hook precmd __shellas_osc7\n",
         ),
     };
     format!(
         "\n# >>> {MARKER} >>>\n\
          # Reports the shell's folder to the terminal (OSC 7) before each prompt.\n\
-         __shellrs_osc7() {{\n  \
+         __shellas_osc7() {{\n  \
          local rc=$? url= i ch hex LC_CTYPE=C LC_COLLATE=C LC_ALL= LANG=\n  \
          for ((i = 0; i < ${{#PWD}}; i++)); do\n    \
          ch=${{PWD:$i:1}}\n    \
@@ -374,7 +374,7 @@ mod tests {
         std::fs::write(&file, snippet(SetupShell::Bash)).unwrap();
         let script = format!(
             "PROMPT_COMMAND='echo old'; . '{file}'; . '{file}'; \
-             echo \"hooks=$PROMPT_COMMAND\"; cd '{folder}'; false; __shellrs_osc7; \
+             echo \"hooks=$PROMPT_COMMAND\"; cd '{folder}'; false; __shellas_osc7; \
              echo \"status=$?\"",
             file = file.display(),
             folder = folder.display()
@@ -387,7 +387,7 @@ mod tests {
             return;
         };
         let text = String::from_utf8_lossy(&output.stdout);
-        assert!(text.contains("hooks=__shellrs_osc7;echo old\n"), "{text:?}");
+        assert!(text.contains("hooks=__shellas_osc7;echo old\n"), "{text:?}");
         assert!(text.contains("status=1"), "{text:?}");
         let encoded = "/a%20b/%E6%96%87%E4%BB%B6\x07";
         assert!(text.contains("\x1b]7;file://"), "{text:?}");
@@ -403,7 +403,7 @@ mod tests {
         std::fs::write(&file, snippet(SetupShell::Zsh)).unwrap();
         let script = format!(
             "source '{file}'; source '{file}'; print \"hooks=$precmd_functions\"; \
-             cd '{folder}'; false; __shellrs_osc7; print \"status=$?\"",
+             cd '{folder}'; false; __shellas_osc7; print \"status=$?\"",
             file = file.display(),
             folder = folder.display()
         );
@@ -411,7 +411,7 @@ mod tests {
             return;
         };
         let text = String::from_utf8_lossy(&output.stdout);
-        assert!(text.contains("hooks=__shellrs_osc7\n"), "{text:?}");
+        assert!(text.contains("hooks=__shellas_osc7\n"), "{text:?}");
         assert!(text.contains("status=1"), "{text:?}");
         assert!(text.contains("/a%20b/%E6%96%87%E4%BB%B6\x07"), "{text:?}");
     }

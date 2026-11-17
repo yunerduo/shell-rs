@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Put a built `shellrs` binary into an AppImage.
+# Put a built `shellas` binary into an AppImage.
 #
 #   packaging/linux/appimage.sh <binary> <version> <out-dir>
 #
 # Needs appimagetool on the PATH (or APPIMAGETOOL), which uses the static
 # type2 runtime: the AppImage runs without libfuse2, which Ubuntu 22.04 and
 # later no longer install. The graphics stack (Vulkan, Mesa, Wayland, X) is
-# the host's and is not bundled. The icon is assets/logo/shellrs.png.
+# the host's and is not bundled. The icon is assets/logo/shellas.png.
 set -euo pipefail
 
 binary=$1
@@ -18,23 +18,23 @@ root=$(cd "$here/../.." && pwd)
 tool=${APPIMAGETOOL:-appimagetool}
 
 work=$(mktemp -d)
-appdir="$work/ShellRS.AppDir"
+appdir="$work/ShellAs.AppDir"
 mkdir -p "$appdir/usr/bin"
-cp "$binary" "$appdir/usr/bin/shellrs"
-chmod 755 "$appdir/usr/bin/shellrs"
-cp "$here/shellrs.desktop" "$appdir/shellrs.desktop"
-icon="$root/assets/logo/shellrs.png"
+cp "$binary" "$appdir/usr/bin/shellas"
+chmod 755 "$appdir/usr/bin/shellas"
+cp "$here/shellas.desktop" "$appdir/shellas.desktop"
+icon="$root/assets/logo/shellas.png"
 if [ ! -f "$icon" ]; then
     echo "error: $icon is missing; an AppImage needs an icon" >&2
     exit 1
 fi
-cp "$icon" "$appdir/shellrs.png"
+cp "$icon" "$appdir/shellas.png"
 # The executable itself is the entry point; the restart after an update
 # starts $APPIMAGE again, so nothing here needs to survive it.
-ln -s usr/bin/shellrs "$appdir/AppRun"
+ln -s usr/bin/shellas "$appdir/AppRun"
 
 mkdir -p "$out"
-target="$out/ShellRS-$version-linux-x86_64.AppImage"
+target="$out/ShellAs-$version-linux-x86_64.AppImage"
 ARCH=x86_64 "$tool" --no-appstream "$appdir" "$target"
 rm -rf "$work"
 echo "$target"

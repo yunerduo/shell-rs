@@ -195,7 +195,7 @@ pub enum SyncFailure {
     VaultMissing,
     /// Sync is set up there already, maybe just now by another device.
     VaultExists,
-    /// A newer ShellRS set sync up there: update the app.
+    /// A newer ShellAs set sync up there: update the app.
     VaultTooNew {
         version: u32,
     },
@@ -238,7 +238,7 @@ pub enum SyncFailure {
     /// The text is not a setup code, or not a whole one: maybe not all of
     /// it was copied.
     BadSetupCode,
-    /// The setup code was made by a newer ShellRS: update the app.
+    /// The setup code was made by a newer ShellAs: update the app.
     SetupCodeTooNew,
     /// The setup code does not open with the password, or opens a sync
     /// that has another now: it is not the sync password, or the code was
@@ -246,7 +246,7 @@ pub enum SyncFailure {
     SetupCodeWrongPassword,
     /// The core is gone.
     Closed,
-    /// What should never happen: a bug in ShellRS.
+    /// What should never happen: a bug in ShellAs.
     Internal {
         detail: String,
     },
@@ -330,7 +330,7 @@ pub fn is_sync_setup_code(text: String) -> bool {
 
 /// What is wrong with a setup code as scanned or pasted, as far as can be
 /// told before the sync password is asked for: not one or cut short
-/// ([`SyncFailure::BadSetupCode`]), or a newer ShellRS's
+/// ([`SyncFailure::BadSetupCode`]), or a newer ShellAs's
 /// ([`SyncFailure::SetupCodeTooNew`]). White space in it is passed over.
 #[uniffi::export]
 pub fn check_sync_setup_code(code: String) -> Result<(), SyncFailure> {
@@ -1153,7 +1153,7 @@ mod tests {
             platform: "ios".into(),
             app_version: "0.0.0".into(),
         };
-        let mut services = SyncServices::system("ShellRS/0.0.0", device.clone());
+        let mut services = SyncServices::system("ShellAs/0.0.0", device.clone());
         services.kdf = FAST;
         if let Some((store, login)) = server {
             let system = services.open.clone();

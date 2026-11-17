@@ -23,9 +23,13 @@ pub enum SecretRef {
         port: u16,
     },
     /// The passphrase of the private key file at `key_path`.
-    Passphrase { key_path: String },
+    Passphrase {
+        key_path: String,
+    },
     /// A password credential's password, by the credential's `keychain_id`.
-    Credential { keychain_id: String },
+    Credential {
+        keychain_id: String,
+    },
     /// The password of an HTTP or SOCKS5 proxy.
     Proxy {
         user: String,
@@ -34,16 +38,25 @@ pub enum SecretRef {
     },
     /// The secret a saved host's one-time codes come from, by the host's
     /// public id.
-    Totp { host: String },
+    Totp {
+        host: String,
+    },
     /// The password of a connection that is not saved, by an id the app
     /// gave it. The core keeps it in memory only: the keychain never sees
     /// it.
-    Temporary { host: u64 },
+    Temporary {
+        host: u64,
+    },
     /// Sync's keys.
     SyncKeyring,
     /// The password of the WebDAV server, or the secret key of the S3
     /// bucket, sync goes through.
     SyncLogin,
+    /// The account server's login token, or the remembered cloud sync
+    /// password. The desktop keeps these; the phone has no account UI yet,
+    /// and mapping them keeps the two enums in step.
+    AccountToken,
+    AccountSyncPassword,
 }
 
 impl From<&ssh::SecretRef> for SecretRef {
@@ -69,6 +82,8 @@ impl From<&ssh::SecretRef> for SecretRef {
             ssh::SecretRef::Temporary { host } => Self::Temporary { host: *host },
             ssh::SecretRef::SyncKeyring => Self::SyncKeyring,
             ssh::SecretRef::SyncLogin => Self::SyncLogin,
+            ssh::SecretRef::AccountToken => Self::AccountToken,
+            ssh::SecretRef::AccountSyncPassword => Self::AccountSyncPassword,
         }
     }
 }
@@ -84,6 +99,8 @@ impl From<SecretRef> for ssh::SecretRef {
             SecretRef::Temporary { host } => Self::temporary(host),
             SecretRef::SyncKeyring => Self::SyncKeyring,
             SecretRef::SyncLogin => Self::SyncLogin,
+            SecretRef::AccountToken => Self::AccountToken,
+            SecretRef::AccountSyncPassword => Self::AccountSyncPassword,
         }
     }
 }
@@ -98,7 +115,7 @@ pub fn account_for(secret: SecretRef) -> String {
 /// The app's keychain: implemented in Swift or Kotlin, on the platform's
 /// own (Keychain Services on iOS, the Keystore on Android). Each secret is
 /// a string under an account name ([`account_for`]); keep them all under
-/// one service, as the desktop keeps them under `shellrs`.
+/// one service, as the desktop keeps them under `shellas`.
 ///
 /// Only the core writes it: a password the app saves itself is one sync
 /// never hears of. Save through the store ([`crate::HostStore`]) instead.

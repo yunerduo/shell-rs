@@ -23,9 +23,9 @@ pub use computer::computer_name;
 #[cfg(target_os = "macos")]
 pub use menu_bar::show_menu_bar;
 pub use paths::{
-    PORTABLE_BIN, PORTABLE_DATA, SETUP_UNINSTALLER, analytics_path, cli_endpoint, cli_socket_path,
-    compose_history_path, data_dir, database_path, keys_dir, portable_root, settings_path,
-    terminal_output_dir, updates_dir, window_state_path,
+    PORTABLE_BIN, PORTABLE_DATA, SETUP_UNINSTALLER, account_path, analytics_path, avatars_dir,
+    cli_endpoint, cli_socket_path, cloud_dir, compose_history_path, data_dir, database_path,
+    keys_dir, portable_root, settings_path, terminal_output_dir, updates_dir, window_state_path,
 };
 pub use quit::{quit_held_back, set_quit_guard};
 pub use rendering::{SOFTWARE_FRAME_INTERVAL, frame_due, note_renderer, software_rendering};
@@ -50,13 +50,15 @@ use gpui_kit::*;
 use crate::host::{ErrorMessage, OpenError};
 use crate::i18n::t;
 
-/// The name the app shows: this fork's own, distinct from upstream. Data
-/// folders, the executable, the bundle id and the keychain keep `shellrs`
-/// so existing installations keep working.
-pub const PRODUCT_NAME: &str = "Agree ShellAS";
+/// The name the app shows: this fork's own, distinct from upstream.
+pub const PRODUCT_NAME: &str = "ShellAs";
 
-/// [`PRODUCT_NAME`] as one HTTP token, for User-Agent strings.
-pub const PRODUCT_TOKEN: &str = "AgreeShellAS";
+/// The main window's title, which still carries the old product name for now.
+pub const WINDOW_TITLE: &str = "Agree ShellAs";
+
+/// [`PRODUCT_NAME`] as one HTTP token, for User-Agent strings. Kept as
+/// `AgreeShellAs` so analytics and update traffic stay one product.
+pub const PRODUCT_TOKEN: &str = "AgreeShellAs";
 
 /// Key context of the host panel, for bindings that only apply there.
 pub const HOST_PANEL_CONTEXT: &str = "HostPanel";
@@ -78,20 +80,20 @@ pub const REMOTE_FILE_LIST_CONTEXT: &str = "RemoteFileList";
 /// The 查找文件 window of an SFTP tab.
 pub const FIND_FILES_CONTEXT: &str = "FindFiles";
 
-/// What Linux desktops match ShellRS's windows to its launcher by, for its
+/// What Linux desktops match ShellAs's windows to its launcher by, for its
 /// icon in the dock: Wayland's app_id and X11's `WM_CLASS`, as
-/// `packaging/linux/shellrs.desktop` names them. Unused elsewhere.
-pub const DESKTOP_APP_ID: &str = "shellrs";
+/// `packaging/linux/shellas.desktop` names them. Unused elsewhere.
+pub const DESKTOP_APP_ID: &str = "shellas";
 
-/// The identity the system shows ShellRS's notifications and taskbar button
+/// The identity the system shows ShellAs's notifications and taskbar button
 /// under: the macOS bundle's, which the Windows setup gives its shortcuts
 /// too. A portable copy has one of its own, so that next to an installed
 /// copy it gets its own taskbar button and pinning it pins this copy.
 pub fn app_identity() -> &'static str {
     if portable_root().is_some() {
-        "com.shellrs.ShellRS.Portable"
+        "host.agree.shellas.Portable"
     } else {
-        "com.shellrs.ShellRS"
+        "host.agree.shellas"
     }
 }
 
@@ -111,7 +113,7 @@ pub fn init(cx: &mut App) {
     // Before ours: rebuilding the keymap starts from gpui-kit's own.
     shortcuts::keep_kit_bindings(cx);
     deepen_list_hover(cx);
-    // gpui-kit's own text in the language ShellRS's is in: the saved one,
+    // gpui-kit's own text in the language ShellAs's is in: the saved one,
     // which `main` set before anything was built.
     crate::i18n::set_locale(crate::i18n::locale());
     // The defaults; the settings bring the user's changes once read.
@@ -188,7 +190,7 @@ mod tests {
 
     #[test]
     fn windows_carry_the_linux_launchers_window_class() {
-        let desktop = include_str!("../../packaging/linux/shellrs.desktop");
+        let desktop = include_str!("../../packaging/linux/shellas.desktop");
         assert!(
             desktop
                 .lines()

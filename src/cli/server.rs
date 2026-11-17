@@ -221,7 +221,7 @@ struct Shared {
     usage: Mutex<Vec<CliUse>>,
 }
 
-/// The kind of a `shellrs` command, as 匿名使用统计 counts them: nothing
+/// The kind of a `shellas` command, as 匿名使用统计 counts them: nothing
 /// of what it asked for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CliUse {
@@ -485,7 +485,7 @@ fn listen(socket: PathBuf, shared: Arc<Shared>) -> io::Result<Listener> {
 
     let (shutdown, mut stop) = watch::channel(false);
     let thread = std::thread::Builder::new()
-        .name("shellrs-cli".into())
+        .name("shellas-cli".into())
         .spawn(move || {
             let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -533,7 +533,7 @@ fn accept(stream: tokio::net::UnixStream, owner: u32, shared: &Arc<Shared>) {
     }
     let shared = shared.clone();
     let _ = std::thread::Builder::new()
-        .name("shellrs-cli-request".into())
+        .name("shellas-cli-request".into())
         .spawn(move || {
             // A caller that hangs up mid-answer is no one's problem.
             let _ = serve(&mut BufReader::new(&stream), &mut &stream, &shared);
@@ -586,7 +586,7 @@ fn listen(pipe: PathBuf, shared: Arc<Shared>) -> io::Result<Listener> {
     })?;
     let stop = Arc::new(AtomicBool::new(false));
     let thread = std::thread::Builder::new()
-        .name("shellrs-cli".into())
+        .name("shellas-cli".into())
         .spawn({
             let (pipe, stop) = (pipe.clone(), stop.clone());
             move || {
@@ -632,7 +632,7 @@ fn listen(pipe: PathBuf, shared: Arc<Shared>) -> io::Result<Listener> {
 fn answer(pipe: std::fs::File, shared: &Arc<Shared>) {
     let shared = shared.clone();
     let _ = std::thread::Builder::new()
-        .name("shellrs-cli-request".into())
+        .name("shellas-cli-request".into())
         .spawn(move || {
             // A caller that hangs up mid-answer is no one's problem.
             let _ = serve(&mut BufReader::new(&pipe), &mut &pipe, &shared);

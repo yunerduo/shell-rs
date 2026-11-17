@@ -1,8 +1,8 @@
 [bindings.swift]
-module_name = "ShellRSCore"
-ffi_module_name = "ShellRSCoreFFI"
-ffi_module_filename = "ShellRSCoreFFI"
+module_name = "ShellAsCore"
+ffi_module_name = "ShellAsCoreFFI"
+ffi_module_filename = "ShellAsCoreFFI"
 
 [bindings.kotlin]
-package_name = "com.shellrs.core"
+package_name = "com.shellas.core"
 cdylib_name = "shellrs_mobile"

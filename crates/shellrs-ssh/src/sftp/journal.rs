@@ -68,7 +68,7 @@ impl ResumeRecord {
             source_metadata: None,
             link_target: None,
             temporary,
-            backup: parent.join(&format!(".shellrs-{id}.backup"))?,
+            backup: parent.join(&format!(".shellas-{id}.backup"))?,
             target,
             original,
             phase: PublishPhase::Writing,
@@ -108,7 +108,7 @@ impl ResumeRecord {
 /// Whether `path` is a backup name this module makes up, beside `target`.
 fn managed_backup_path(path: &RemotePath, target: &RemotePath) -> bool {
     let name = path.as_str().rsplit('/').next().unwrap_or_default();
-    name.strip_prefix(".shellrs-")
+    name.strip_prefix(".shellas-")
         .and_then(|value| value.strip_suffix(".backup"))
         .and_then(|value| uuid::Uuid::parse_str(value).ok())
         .is_some()

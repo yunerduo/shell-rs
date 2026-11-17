@@ -1,7 +1,7 @@
-//! Putting `shellrs` on the PATH the Windows way. A link would need an
+//! Putting `shellas` on the PATH the Windows way. A link would need an
 //! administrator or developer mode there, and the app is a GUI program
 //! anyway, so the command is a copy of the console program
-//! `shellrs-cli.exe` in a folder of ShellRS's own, and that folder goes on
+//! `shellas-cli.exe` in a folder of ShellAs's own, and that folder goes on
 //! the user's PATH. Plain file work apart from the registry, so the tests
 //! run everywhere, with the PATH kept in a file.
 
@@ -253,43 +253,43 @@ mod tests {
 
     #[test]
     fn the_folder_is_found_added_once_and_removed_by_windows_rules() {
-        let folder = Path::new(r"C:\Users\me\AppData\Local\ShellRS\bin");
-        let value = r"C:\Windows;c:\users\ME\appdata\local\shellrs\BIN\;D:\tools";
+        let folder = Path::new(r"C:\Users\me\AppData\Local\ShellAs\bin");
+        let value = r"C:\Windows;c:\users\ME\appdata\local\shellas\BIN\;D:\tools";
         assert!(path_contains(value, folder));
         assert!(!path_contains(
-            r"C:\Windows;C:\Users\me\AppData\Local\ShellRS",
+            r"C:\Windows;C:\Users\me\AppData\Local\ShellAs",
             folder
         ));
 
         assert_eq!(
             path_with(r"C:\Windows", folder),
-            r"C:\Windows;C:\Users\me\AppData\Local\ShellRS\bin"
+            r"C:\Windows;C:\Users\me\AppData\Local\ShellAs\bin"
         );
         assert_eq!(
             path_with(r"C:\Windows;", folder),
-            r"C:\Windows;C:\Users\me\AppData\Local\ShellRS\bin"
+            r"C:\Windows;C:\Users\me\AppData\Local\ShellAs\bin"
         );
         assert_eq!(
             path_with("", folder),
-            r"C:\Users\me\AppData\Local\ShellRS\bin"
+            r"C:\Users\me\AppData\Local\ShellAs\bin"
         );
 
         assert_eq!(path_without(value, folder), r"C:\Windows;D:\tools");
         // Someone else's empty entries stay.
         assert_eq!(
-            path_without(r"C:\a;;C:\Users\me\AppData\Local\ShellRS\bin", folder),
+            path_without(r"C:\a;;C:\Users\me\AppData\Local\ShellAs\bin", folder),
             r"C:\a;"
         );
         assert_eq!(path_without(r"C:\a", folder), r"C:\a");
     }
 
     fn paths(root: &Path) -> IntegrationPaths {
-        let exe = root.join("app").join("shellrs-cli.exe");
+        let exe = root.join("app").join("shellas-cli.exe");
         fs::create_dir_all(exe.parent().unwrap()).unwrap();
         fs::write(&exe, "build 1").unwrap();
         IntegrationPaths {
             home: root.join("home"),
-            bin_link: root.join("ShellRS").join("bin").join("shellrs.exe"),
+            bin_link: root.join("ShellAs").join("bin").join("shellas.exe"),
             exe,
             user_path: Some(UserPath::File(root.join("PATH.txt"))),
         }
@@ -360,7 +360,7 @@ mod tests {
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
-        assert_eq!(names, ["shellrs.exe"]);
+        assert_eq!(names, ["shellas.exe"]);
     }
 
     #[test]

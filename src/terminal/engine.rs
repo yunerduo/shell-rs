@@ -945,7 +945,7 @@ impl TerminalRuntime {
             transferring: transferring.clone(),
         };
         thread::Builder::new()
-            .name("shellrs-terminal-parser".into())
+            .name("shellas-terminal-parser".into())
             .spawn(move || {
                 loop {
                     // Output inside a synchronized update is held back until
@@ -1066,7 +1066,7 @@ impl TerminalRuntime {
             .expect("terminal parser thread");
 
         thread::Builder::new()
-            .name("shellrs-terminal-transport".into())
+            .name("shellas-terminal-transport".into())
             .spawn(move || {
                 if let Err(error) = transport.run(size, command_receiver, transport_events.clone())
                 {

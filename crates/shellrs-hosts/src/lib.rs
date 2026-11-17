@@ -18,6 +18,7 @@ mod login;
 mod mark;
 mod model;
 mod node;
+pub mod portable;
 mod private_key;
 mod protocol;
 mod saved_terminal;
@@ -42,6 +43,7 @@ pub use login::{
 pub use mark::mark_color;
 pub use model::*;
 pub use node::{HostNode, NodeDrop};
+pub use portable::{Archive, ArchiveError, ArchivedGroup, ArchivedHost, FORMAT as ARCHIVE_FORMAT};
 pub use private_key::{
     GeneratedKey, KeyAlgorithm, PastedKey, PastedKeyError, read_public_key, read_small,
 };

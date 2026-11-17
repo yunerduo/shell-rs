@@ -39,7 +39,7 @@ impl SystemInfo {
         }
     }
 
-    /// `AgreeShellAS/0.1.5 (macOS 15.1.0; aarch64)`. Aptabase tells the
+    /// `AgreeShellAs/0.1.5 (macOS 15.1.0; aarch64)`. Aptabase tells the
     /// devices behind one address apart by it, so it says what differs
     /// between machines and nothing that names one.
     pub fn user_agent(&self, version: &str) -> String {
@@ -77,7 +77,7 @@ mod tests {
         assert_eq!(
             macos.user_agent("0.1.5"),
             format!(
-                "AgreeShellAS/0.1.5 (macOS 15.1.0; {})",
+                "AgreeShellAs/0.1.5 (macOS 15.1.0; {})",
                 std::env::consts::ARCH
             )
         );
@@ -85,7 +85,7 @@ mod tests {
         assert_eq!(
             bare.user_agent("0.1.5"),
             format!(
-                "AgreeShellAS/0.1.5 ({}; {})",
+                "AgreeShellAs/0.1.5 ({}; {})",
                 std::env::consts::OS,
                 std::env::consts::ARCH
             )

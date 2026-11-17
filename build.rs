@@ -7,16 +7,16 @@ fn main() {
     // The text `rust_i18n::i18n!` reads while compiling, which the macro
     // does not tell Cargo about.
     println!("cargo:rerun-if-changed=locales");
-    println!("cargo:rerun-if-changed=assets/logo/shellrs.ico");
+    println!("cargo:rerun-if-changed=assets/logo/shellas.ico");
     #[cfg(windows)]
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let mut resource = winresource::WindowsResource::new();
         resource
-            .set_icon("assets/logo/shellrs.ico")
-            .set("ProductName", "Agree ShellAS")
-            .set("FileDescription", "Agree ShellAS")
+            .set_icon("assets/logo/shellas.ico")
+            .set("ProductName", "ShellAs")
+            .set("FileDescription", "ShellAs")
             // Bastion launchers identify Xshell and WinSCP through this resource.
-            .set("OriginalFilename", "ShellRS-Xshell-WinSCP.exe");
+            .set("OriginalFilename", "shellas.exe");
         if let Err(error) = resource.compile() {
             panic!("cannot embed the icon: {error}");
         }

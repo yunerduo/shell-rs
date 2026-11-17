@@ -7,6 +7,7 @@
 
 mod support;
 
+mod account;
 mod analytics;
 mod app_lock;
 mod assistant;

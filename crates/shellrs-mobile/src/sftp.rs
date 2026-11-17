@@ -258,7 +258,7 @@ impl SftpSession {
         let (ready_tx, ready) = oneshot::channel();
         let sink = sink(replies.clone(), events.clone(), ready_tx);
         let spawned = std::thread::Builder::new()
-            .name("shellrs-sftp".into())
+            .name("shellas-sftp".into())
             .spawn({
                 let replies = replies.clone();
                 let events = events.clone();

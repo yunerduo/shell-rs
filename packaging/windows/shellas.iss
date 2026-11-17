@@ -1,12 +1,13 @@
-; The Windows setup program: installs ShellRS for the current user, with no
-; administrator rights, under %LOCALAPPDATA%\Programs\ShellRS.
+; The Windows setup program: installs ShellAs for the current user, with no
+; administrator rights, under %LOCALAPPDATA%\Programs\ShellAs.
 ;
-;   iscc /DAppVersion=0.2.0 /DBuildDir=..\..\target\release /O..\..\dist shellrs.iss
+;   iscc /DAppVersion=0.2.0 /DBuildDir=..\..\target\release /O..\..\dist shellas.iss
 ;
-; The same program updates an installed copy: ShellRS downloads the next
+; The same program updates an installed copy: ShellAs downloads the next
 ; version's setup and runs it with /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
-; /SP- once it has exited, then starts itself again. AppId must never
-; change, or the update installs a second copy beside the first.
+; /SP- once it has exited, then starts itself again. It was renamed before
+; 0.1.20 shipped; from then on AppId must never change, or the update
+; installs a second copy beside the first.
 
 #ifndef AppVersion
   #error Pass /DAppVersion=<version>
@@ -14,7 +15,7 @@
 #ifndef BuildDir
   #define BuildDir "..\..\target\release"
 #endif
-#define IconFile AddBackslash(SourcePath) + "..\..\assets\logo\shellrs.ico"
+#define IconFile AddBackslash(SourcePath) + "..\..\assets\logo\shellas.ico"
 ; Languages\ChineseSimplified.isl is UTF-8 without a BOM, and has the
 ; messages of 6.5 onwards.
 #if Ver < EncodeVer(6, 5, 0)
@@ -22,31 +23,34 @@
 #endif
 
 [Setup]
-AppId={{45D9E9F5-84BB-4B09-ABE8-1FFE107ACF96}
-AppName=Agree ShellAS
+AppId=host.agree.shellas
+AppName=ShellAs
 AppVersion={#AppVersion}
-AppVerName=Agree ShellAS {#AppVersion}
-AppPublisher=Agree ShellAS
+AppVerName=ShellAs {#AppVersion}
+AppPublisher=ShellAs
 AppPublisherURL=https://github.com/yunerduo/shell-rs
 AppSupportURL=https://github.com/yunerduo/shell-rs
 AppUpdatesURL=https://github.com/yunerduo/shell-rs/releases
-DefaultDirName={autopf}\ShellRS
+DefaultDirName={autopf}\ShellAs
+; Never inherit the folder of a copy installed under another name; this setup
+; writes only its own.
+UsePreviousAppDir=no
 DisableDirPage=auto
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-OutputBaseFilename=ShellRS-{#AppVersion}-windows-x86_64-setup
+OutputBaseFilename=ShellAs-{#AppVersion}-windows-x86_64-setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-UninstallDisplayIcon={app}\shellrs.exe
-UninstallDisplayName=Agree ShellAS
-; A running ShellRS is closed through the Restart Manager rather than
+UninstallDisplayIcon={app}\shellas.exe
+UninstallDisplayName=ShellAs
+; A running ShellAs is closed through the Restart Manager rather than
 ; making the setup fail on files in use.
 CloseApplications=yes
 ; The setup speaks the language Windows shows, without asking: Simplified
-; Chinese on a Chinese Windows, English on any other, as ShellRS itself.
+; Chinese on a Chinese Windows, English on any other, as ShellAs itself.
 ShowLanguageDialog=no
 ; Not the language of the copy it replaces: up to 0.1.9-beta.1 every setup
 ; was English, which would otherwise stay with each installed copy.
@@ -67,21 +71,21 @@ Name: "chinesesimplified"; MessagesFile: "Languages\ChineseSimplified.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "{#BuildDir}\shellrs.exe"; DestDir: "{app}"; Flags: ignoreversion
-; The `shellrs` command: 设置 › 外部 CLI copies it onto the PATH.
-Source: "{#BuildDir}\shellrs-cli.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\shellas.exe"; DestDir: "{app}"; Flags: ignoreversion
+; The `shellas` command: 设置 › 外部 CLI copies it onto the PATH.
+Source: "{#BuildDir}\shellas-cli.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-; The AppUserModelID ShellRS gives itself (`set_app_identity`, for its
+; The AppUserModelID ShellAs gives itself (`set_app_identity`, for its
 ; notifications): the same here keeps a pinned shortcut and the running
 ; window one taskbar button.
-Name: "{autoprograms}\Agree ShellAS"; Filename: "{app}\shellrs.exe"; AppUserModelID: "com.shellrs.ShellRS"
-Name: "{autodesktop}\Agree ShellAS"; Filename: "{app}\shellrs.exe"; AppUserModelID: "com.shellrs.ShellRS"; Tasks: desktopicon
+Name: "{autoprograms}\ShellAs"; Filename: "{app}\shellas.exe"; AppUserModelID: "host.agree.shellas"
+Name: "{autodesktop}\ShellAs"; Filename: "{app}\shellas.exe"; AppUserModelID: "host.agree.shellas"; Tasks: desktopicon
 
 [Run]
-; Interactive installs only: an update is restarted by ShellRS's own helper,
+; Interactive installs only: an update is restarted by ShellAs's own helper,
 ; which waits for this setup to finish.
-Filename: "{app}\shellrs.exe"; Description: "{cm:LaunchProgram,Agree ShellAS}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\shellas.exe"; Description: "{cm:LaunchProgram,ShellAs}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 ; Files a later version added, which this uninstaller does not list.

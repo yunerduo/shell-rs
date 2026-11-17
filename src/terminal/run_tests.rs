@@ -575,7 +575,7 @@ mod shells {
     }
 
     fn dump(text: &str) -> String {
-        format!("od -An -tx1 <<'SHELLRS_END'\n{text}\nSHELLRS_END")
+        format!("od -An -tx1 <<'SHELLAS_END'\n{text}\nSHELLAS_END")
     }
 
     /// Every ASCII character but NUL (which no shell string holds),

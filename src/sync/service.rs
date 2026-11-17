@@ -38,9 +38,9 @@ const QUIT_POLL: Duration = Duration::from_millis(50);
 pub fn system_services() -> SyncServices {
     let version = crate::update::build_info::VERSION;
     SyncServices::system(
-        &format!("ShellRS/{version}"),
+        &format!("ShellAs/{version}"),
         DeviceInfo {
-            name: crate::app::computer_name().unwrap_or_else(|| "ShellRS".into()),
+            name: crate::app::computer_name().unwrap_or_else(|| "ShellAs".into()),
             platform: std::env::consts::OS.into(),
             app_version: version.into(),
         },

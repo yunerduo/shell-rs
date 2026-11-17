@@ -1,7 +1,7 @@
 use super::model::{Resource, ResourceKind};
 use crate::i18n::t;
 
-const STATUS: &str = "__SHELLRS_K8S_EXIT__:";
+const STATUS: &str = "__SHELLAS_K8S_EXIT__:";
 pub(super) const LOG_BYTES: usize = 512 * 1024;
 
 /// Quote every argument, including contexts from an untrusted kubeconfig.
@@ -39,13 +39,13 @@ pub(super) const COMMAND_LIMIT: usize = 127 * 1024;
 pub(super) fn remote_stdin(command: &str, value: &serde_json::Value) -> String {
     let body = serde_json::to_string(value).expect("JSON values serialize");
     remote(&format!(
-        "{command} <<'__SHELLRS_K8S_INPUT__'\n{body}\n__SHELLRS_K8S_INPUT__"
+        "{command} <<'__SHELLAS_K8S_INPUT__'\n{body}\n__SHELLAS_K8S_INPUT__"
     ))
 }
 
 pub(super) const WIRE_LIMIT: usize = 1 << 20;
 pub(super) const DECODED_LIMIT: usize = 16 << 20;
-pub(super) const COMPRESSED: &str = "__SHELLRS_K8S_GZIP__\n";
+pub(super) const COMPRESSED: &str = "__SHELLAS_K8S_GZIP__\n";
 
 /// Compress only structured reads. Plain framing remains a portable fallback.
 pub(super) fn remote_data(command: &str) -> String {
@@ -114,14 +114,14 @@ pub(super) fn answer(output: &str) -> Result<String, String> {
 
 pub(super) fn contexts_command() -> String {
     remote(
-        "kubectl config current-context && printf '\\n__SHELLRS_CONTEXTS__\\n' && kubectl config get-contexts -o name",
+        "kubectl config current-context && printf '\\n__SHELLAS_CONTEXTS__\\n' && kubectl config get-contexts -o name",
     )
 }
 
 pub(super) fn contexts(output: &str) -> Result<(String, Vec<String>), String> {
     let output = answer(output)?;
     let (current, rest) = output
-        .split_once("\n__SHELLRS_CONTEXTS__\n")
+        .split_once("\n__SHELLAS_CONTEXTS__\n")
         .ok_or_else(|| t!("k8s.incomplete").to_string())?;
     let current = current.trim().to_owned();
     let mut names = rest

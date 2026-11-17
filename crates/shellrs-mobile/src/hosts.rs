@@ -276,7 +276,7 @@ pub struct PrivateKeyInfo {
     pub public_key: Option<String>,
 }
 
-/// Whether `text` is a private key ShellRS can log in with, and what kind.
+/// Whether `text` is a private key ShellAs can log in with, and what kind.
 #[uniffi::export]
 pub fn check_private_key(text: String) -> Result<PrivateKeyInfo, KeyProblem> {
     let key = hosts::PastedKey::parse(&text).map_err(KeyProblem::from)?;
@@ -319,7 +319,7 @@ pub enum KeyProblem {
     Empty,
     /// It is a public key, not a private one.
     PublicKey,
-    /// It is no private key ShellRS reads.
+    /// It is no private key ShellAs reads.
     Unreadable,
 }
 

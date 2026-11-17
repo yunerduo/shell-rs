@@ -1,4 +1,4 @@
-//! ShellRS for the mobile apps: the SSH core (`shellrs-ssh`) and the hosts
+//! ShellAs for the mobile apps: the SSH core (`shellrs-ssh`) and the hosts
 //! core (`shellrs-hosts`) behind an interface Swift and Kotlin bindings are
 //! generated from (UniFFI). This is the one interface the apps rely on,
 //! kept stable; the cores under it change as the desktop app needs.

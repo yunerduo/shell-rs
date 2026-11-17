@@ -1,2 +1,2 @@
-/* Agree ShellAS 第一次访问本地网络时，macOS 显示的说明。 */
-NSLocalNetworkUsageDescription = "Agree ShellAS 需要访问本地网络，才能连接局域网中的主机。";
+/* ShellAs 第一次访问本地网络时，macOS 显示的说明。 */
+NSLocalNetworkUsageDescription = "ShellAs 需要访问本地网络，才能连接局域网中的主机。";

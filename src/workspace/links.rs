@@ -1,6 +1,6 @@
 //! The workspace's share of the links ShellRS is opened with (外部连接):
-//! a bastion host runs `ShellRS ssh://user@host:port`, the way it runs
-//! Xshell, or `ShellRS sftp://…`, the way it runs WinSCP, and ShellRS
+//! a bastion host runs `ShellAs ssh://user@host:port`, the way it runs
+//! Xshell, or `ShellAs sftp://…`, the way it runs WinSCP, and ShellAs
 //! connects without saving the host. The host goes with its last tab.
 
 use gpui_kit::component::{WindowExt as _, dock::DockPlacement, notification::Notification};

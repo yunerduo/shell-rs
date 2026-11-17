@@ -1268,7 +1268,7 @@ impl HostForm {
         let (trust_tx, trust_rx) = std::sync::mpsc::channel::<TrustQuestion>();
         let (result_tx, result_rx) = std::sync::mpsc::channel();
         let spawned = std::thread::Builder::new()
-            .name("shellrs-connection-test".into())
+            .name("shellas-connection-test".into())
             .spawn(move || {
                 // Nobody left to answer (the form closed) reads as "no".
                 let trust: TrustCallback = Box::new(move |prompt| {

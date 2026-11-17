@@ -273,7 +273,7 @@ pub enum SshError {
     Failed {
         failure: Failure,
     },
-    /// What should never happen: a bug in ShellRS.
+    /// What should never happen: a bug in ShellAs.
     Internal {
         detail: String,
     },
@@ -406,7 +406,7 @@ impl From<&ssh::ConnectError> for ConnectError {
     }
 }
 
-/// What went wrong with the trust file, ShellRS's own `known_hosts`.
+/// What went wrong with the trust file, ShellAs's own `known_hosts`.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum KnownHostsError {
     ReadFailed {

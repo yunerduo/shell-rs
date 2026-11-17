@@ -24,7 +24,7 @@ use crate::sync::{self, SyncService};
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct CoreConfig {
     /// The app's own data folder, kept as the desktop keeps its own: the
-    /// database (`shellrs.db`), the private keys ShellRS keeps (`keys/`),
+    /// database (`shellas.db`), the private keys ShellAs keeps (`keys/`),
     /// the trusted host keys (`known_hosts`), where sync goes through and
     /// the resume records of transfers.
     pub data_dir: String,
@@ -44,14 +44,14 @@ pub enum CoreError {
     DataFolderInUse,
     /// The data folder could not be made, in the system's words.
     DataFolder { detail: String },
-    /// A newer ShellRS wrote the database, at schema `version`; this one
+    /// A newer ShellAs wrote the database, at schema `version`; this one
     /// knows up to `supported`. Update the app.
     DatabaseNewer { version: i64, supported: i64 },
     /// An early development build wrote the database.
     DatabaseTooOld { version: i64 },
     /// The database could not be opened or read, in SQLite's words.
     Database { detail: String },
-    /// What should never happen: a bug in ShellRS.
+    /// What should never happen: a bug in ShellAs.
     Internal { detail: String },
 }
 
@@ -104,7 +104,7 @@ impl Core {
     /// `config.data_dir`, or the folder or the database will not open.
     #[uniffi::constructor]
     pub fn new(config: CoreConfig, keychain: Arc<dyn Keychain>) -> Result<Arc<Self>, CoreError> {
-        let user_agent = format!("ShellRS/{}", config.app_version);
+        let user_agent = format!("ShellAs/{}", config.app_version);
         let device = DeviceInfo {
             name: config.device_name.clone(),
             platform: config.platform.clone(),
@@ -298,7 +298,7 @@ impl Core {
         let opened = Self::open_data(&data_dir, keychain).and_then(|(data, moved)| {
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
-                .thread_name("shellrs-core")
+                .thread_name("shellas-core")
                 .enable_all()
                 .build()
                 .map_err(|error| CoreError::Internal {
@@ -343,13 +343,13 @@ impl Core {
     }
 
     /// The saved data in `data_dir`, with the app's keychain. The private
-    /// keys ShellRS keeps are found again where the folder is now: an iOS
+    /// keys ShellAs keeps are found again where the folder is now: an iOS
     /// app's moves with each update.
     fn open_data(
         data_dir: &std::path::Path,
         keychain: Arc<dyn Keychain>,
     ) -> Result<(HostData, Option<shellrs_hosts::Failure>), CoreError> {
-        let database = HostDatabase::open(&data_dir.join("shellrs.db"))?;
+        let database = HostDatabase::open(&data_dir.join("shellas.db"))?;
         let data = HostData::load(database).map_err(|error| CoreError::Database {
             detail: error.to_string(),
         })?;

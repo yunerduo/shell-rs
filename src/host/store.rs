@@ -214,7 +214,7 @@ impl HostStore {
     }
 
     /// Keep a new terminal in `group`, or at the top, named after the group
-    /// (`shellrs 2`, or `终端 2` at the top) and starting in `directory`.
+    /// (`shellas 2`, or `终端 2` at the top) and starting in `directory`.
     /// `None` when the group is gone.
     pub fn insert_saved_terminal(
         &mut self,
@@ -242,7 +242,7 @@ impl HostStore {
     }
 
     /// Name a terminal by hand, or with `None` give it a name of its group's
-    /// again (`shellrs 3`), which gives way to the titles of its tab.
+    /// again (`shellas 3`), which gives way to the titles of its tab.
     pub fn rename_saved_terminal(
         &mut self,
         id: SavedTerminalId,
@@ -353,7 +353,7 @@ mod tests {
         use std::{cell::RefCell, rc::Rc};
 
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("shellrs.db");
+        let path = dir.path().join("shellas.db");
         let store = cx.new(|_| HostStore::load(HostDatabase::open(&path).unwrap()).unwrap());
         let events = Rc::new(RefCell::new(Vec::new()));
         let _subscription = cx.update(|cx| {

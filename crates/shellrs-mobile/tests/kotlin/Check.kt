@@ -2,7 +2,7 @@
 // password in the app's keychain, makes a key credential, checks sync's
 // forms, and connects to a closed port and fails, typed as the network.
 // `run.sh` runs it on this computer's JVM.
-import com.shellrs.core.*
+import com.shellas.core.*
 import java.nio.file.Files
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.system.exitProcess

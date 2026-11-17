@@ -122,7 +122,7 @@ fn write(commands: &[String], path: &Path) {
         std::fs::rename(temporary, path)
     })();
     if let Err(error) = written {
-        eprintln!("shellrs: cannot save the compose pane's history: {error}");
+        eprintln!("shellas: cannot save the compose pane's history: {error}");
     }
 }
 

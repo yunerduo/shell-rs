@@ -29,7 +29,7 @@ const LIST_HEIGHT: f32 = 24.;
 /// drawn in, or the theme's text color.
 const SAMPLE: &[&[(&str, Option<u8>)]] = &[
     &[
-        ("root@shellrs", Some(2)),
+        ("root@shellas", Some(2)),
         (":", None),
         ("~", Some(4)),
         ("$ ls -l", None),

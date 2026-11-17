@@ -104,7 +104,7 @@ impl TerminalTransport for LocalPtyTransport {
         let wrote = Arc::new(AtomicBool::new(false));
         let output_seen = wrote.clone();
         let reader_thread = thread::Builder::new()
-            .name("shellrs-pty-reader".into())
+            .name("shellas-pty-reader".into())
             .spawn(move || {
                 let mut buffer = [0_u8; 8192];
                 loop {
@@ -225,7 +225,7 @@ fn shell_command(shell: &LocalShell) -> Result<CommandBuilder> {
     strip_launcher_vars(&mut command);
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
-    command.env("TERM_PROGRAM", "ShellRS");
+    command.env("TERM_PROGRAM", "ShellAs");
     Ok(command)
 }
 
@@ -347,8 +347,8 @@ mod tests {
     /// parameter and writes it into the argv[0] of every command it runs.
     #[test]
     fn the_shell_does_not_see_the_packaging() {
-        const CHILD: &str = "SHELLRS_TEST_WITH_THE_PACKAGING";
-        const APPIMAGE: &str = "/tmp/ShellRS-0.1.14-linux-x86_64.AppImage";
+        const CHILD: &str = "SHELLAS_TEST_WITH_THE_PACKAGING";
+        const APPIMAGE: &str = "/tmp/ShellAs-0.1.14-linux-x86_64.AppImage";
         if std::env::var_os(CHILD).is_some() {
             // The child: the shell runs and says what it sees.
             let shell = if PathBuf::from("/bin/zsh").exists() {
@@ -401,7 +401,7 @@ mod tests {
             .env(CHILD, "1")
             .env("ARGV0", APPIMAGE)
             .env("APPIMAGE", APPIMAGE)
-            .env("APPDIR", "/tmp/.mount_ShellRSxxxx")
+            .env("APPDIR", "/tmp/.mount_ShellAsxxxx")
             .env("OWD", "/tmp");
         let output = {
             let _forks = crate::testing::no_forks();

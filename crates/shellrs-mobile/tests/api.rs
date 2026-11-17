@@ -952,7 +952,7 @@ async fn deleting_says_what_goes_with_a_host_or_a_group() {
     // What only the desktop makes: a port forward, and a serial host the
     // app never lists.
     {
-        let database = hosts::HostDatabase::open(&data.path().join("shellrs.db")).unwrap();
+        let database = hosts::HostDatabase::open(&data.path().join("shellas.db")).unwrap();
         let mut saved = hosts::HostData::load(database).unwrap();
         let group = saved.insert_group(hosts::GroupDraft::new("生产", None));
         let inner = saved.insert_group(hosts::GroupDraft::new("数据库", Some(group)));

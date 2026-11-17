@@ -9,9 +9,9 @@ use jni::EnvUnowned;
 use jni::errors::ThrowRuntimeExAndDefault;
 use jni::objects::{JClass, JObject};
 
-/// `com.shellrs.core.Tls.setUp(context)`.
+/// `com.shellas.core.Tls.setUp(context)`.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_shellrs_core_Tls_setUp<'caller>(
+pub extern "system" fn Java_com_shellas_core_Tls_setUp<'caller>(
     mut env: EnvUnowned<'caller>,
     _class: JClass<'caller>,
     context: JObject<'caller>,

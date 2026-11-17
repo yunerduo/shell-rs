@@ -1,6 +1,6 @@
 # shellrs-mobile
 
-The core of the ShellRS iOS and Android apps: the desktop app's own
+The core of the Agree ShellAs iOS and Android apps: the desktop app's own
 connection and SFTP code (`crates/shellrs-ssh`) and its saved hosts and sync
 (`crates/shellrs-hosts`) behind one interface, which Swift and Kotlin
 bindings are generated from with [UniFFI](https://mozilla.github.io/uniffi-rs/).
@@ -20,7 +20,7 @@ in its own language.
 
 | Platform | Command | Output in `target/mobile/` |
 |---|---|---|
-| iOS | `scripts/build-ios.sh` | `ios/ShellRSCore.xcframework` (iPhones, and the simulator on Apple silicon), `ios/Sources/ShellRSCore.swift` |
+| iOS | `scripts/build-ios.sh` | `ios/Agree ShellAsCore.xcframework` (iPhones, and the simulator on Apple silicon), `ios/Sources/Agree ShellAsCore.swift` |
 | Android | `scripts/build-android.sh` | `android/jniLibs/{arm64-v8a,x86_64}/libshellrs_mobile.so`, `android/kotlin/` |
 
 - **iOS** needs Xcode and
@@ -89,8 +89,8 @@ Task {
 
 - **One `Core`** per data folder, made when the app starts and kept while it
   runs. The data folder holds what the desktop's does: the database
-  (`shellrs.db`, upgraded in place from an older version's, with a backup
-  first), the private keys ShellRS keeps (`keys/`), the trusted host keys,
+  (`shellas.db`, upgraded in place from an older version's, with a backup
+  first), the private keys Agree ShellAs keeps (`keys/`), the trusted host keys,
   where sync goes through (`sync.json`) and the transfers' resume records.
   A second core on the same folder fails with `DataFolderInUse`. When the
   core goes, so does everything it opened.

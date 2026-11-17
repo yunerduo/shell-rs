@@ -182,7 +182,7 @@ impl ExplorerPanel {
         let transport = provider.create(&login, route);
         let failed = sender.clone();
         if let Err(error) = std::thread::Builder::new()
-            .name("shellrs-sftp".into())
+            .name("shellas-sftp".into())
             .spawn(move || {
                 if let Err(error) = transport.run(receiver, sender.clone()) {
                     let _ =

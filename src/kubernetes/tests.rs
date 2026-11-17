@@ -136,7 +136,7 @@ fn writes_quote_scope_preserve_payload_and_delete_with_uid_and_version_precondit
     let mut resource = pod();
     resource.name = "api-0".into();
     resource.kind = ResourceKind::ConfigMap;
-    let original = json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"api-0","namespace":"production","uid":"uid-1","resourceVersion":"12"},"data":{"script":"kubectl get pods; $(echo bad)\n__SHELLRS_K8S_INPUT__\n'quote'"}});
+    let original = json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"api-0","namespace":"production","uid":"uid-1","resourceVersion":"12"},"data":{"script":"kubectl get pods; $(echo bad)\n__SHELLAS_K8S_INPUT__\n'quote'"}});
     let wire = mutation::replace("prod'; echo bad", &resource, &original, &original).unwrap();
     let program = script(&wire);
     assert!(program.contains("--context='prod'\\''; echo bad'"));
@@ -144,10 +144,10 @@ fn writes_quote_scope_preserve_payload_and_delete_with_uid_and_version_precondit
         program.contains("replace --raw='/api/v1/namespaces/production/configmaps/api%2D0' -f -")
     );
     let body = program
-        .split("<<'__SHELLRS_K8S_INPUT__'\n")
+        .split("<<'__SHELLAS_K8S_INPUT__'\n")
         .nth(1)
         .unwrap()
-        .split("\n__SHELLRS_K8S_INPUT__")
+        .split("\n__SHELLAS_K8S_INPUT__")
         .next()
         .unwrap();
     assert_eq!(
@@ -797,25 +797,25 @@ fn overview_exposes_copyable_names_addresses_and_node() {
 #[test]
 fn framed_replies_distinguish_rbac_errors_empty_output_and_truncation() {
     assert_eq!(
-        commands::answer("\n__SHELLRS_K8S_EXIT__:0\n"),
+        commands::answer("\n__SHELLAS_K8S_EXIT__:0\n"),
         Ok(String::new())
     );
     assert_eq!(
-        commands::answer("Error from server (Forbidden)\n__SHELLRS_K8S_EXIT__:1\n"),
+        commands::answer("Error from server (Forbidden)\n__SHELLAS_K8S_EXIT__:1\n"),
         Err("Error from server (Forbidden) (exit 1)".into())
     );
     assert!(commands::answer("{\"items\":[]}").is_err());
     // Marker-like content inside a log line is not the final status.
     assert_eq!(
-        commands::answer("__SHELLRS_K8S_EXIT__:1\ntext\n__SHELLRS_K8S_EXIT__:0\n"),
-        Ok("__SHELLRS_K8S_EXIT__:1\ntext".into())
+        commands::answer("__SHELLAS_K8S_EXIT__:1\ntext\n__SHELLAS_K8S_EXIT__:0\n"),
+        Ok("__SHELLAS_K8S_EXIT__:1\ntext".into())
     );
 }
 
 #[test]
 fn discovery_preserves_context_names_and_all_namespaces() {
     let (current, contexts) = commands::contexts(
-        "prod\n\n__SHELLRS_CONTEXTS__\nqa\nprod\nprod\n\n__SHELLRS_K8S_EXIT__:0\n",
+        "prod\n\n__SHELLAS_CONTEXTS__\nqa\nprod\nprod\n\n__SHELLAS_K8S_EXIT__:0\n",
     )
     .unwrap();
     assert_eq!(current, "prod");
@@ -1035,11 +1035,11 @@ fn compressed_reply(text: &str) -> String {
 #[test]
 fn compressed_reads_preserve_large_utf8_results_errors_and_reject_corruption() {
     let body = "容器配置\\n".repeat(180_000);
-    let wire = compressed_reply(&format!("{body}\n__SHELLRS_K8S_EXIT__:0\n"));
+    let wire = compressed_reply(&format!("{body}\n__SHELLAS_K8S_EXIT__:0\n"));
     assert!(body.len() > commands::WIRE_LIMIT && wire.len() < commands::WIRE_LIMIT);
     assert_eq!(commands::answer(&wire).unwrap(), body);
     assert_eq!(
-        commands::answer(&compressed_reply("Forbidden\n__SHELLRS_K8S_EXIT__:1\n")),
+        commands::answer(&compressed_reply("Forbidden\n__SHELLAS_K8S_EXIT__:1\n")),
         Err("Forbidden (exit 1)".into())
     );
     assert!(commands::answer(&format!("{}broken", commands::COMPRESSED)).is_err());
@@ -1085,7 +1085,7 @@ fn api_pages_encode_tokens_selectors_and_keep_cluster_scope() {
 fn list_pages_keep_continuation_and_discard_verbose_list_only_metadata() {
     let reply = serde_json::json!({"metadata":{"continue":"next","resourceVersion":"42"},"items":[{"metadata":{"name":"api","namespace":"prod","managedFields":[{"fieldsV1":{"f:spec":{}}}],"annotations":{"kubectl.kubernetes.io/last-applied-configuration":"large","example.com/annotation":"api","example.com/annotationspace":"prod"}}}]});
     let page = super::query::page(
-        &format!("{reply}\n__SHELLRS_K8S_EXIT__:0\n"),
+        &format!("{reply}\n__SHELLAS_K8S_EXIT__:0\n"),
         ResourceKind::Pod,
     )
     .unwrap();
@@ -1098,7 +1098,7 @@ fn list_pages_keep_continuation_and_discard_verbose_list_only_metadata() {
         "api"
     );
     let metadata = super::query::page(
-        "[{\"name\":\"config\",\"namespace\":\"prod\"}]\n__SHELLRS_K8S_EXIT__:0\n",
+        "[{\"name\":\"config\",\"namespace\":\"prod\"}]\n__SHELLAS_K8S_EXIT__:0\n",
         ResourceKind::ConfigMap,
     )
     .unwrap();

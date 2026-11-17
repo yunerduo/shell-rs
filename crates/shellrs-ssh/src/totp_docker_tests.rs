@@ -89,7 +89,7 @@ struct Server {
 }
 
 fn start() -> Server {
-    let name = format!("shellrs-totp-{:08x}", std::process::id() ^ rand_suffix());
+    let name = format!("shellas-totp-{:08x}", std::process::id() ^ rand_suffix());
     let started = Command::new("docker")
         .args([
             "run",
@@ -213,7 +213,7 @@ fn secrets_of(server: &Server, user: &str, password: bool) -> Secrets {
     secrets
 }
 
-/// Log in and run `echo`, as `shellrs exec` does.
+/// Log in and run `echo`, as `shellas exec` does.
 fn echo(client: &Client, login: &HostLogin) -> Result<String, crate::ExecError> {
     let mut printed = Vec::new();
     run_command(

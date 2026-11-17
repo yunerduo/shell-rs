@@ -3,7 +3,7 @@ name = "shellrs-mobile"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "ShellRS for the mobile apps: the SSH and hosts cores behind a stable Swift and Kotlin interface"
+description = "Agree ShellAs for the mobile apps: the SSH and hosts cores behind a stable Swift and Kotlin interface"
 license = "MIT"
 repository = "https://github.com/since2006/shell-rs"
 

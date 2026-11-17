@@ -1,5 +1,5 @@
-//! The `shellrs-cli` program run as an agent runs it: a separate process
-//! with piped stdio, finding the app through `SHELLRS_DATA_DIR` (or, on
+//! The `shellas-cli` program run as an agent runs it: a separate process
+//! with piped stdio, finding the app through `SHELLAS_DATA_DIR` (or, on
 //! Windows, a portable copy's folder). A fake
 //! backend stands in for SSH, so this runs on every platform, including the
 //! Windows CI where it is the one test of the named pipe between processes.
@@ -103,9 +103,9 @@ impl CliBackend for FakeBackend {
 
 /// Run the command against the app whose data lives in `data_dir`.
 fn shellrs(data_dir: &Path, args: &[&str], stdin: &[u8]) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_shellrs-cli"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_shellas-cli"))
         .args(args)
-        .env("SHELLRS_DATA_DIR", data_dir)
+        .env("SHELLAS_DATA_DIR", data_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -123,12 +123,12 @@ fn without_the_app_the_command_says_so_and_exits_255() {
     assert!(
         String::from_utf8(output.stderr)
             .unwrap()
-            .starts_with("shellrs: [not_running]")
+            .starts_with("shellas: [not_running]")
     );
 }
 
 /// A portable copy's command, copied into its `bin` for the PATH, finds that
-/// copy's app by where it sits, without `SHELLRS_DATA_DIR`.
+/// copy's app by where it sits, without `SHELLAS_DATA_DIR`.
 #[cfg(windows)]
 #[test]
 fn the_command_in_a_portable_bin_finds_the_portable_app() {
@@ -137,9 +137,9 @@ fn the_command_in_a_portable_bin_finds_the_portable_app() {
     let root = dunce::canonicalize(folder.path()).unwrap();
     std::fs::create_dir(root.join("data")).unwrap();
     std::fs::create_dir(root.join("bin")).unwrap();
-    std::fs::write(root.join("shellrs.exe"), "").unwrap();
-    let command = root.join("bin").join("shellrs.exe");
-    std::fs::copy(env!("CARGO_BIN_EXE_shellrs-cli"), &command).unwrap();
+    std::fs::write(root.join("shellas.exe"), "").unwrap();
+    let command = root.join("bin").join("shellas.exe");
+    std::fs::copy(env!("CARGO_BIN_EXE_shellas-cli"), &command).unwrap();
     let server = CliServer::start(
         cli_endpoint(&root.join("data")),
         Arc::new(FakeBackend::default()),
@@ -150,7 +150,7 @@ fn the_command_in_a_portable_bin_finds_the_portable_app() {
 
     let output = Command::new(&command)
         .args(["hosts", "list"])
-        .env_remove("SHELLRS_DATA_DIR")
+        .env_remove("SHELLAS_DATA_DIR")
         .stdin(Stdio::null())
         .output()
         .unwrap();
@@ -253,7 +253,7 @@ fn the_command_finds_the_app_through_its_data_directory() {
     assert!(
         String::from_utf8(output.stderr)
             .unwrap()
-            .starts_with("shellrs: [not_enabled]")
+            .starts_with("shellas: [not_enabled]")
     );
 }
 
@@ -262,9 +262,9 @@ fn the_command_finds_the_app_through_its_data_directory() {
 /// once. One that does not is killed rather than left running as a second
 /// app with a window of its own.
 fn open_shellrs(data_dir: &Path, args: &[&str]) -> Option<i32> {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_shellrs"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_shellas"))
         .args(args)
-        .env("SHELLRS_DATA_DIR", data_dir)
+        .env("SHELLAS_DATA_DIR", data_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -393,7 +393,7 @@ fn a_host_described_on_stdin_reaches_the_app_and_comes_back_saved() {
     );
     assert_eq!(output.status.code(), Some(255));
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.starts_with("shellrs: [bad_request]"), "{stderr}");
+    assert!(stderr.starts_with("shellas: [bad_request]"), "{stderr}");
     assert!(stderr.contains("adress"), "{stderr}");
     assert!(server.take_change().is_none());
 }

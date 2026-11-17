@@ -1,11 +1,11 @@
-//! The links ShellRS is opened with, the way bastion hosts open Xshell:
-//! `ShellRS ssh://user@host:port`, or `ShellRS -url ssh://… -newtab 名称`;
-//! and WinSCP: `ShellRS sftp://user@host:port`, or with
+//! The links ShellAs is opened with, the way bastion hosts open Xshell:
+//! `ShellAs ssh://user@host:port`, or `ShellAs -url ssh://… -newtab 名称`;
+//! and WinSCP: `ShellAs sftp://user@host:port`, or with
 //! `/sessionname=名称` in front.
 //!
-//! Only told apart from the `shellrs` command's arguments here; the link
+//! Only told apart from the `shellas` command's arguments here; the link
 //! itself is read by the app (`host::SshLink`), which says what is wrong
-//! with it in a notification. Opened again, ShellRS hands the link to the
+//! with it in a notification. Opened again, ShellAs hands the link to the
 //! one already running, inside [`super::Request::Activate`].
 
 use std::ffi::OsString;
@@ -78,7 +78,7 @@ const WINSCP_SWITCHES: &[&str] = &[
 const SESSION_NAME: &str = "sessionname";
 
 /// The link `args` (without the program) open, or `None` when they are the
-/// `shellrs` command's. Only the first argument decides, so `shellrs exec
+/// `shellas` command's. Only the first argument decides, so `shellas exec
 /// web "curl http://x"` stays a command: a link launch starts with one of
 /// Xshell's options, one of WinSCP's switches or the link itself.
 pub fn link_arguments(args: &[OsString]) -> Option<OpenLink> {

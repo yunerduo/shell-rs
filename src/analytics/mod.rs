@@ -19,7 +19,7 @@
 //! until it is sent, so quitting loses nothing and never waits.
 //!
 //! Only release builds report; a development build does with
-//! `SHELLRS_ANALYTICS_DEBUG` set, as debug events, summed by the minute and
+//! `SHELLAS_ANALYTICS_DEBUG` set, as debug events, summed by the minute and
 //! retried after ten seconds. The external CLI, a second copy passing its
 //! links on, and the UI tests never start it.
 

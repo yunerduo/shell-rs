@@ -206,7 +206,7 @@ impl ForwardManager {
         self.failures.remove(&id);
         self.problems.remove(&id);
         if let Err(error) = std::thread::Builder::new()
-            .name("shellrs-forward".into())
+            .name("shellas-forward".into())
             .spawn(move || transport.run(command_receiver, event_sender))
         {
             self.fail(id, t!("forward.error.start_failed", error = error), cx);

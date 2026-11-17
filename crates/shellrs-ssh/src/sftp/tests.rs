@@ -1062,7 +1062,7 @@ fn paths_and_journals_reject_unsafe_identity() {
                 .validate("endpoint", "changed key", &source, &record.target)
                 .is_err()
         );
-        record.temporary = RemotePath::new("/other/.shellrs-evil.filepart").unwrap();
+        record.temporary = RemotePath::new("/other/.shellas-evil.filepart").unwrap();
         assert!(
             record
                 .validate("endpoint", "key", &source, &record.target)
@@ -2349,7 +2349,7 @@ fn a_sync_with_delete_removes_what_is_not_here_and_nothing_it_cannot_see() {
         remote.file("/srv/app/kind/inner", b"i");
         // What a transfer leaves while it runs.
         remote.file("/srv/app/keep.txt.filepart", b"partial");
-        remote.file("/srv/app/.shellrs-1234.backup", b"original");
+        remote.file("/srv/app/.shellas-1234.backup", b"original");
         // A folder this side cannot read, and one that side cannot.
         remote.dir("/srv/app/locked", 0o755);
         remote.file("/srv/app/locked/extra", b"?");
@@ -2370,7 +2370,7 @@ fn a_sync_with_delete_removes_what_is_not_here_and_nothing_it_cannot_see() {
             keys,
             [
                 "/srv/app",
-                "/srv/app/.shellrs-1234.backup",
+                "/srv/app/.shellas-1234.backup",
                 "/srv/app/keep.txt",
                 "/srv/app/keep.txt.filepart",
                 "/srv/app/locked",

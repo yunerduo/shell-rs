@@ -3,7 +3,7 @@
 // sync's forms, and connects to a closed port and fails, typed as the
 // network. `run.sh` runs it.
 import Foundation
-import ShellRSCore
+import ShellAsCore
 
 /// The keychain, in memory.
 final class MemoryKeychain: Keychain, @unchecked Sendable {

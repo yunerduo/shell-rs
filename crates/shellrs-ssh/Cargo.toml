@@ -3,7 +3,7 @@ name = "shellrs-ssh"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "ShellRS SSH core: logins, host keys, channels and the SFTP transfer engine"
+description = "Agree ShellAs SSH core: logins, host keys, channels and the SFTP transfer engine"
 license = "MIT"
 repository = "https://github.com/since2006/shell-rs"
 

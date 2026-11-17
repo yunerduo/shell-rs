@@ -213,7 +213,7 @@ mod tests {
         assert_eq!(icon("notes.MD", File), "markdown");
         assert_eq!(icon("backup.tar.gz", File), "zip");
         assert_eq!(icon(".env", File), "tune");
-        assert_eq!(icon("shellrs.service", File), "systemd");
+        assert_eq!(icon("shellas.service", File), "systemd");
         assert_eq!(icon("id_ed25519", File), "key");
         assert_eq!(icon("server.key", File), "key");
         assert_eq!(icon(".vimrc", File), "vim");

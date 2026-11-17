@@ -1,6 +1,6 @@
 //! The S3 store: its signatures against AWS's own example, what services
 //! answer, read without one; then the store against a real one (the
-//! `service` tests, ignored by default), named by `SHELLRS_TEST_S3_*`, as
+//! `service` tests, ignored by default), named by `SHELLAS_TEST_S3_*`, as
 //! CI names a versitygw it starts.
 
 use super::*;
@@ -253,9 +253,9 @@ fn refusals_say_what_to_do() {
     ));
 }
 
-/// The store against the service `SHELLRS_TEST_S3_ENDPOINT` names, with
-/// `SHELLRS_TEST_S3_ACCESS_KEY` and `SHELLRS_TEST_S3_SECRET_KEY` (and
-/// `SHELLRS_TEST_S3_REGION`, `SHELLRS_TEST_S3_PATH_STYLE`, 1 unless 0).
+/// The store against the service `SHELLAS_TEST_S3_ENDPOINT` names, with
+/// `SHELLAS_TEST_S3_ACCESS_KEY` and `SHELLAS_TEST_S3_SECRET_KEY` (and
+/// `SHELLAS_TEST_S3_REGION`, `SHELLAS_TEST_S3_PATH_STYLE`, 1 unless 0).
 /// Each test goes in a bucket of this run's own, which it makes; what it
 /// writes stays. Without the variables, the tests pass untried.
 mod service {
@@ -271,7 +271,7 @@ mod service {
     }
 
     fn service(test: &str) -> Option<Service> {
-        let var = |name: &str| std::env::var(format!("SHELLRS_TEST_S3_{name}")).ok();
+        let var = |name: &str| std::env::var(format!("SHELLAS_TEST_S3_{name}")).ok();
         let endpoint = var("ENDPOINT")?;
         let service = Service {
             location: S3Location {

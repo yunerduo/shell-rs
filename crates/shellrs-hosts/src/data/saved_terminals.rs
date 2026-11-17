@@ -427,7 +427,7 @@ impl HostData {
                     .map_or(Ok(()), std::fs::create_dir_all)
                     .and_then(|_| std::fs::write(&path, output));
                 if let Err(error) = written {
-                    eprintln!("shellrs: cannot keep a terminal's output: {error}");
+                    eprintln!("shellas: cannot keep a terminal's output: {error}");
                 }
             }
             None => {

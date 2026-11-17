@@ -96,7 +96,8 @@ icon_assets!(
         CopyPlus,
         Paperclip,
         X,
-        CloudSync
+        CloudSync,
+        CircleUser
     ]
 );
 

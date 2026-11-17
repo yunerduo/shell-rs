@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=Agree ShellAS
+Name=ShellAs
 Comment=SSH host manager: terminal, SFTP and port forwarding
 Comment[zh_CN]=SSH 主机管理：终端、SFTP 与端口转发
-Exec=shellrs
-Icon=shellrs
+Exec=shellas
+Icon=shellas
 Terminal=false
 Categories=Network;RemoteAccess;Development;
-StartupWMClass=shellrs
+StartupWMClass=shellas

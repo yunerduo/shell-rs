@@ -724,7 +724,7 @@ impl std::fmt::Display for OpenError {
         match self {
             OpenError::Newer { version, supported } => write!(
                 f,
-                "the database is from a newer ShellRS (schema {version}, this one knows up to {supported})"
+                "the database is from a newer ShellAs (schema {version}, this one knows up to {supported})"
             ),
             OpenError::TooOld { version } => write!(
                 f,
@@ -2138,7 +2138,7 @@ fn back_up(connection: &Connection, version: i64) {
     let backup = format!("{path}.v{version}.bak");
     let _ = std::fs::remove_file(&backup);
     if let Err(error) = connection.execute("VACUUM INTO ?1", [&backup]) {
-        eprintln!("shellrs: cannot back up the database before migrating it: {error}");
+        eprintln!("shellas: cannot back up the database before migrating it: {error}");
     }
 }
 

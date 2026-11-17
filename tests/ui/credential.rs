@@ -850,7 +850,7 @@ async fn a_kept_key_is_deleted_when_its_credential_turns_to_a_password(cx: &mut 
     in_frame(cx, handle, |window, cx| {
         assert_eq!(
             window.find("credential-kept-key-note").label(),
-            Some("保存后，Agree ShellAS 保存的原私钥会被删除。")
+            Some("保存后，ShellAs 保存的原私钥会被删除。")
         );
         window.click("commit", cx);
     });

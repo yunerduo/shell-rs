@@ -17,7 +17,7 @@ use super::{APP_KEY, ENDPOINT};
 use crate::update::{Channel, build_info};
 
 /// Lets a development build report, to its debug view, to try it out.
-const DEBUG_ENV: &str = "SHELLRS_ANALYTICS_DEBUG";
+const DEBUG_ENV: &str = "SHELLAS_ANALYTICS_DEBUG";
 
 /// Where the events go.
 pub trait Transport: Send + Sync {
@@ -106,7 +106,7 @@ pub struct AnalyticsServices {
 impl AnalyticsServices {
     /// Production's, or `None` for a build that does not report: only
     /// release builds do, and a development build with
-    /// `SHELLRS_ANALYTICS_DEBUG` set.
+    /// `SHELLAS_ANALYTICS_DEBUG` set.
     pub fn system() -> Option<Self> {
         let is_debug = Channel::of_this_build().is_none();
         if is_debug && std::env::var_os(DEBUG_ENV).is_none() {
@@ -142,7 +142,7 @@ impl Analytics {
         // A thread that cannot start leaves the signals unheard, which is
         // all it costs.
         let _ = thread::Builder::new()
-            .name("shellrs-analytics".into())
+            .name("shellas-analytics".into())
             .spawn(move || run(services, receiver));
         let analytics = Self::new(sender, enabled);
         if !enabled {
@@ -330,7 +330,7 @@ mod tests {
         let server = Server::start(Some(200));
         let delivery = server
             .transport()
-            .send(b"[]", "ShellRS/1 (macOS 15; aarch64)");
+            .send(b"[]", "ShellAs/1 (macOS 15; aarch64)");
         assert_eq!(delivery, Delivery::Sent);
         let seen = server.seen();
         let request = &seen[0];
@@ -339,7 +339,7 @@ mod tests {
         assert_eq!(request.header("content-type"), Some("application/json"));
         assert_eq!(
             request.header("user-agent"),
-            Some("ShellRS/1 (macOS 15; aarch64)")
+            Some("ShellAs/1 (macOS 15; aarch64)")
         );
         assert_eq!(request.body, b"[]");
     }

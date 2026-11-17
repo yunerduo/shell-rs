@@ -847,7 +847,7 @@ mod lrzsz {
 
     impl Container {
         fn named() -> Self {
-            Self(format!("shellrs-zmodem-{:08x}", rand::random::<u32>()))
+            Self(format!("shellas-zmodem-{:08x}", rand::random::<u32>()))
         }
     }
 

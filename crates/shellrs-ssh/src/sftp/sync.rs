@@ -27,7 +27,7 @@ pub(super) struct Pruned {
 /// have, all the way down. A folder that cannot be read here is left alone
 /// there: not being able to see what it holds says nothing about what
 /// belongs in its copy. What a transfer leaves behind while it runs (a
-/// `.filepart`, a `.shellrs-…backup`) stays too: it may be another
+/// `.filepart`, a `.shellas-…backup`) stays too: it may be another
 /// transfer's, or the only copy of a file being replaced.
 pub(super) async fn prune<F: RemoteFs>(
     fs: &F,
@@ -136,5 +136,5 @@ async fn local_kinds(dir: &Path) -> std::io::Result<HashMap<String, Option<Entry
 
 /// The files an upload writes beside its target while it runs.
 fn is_transfer_leftover(name: &str) -> bool {
-    name.ends_with(".filepart") || (name.starts_with(".shellrs-") && name.ends_with(".backup"))
+    name.ends_with(".filepart") || (name.starts_with(".shellas-") && name.ends_with(".backup"))
 }

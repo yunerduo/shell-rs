@@ -40,9 +40,9 @@ find "$build" -type f \( -name '*.sh' -o -name '*.desktop' \) -print0 \
     | xargs -0 sed -i 's/\r$//'
 
 version=$(grep -m1 '^version = ' "$root/Cargo.toml" | cut -d'"' -f2)
-log "构建 ShellRS $version"
+log "构建 ShellAs $version"
 cd "$build"
-SHELLRS_BUILD_DATE=$(date -u +%Y-%m-%d) cargo build --release --locked --bin shellrs
+SHELLAS_BUILD_DATE=$(date -u +%Y-%m-%d) cargo build --release --locked --bin shellas
 
 tool=/root/appimagetool
 if [ ! -x "$tool" ]; then
@@ -55,5 +55,5 @@ fi
 log "打包 AppImage 到 $out"
 mkdir -p "$out"
 APPIMAGETOOL="$tool" APPIMAGE_EXTRACT_AND_RUN=1 \
-    packaging/linux/appimage.sh "$build/target/release/shellrs" "$version" "$out"
+    packaging/linux/appimage.sh "$build/target/release/shellas" "$version" "$out"
 ls -l "$out"/*.AppImage

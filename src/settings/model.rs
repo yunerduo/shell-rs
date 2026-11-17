@@ -509,7 +509,7 @@ impl Default for NotificationSettings {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExternalCliSettings {
-    /// Whether the `shellrs` command may use the saved hosts. Off until
+    /// Whether the `shellas` command may use the saved hosts. Off until
     /// the user turns it on.
     pub enabled: bool,
 }
@@ -1196,8 +1196,8 @@ mod tests {
     fn terminal_themes_fall_back_to_the_default_for_their_appearance() {
         let settings: AppSettings = serde_json::from_str("{}").unwrap();
         let themes = &settings.terminal_theme;
-        assert_eq!(themes.light, "shellrs-light");
-        assert_eq!(themes.dark, "shellrs-dark");
+        assert_eq!(themes.light, "shellas-light");
+        assert_eq!(themes.dark, "shellas-dark");
         for mode in [ThemeMode::Light, ThemeMode::Dark] {
             assert_eq!(themes.theme(mode), TerminalTheme::default_for(mode));
         }
@@ -1205,7 +1205,7 @@ mod tests {
         // A key from a newer version, and a dark theme where a light one
         // belongs, each give way on their own side only.
         let settings: AppSettings = serde_json::from_str(
-            r#"{"appearance":"dark","terminal_theme":{"light":"shellrs-dark","dark":"sepia"}}"#,
+            r#"{"appearance":"dark","terminal_theme":{"light":"shellas-dark","dark":"sepia"}}"#,
         )
         .unwrap();
         assert_eq!(settings.appearance, Appearance::Dark);
@@ -1230,7 +1230,7 @@ mod tests {
         );
         assert_eq!(
             serde_json::to_value(&themes).unwrap(),
-            serde_json::json!({"light": "shellrs-light", "dark": dark.key(), "app_follows": false})
+            serde_json::json!({"light": "shellas-light", "dark": dark.key(), "app_follows": false})
         );
 
         // The app stays neutral, the default's colors, gpui-kit's own,

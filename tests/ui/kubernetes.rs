@@ -37,8 +37,8 @@ const SELECT_ALL: &str = if cfg!(target_os = "macos") {
 };
 
 const CONTEXTS: &str =
-    "prod-cluster\n\n__SHELLRS_CONTEXTS__\nprod-cluster\ntest-cluster\n\n__SHELLRS_K8S_EXIT__:0\n";
-const NAMESPACES: &str = "{\"items\":[{\"metadata\":{\"name\":\"prod\"}},{\"metadata\":{\"name\":\"test\"}}]}\n__SHELLRS_K8S_EXIT__:0\n";
+    "prod-cluster\n\n__SHELLAS_CONTEXTS__\nprod-cluster\ntest-cluster\n\n__SHELLAS_K8S_EXIT__:0\n";
+const NAMESPACES: &str = "{\"items\":[{\"metadata\":{\"name\":\"prod\"}},{\"metadata\":{\"name\":\"test\"}}]}\n__SHELLAS_K8S_EXIT__:0\n";
 
 fn mutation_resource(kind: ResourceKind) -> serde_json::Value {
     let api = if matches!(
@@ -63,7 +63,7 @@ fn mutation_resource(kind: ResourceKind) -> serde_json::Value {
 }
 
 fn mutation_wire(value: &serde_json::Value) -> String {
-    format!("{value}\n__SHELLRS_K8S_EXIT__:0\n")
+    format!("{value}\n__SHELLAS_K8S_EXIT__:0\n")
 }
 
 async fn open_mutation_resource(
@@ -253,7 +253,7 @@ async fn kubernetes_yaml_save_requires_confirmation_and_conflicts_keep_the_draft
         cx,
         handle,
         &factory,
-        "Conflict: object has been modified\n__SHELLRS_K8S_EXIT__:1\n",
+        "Conflict: object has been modified\n__SHELLAS_K8S_EXIT__:1\n",
     )
     .await;
     label(
@@ -430,7 +430,7 @@ async fn kubernetes_restart_and_delete_always_confirm_and_target_one_resource(
                     && command.contains("/managed'")
             );
         }
-        reply(cx, handle, &factory, "Forbidden\n__SHELLRS_K8S_EXIT__:1\n").await;
+        reply(cx, handle, &factory, "Forbidden\n__SHELLAS_K8S_EXIT__:1\n").await;
         label(cx, handle, "k8s-operation-error", "Forbidden (exit 1)").await;
         assert_eq!(factory.commands.lock().unwrap().len(), before + 1);
         in_frame(cx, handle, |window, cx| window.click("k8s-delete", cx));
@@ -440,7 +440,7 @@ async fn kubernetes_restart_and_delete_always_confirm_and_target_one_resource(
             cx,
             handle,
             &factory,
-            "{\"kind\":\"Status\",\"status\":\"Success\"}\n__SHELLRS_K8S_EXIT__:0\n",
+            "{\"kind\":\"Status\",\"status\":\"Success\"}\n__SHELLAS_K8S_EXIT__:0\n",
         )
         .await;
         label(cx, handle, "k8s-operation-submitted", "删除请求已提交").await;
@@ -547,7 +547,7 @@ async fn kubernetes_restart_cancels_with_escape_and_finishes_after_closing_its_d
 #[gpui_kit::test]
 async fn kubernetes_unused_or_failed_does_not_interrupt_terminal_input(cx: &mut TestAppContext) {
     let factory = Arc::new(FakeTerminalFactory::answering(&[
-        "kubectl: command not found\n__SHELLRS_K8S_EXIT__:127\n",
+        "kubectl: command not found\n__SHELLAS_K8S_EXIT__:127\n",
     ]));
     let (handle, workspace) =
         open_workspace_with_kubernetes(cx, HostStore::seed(), factory.clone());
@@ -625,34 +625,34 @@ async fn kubernetes_unused_or_failed_does_not_interrupt_terminal_input(cx: &mut 
 const PODS: &str = r#"{"items":[
 {"metadata":{"name":"api-0","namespace":"prod","labels":{"app":"api"}},"spec":{"containers":[{"name":"api"},{"name":"sidecar"}],"nodeName":"node-1"},"status":{"phase":"Running","containerStatuses":[{"ready":true},{"ready":true}]}},
 {"metadata":{"name":"worker-0","namespace":"test"},"spec":{"containers":[{"name":"worker"}]},"status":{"phase":"Pending"}}]}
-__SHELLRS_K8S_EXIT__:0
+__SHELLAS_K8S_EXIT__:0
 "#;
 const PROD_PODS: &str = r#"{"items":[{"metadata":{"name":"api-0","namespace":"prod"},"spec":{"containers":[{"name":"api"},{"name":"sidecar"}]},"status":{"phase":"Running"}}]}
-__SHELLRS_K8S_EXIT__:0
+__SHELLAS_K8S_EXIT__:0
 "#;
 const DEPLOYMENTS: &str = r#"{"items":[{"metadata":{"name":"api","namespace":"prod"},"spec":{"replicas":3},"status":{"readyReplicas":2}}]}
-__SHELLRS_K8S_EXIT__:0
+__SHELLAS_K8S_EXIT__:0
 "#;
 const POD_DETAIL: &str = r#"{"kind":"Pod","metadata":{"name":"api-0","namespace":"prod"},"spec":{"containers":[{"name":"api","image":"api:v1"},{"name":"sidecar","image":"sidecar:v1"}],"initContainers":[{"name":"init"}],"ephemeralContainers":[{"name":"debug"}]},"status":{"phase":"Running","podIP":"10.1.0.2"}}
-__SHELLRS_K8S_EXIT__:0
+__SHELLAS_K8S_EXIT__:0
 "#;
 const DEPLOY_DETAIL: &str = r#"{"kind":"Deployment","metadata":{"name":"api","namespace":"prod"},"spec":{"replicas":3,"selector":{"matchLabels":{"app":"api"}}},"status":{"readyReplicas":2}}
-__SHELLRS_K8S_EXIT__:0
+__SHELLAS_K8S_EXIT__:0
 "#;
-const LOGS: &str = "2026-10-12T01:00:00Z INFO ready\n2026-10-12T01:00:01Z ERROR 请求失败\n2026-10-12T01:00:02Z WARN retry\n\n__SHELLRS_K8S_EXIT__:0\n";
-const SIDECAR_LOGS: &str = "sidecar ready\nsidecar healthy\n\n__SHELLRS_K8S_EXIT__:0\n";
-const PREVIOUS_LOGS: &str = "previous container exited\n\n__SHELLRS_K8S_EXIT__:0\n";
+const LOGS: &str = "2026-10-12T01:00:00Z INFO ready\n2026-10-12T01:00:01Z ERROR 请求失败\n2026-10-12T01:00:02Z WARN retry\n\n__SHELLAS_K8S_EXIT__:0\n";
+const SIDECAR_LOGS: &str = "sidecar ready\nsidecar healthy\n\n__SHELLAS_K8S_EXIT__:0\n";
+const PREVIOUS_LOGS: &str = "previous container exited\n\n__SHELLAS_K8S_EXIT__:0\n";
 
 #[gpui_kit::test]
 async fn kubernetes_details_show_key_properties_and_keep_yaml_in_its_own_tab(
     cx: &mut TestAppContext,
 ) {
     let mut value: serde_json::Value =
-        serde_json::from_str(POD_DETAIL.split("\n__SHELLRS").next().unwrap()).unwrap();
+        serde_json::from_str(POD_DETAIL.split("\n__SHELLAS").next().unwrap()).unwrap();
     value["spec"]["containers"][0]["resources"] =
         serde_json::json!({"requests":{"cpu":"100m","memory":"128Mi"},"limits":{"memory":"512Mi"}});
     value["status"]["containerStatuses"] = serde_json::json!([{"name":"api","ready":true,"restartCount":2},{"name":"sidecar","ready":false,"restartCount":1}]);
-    let output = format!("{value}\n__SHELLRS_K8S_EXIT__:0\n");
+    let output = format!("{value}\n__SHELLAS_K8S_EXIT__:0\n");
     let factory = Arc::new(FakeTerminalFactory::answering(&[
         CONTEXTS, NAMESPACES, PODS, &output,
     ]));
@@ -733,7 +733,7 @@ async fn kubernetes_relation_query_is_canceled_when_details_close(cx: &mut TestA
     assert_eq!(factory.commands.lock().unwrap().len(), count);
 }
 const GRAPH_DEPLOY: &str = r#"{"kind":"Deployment","metadata":{"name":"api","namespace":"prod","uid":"deploy-uid"}}
-__SHELLRS_K8S_EXIT__:0
+__SHELLAS_K8S_EXIT__:0
 "#;
 
 async fn graph_replies(
@@ -757,7 +757,7 @@ async fn graph_replies(
             .clone();
         let command = script(&wire);
         let value = if command.contains("/deployments?") {
-            serde_json::json!({"items":[serde_json::from_str::<serde_json::Value>(GRAPH_DEPLOY.split("\n__SHELLRS").next().unwrap()).unwrap()]})
+            serde_json::json!({"items":[serde_json::from_str::<serde_json::Value>(GRAPH_DEPLOY.split("\n__SHELLAS").next().unwrap()).unwrap()]})
         } else if command.contains("/pods?") {
             let mut items = vec![
                 serde_json::json!({"kind":"Pod","metadata":{"name":"api-0","namespace":"prod","uid":"pod-uid","labels":{"tier":"backend"},"ownerReferences":[{"kind":"ReplicaSet","name":"api-rs","uid":"rs-uid"}]},"spec":{"containers":[{"name":"api","image":"api:v1"}]}}),
@@ -788,7 +788,7 @@ async fn graph_replies(
                 cx,
                 handle,
                 factory,
-                "Forbidden: statefulsets\n__SHELLRS_K8S_EXIT__:1\n",
+                "Forbidden: statefulsets\n__SHELLAS_K8S_EXIT__:1\n",
             )
             .await;
         } else {
@@ -796,7 +796,7 @@ async fn graph_replies(
                 cx,
                 handle,
                 factory,
-                &format!("{value}\n__SHELLRS_K8S_EXIT__:0\n"),
+                &format!("{value}\n__SHELLAS_K8S_EXIT__:0\n"),
             )
             .await;
         }
@@ -825,7 +825,7 @@ async fn kubernetes_graph_container_opens_container_details_and_returns_to_pod(
         window.click("k8s-resource:pods:prod/api-0:open", cx)
     });
     let mut graph_detail: serde_json::Value =
-        serde_json::from_str(POD_DETAIL.split("\n__SHELLRS").next().unwrap()).unwrap();
+        serde_json::from_str(POD_DETAIL.split("\n__SHELLAS").next().unwrap()).unwrap();
     graph_detail["metadata"]["ownerReferences"] =
         serde_json::json!([{"kind":"ReplicaSet","name":"api-rs","uid":"rs-uid"}]);
     for ix in 0..7 {
@@ -838,7 +838,7 @@ async fn kubernetes_graph_container_opens_container_details_and_returns_to_pod(
         cx,
         handle,
         &factory,
-        &format!("{graph_detail}\n__SHELLRS_K8S_EXIT__:0\n"),
+        &format!("{graph_detail}\n__SHELLAS_K8S_EXIT__:0\n"),
     )
     .await;
     in_frame(cx, handle, |window, cx| {
@@ -1027,8 +1027,8 @@ async fn kubernetes_result_rows_share_spines_and_height_across_zoom_and_theme(
 async fn kubernetes_fields_support_native_text_copy_and_pod_metrics_show_real_usage(
     cx: &mut TestAppContext,
 ) {
-    let detail = "{\"metadata\":{\"name\":\"api-0\",\"namespace\":\"prod\",\"labels\":{\"app\":\"api\"}},\"spec\":{\"containers\":[{\"name\":\"api\",\"resources\":{\"limits\":{\"cpu\":\"1\",\"memory\":\"512Mi\"}}},{\"name\":\"sidecar\"}]}}\n__SHELLRS_K8S_EXIT__:0\n";
-    let usage = "{\"metadata\":{\"name\":\"api-0\",\"namespace\":\"prod\"},\"containers\":[{\"name\":\"api\",\"usage\":{\"cpu\":\"250m\",\"memory\":\"128Mi\"}},{\"name\":\"sidecar\",\"usage\":{\"cpu\":\"50m\",\"memory\":\"32Mi\"}}]}\n__SHELLRS_K8S_EXIT__:0\n";
+    let detail = "{\"metadata\":{\"name\":\"api-0\",\"namespace\":\"prod\",\"labels\":{\"app\":\"api\"}},\"spec\":{\"containers\":[{\"name\":\"api\",\"resources\":{\"limits\":{\"cpu\":\"1\",\"memory\":\"512Mi\"}}},{\"name\":\"sidecar\"}]}}\n__SHELLAS_K8S_EXIT__:0\n";
+    let usage = "{\"metadata\":{\"name\":\"api-0\",\"namespace\":\"prod\"},\"containers\":[{\"name\":\"api\",\"usage\":{\"cpu\":\"250m\",\"memory\":\"128Mi\"}},{\"name\":\"sidecar\",\"usage\":{\"cpu\":\"50m\",\"memory\":\"32Mi\"}}]}\n__SHELLAS_K8S_EXIT__:0\n";
     let factory = Arc::new(FakeTerminalFactory::answering(&[
         CONTEXTS, NAMESPACES, PODS, detail, usage,
     ]));
@@ -1119,24 +1119,24 @@ async fn kubernetes_node_metrics_are_on_demand_serial_and_stop_on_tab_change(
         cx,
         handle,
         &factory,
-        "{\"items\":[{\"metadata\":{\"name\":\"node-1\"}}]}\n__SHELLRS_K8S_EXIT__:0\n",
+        "{\"items\":[{\"metadata\":{\"name\":\"node-1\"}}]}\n__SHELLAS_K8S_EXIT__:0\n",
     )
     .await;
     label(cx, handle, "k8s-count", "1 项资源 · 2 个命名空间").await;
     in_frame(cx, handle, |window, cx| {
         window.click("k8s-resource:nodes:/node-1:open", cx)
     });
-    reply(cx, handle, &factory, "{\"metadata\":{\"name\":\"node-1\"},\"status\":{\"capacity\":{\"cpu\":\"8\",\"memory\":\"16Gi\"}}}\n__SHELLRS_K8S_EXIT__:0\n").await;
+    reply(cx, handle, &factory, "{\"metadata\":{\"name\":\"node-1\"},\"status\":{\"capacity\":{\"cpu\":\"8\",\"memory\":\"16Gi\"}}}\n__SHELLAS_K8S_EXIT__:0\n").await;
     label(cx, handle, "k8s-overview:k8s.name", "node-1").await;
     let before = factory.commands.lock().unwrap().len();
     assert!(factory.pending.lock().unwrap().is_empty());
     in_frame(cx, handle, |window, cx| {
         window.within("k8s-detail-tabs").click(5usize, cx)
     });
-    reply(cx, handle, &factory, "{\"metadata\":{\"name\":\"node-1\"},\"usage\":{\"cpu\":\"2\",\"memory\":\"4Gi\"}}\n__SHELLRS_K8S_EXIT__:0\n").await;
+    reply(cx, handle, &factory, "{\"metadata\":{\"name\":\"node-1\"},\"usage\":{\"cpu\":\"2\",\"memory\":\"4Gi\"}}\n__SHELLAS_K8S_EXIT__:0\n").await;
     label(cx, handle, "k8s-cpu-usage", "25.0%").await;
     label(cx, handle, "k8s-memory-usage", "25.0%").await;
-    reply(cx, handle, &factory, "{\"node\":{\"nodeName\":\"node-1\",\"fs\":{\"usedBytes\":250,\"capacityBytes\":1000}}}\n__SHELLRS_K8S_EXIT__:0\n").await;
+    reply(cx, handle, &factory, "{\"node\":{\"nodeName\":\"node-1\",\"fs\":{\"usedBytes\":250,\"capacityBytes\":1000}}}\n__SHELLAS_K8S_EXIT__:0\n").await;
     label(cx, handle, "k8s-disk-usage", "25.0%").await;
     assert_eq!(factory.commands.lock().unwrap().len(), before + 2);
     cx.executor().advance_clock(Duration::from_secs(10));
@@ -1156,17 +1156,17 @@ async fn kubernetes_node_metrics_are_on_demand_serial_and_stop_on_tab_change(
     in_frame(cx, handle, |window, cx| {
         window.within("k8s-detail-tabs").click(0usize, cx)
     });
-    reply(cx, handle, &factory, "{\"metadata\":{\"name\":\"node-1\"},\"usage\":{\"cpu\":\"8\",\"memory\":\"16Gi\"}}\n__SHELLRS_K8S_EXIT__:0\n").await;
+    reply(cx, handle, &factory, "{\"metadata\":{\"name\":\"node-1\"},\"usage\":{\"cpu\":\"8\",\"memory\":\"16Gi\"}}\n__SHELLAS_K8S_EXIT__:0\n").await;
     cx.executor().advance_clock(Duration::from_secs(60));
     cx.run_until_parked();
     assert_eq!(factory.commands.lock().unwrap().len(), count);
     in_frame(cx, handle, |window, cx| {
         window.within("k8s-detail-tabs").click(5usize, cx)
     });
-    reply(cx, handle, &factory, "Forbidden\n__SHELLRS_K8S_EXIT__:1\n").await;
+    reply(cx, handle, &factory, "Forbidden\n__SHELLAS_K8S_EXIT__:1\n").await;
     label(cx, handle, "k8s-metrics-error", "Forbidden (exit 1)").await;
     label(cx, handle, "k8s-cpu-usage", "25.0%").await;
-    reply(cx, handle, &factory, "Forbidden\n__SHELLRS_K8S_EXIT__:1\n").await;
+    reply(cx, handle, &factory, "Forbidden\n__SHELLAS_K8S_EXIT__:1\n").await;
     label(cx, handle, "k8s-disk-error", "Forbidden (exit 1)").await;
     let count = factory.commands.lock().unwrap().len();
     cx.executor().advance_clock(Duration::from_secs(30));
@@ -1271,7 +1271,7 @@ async fn kubernetes_discovers_namespaces_and_filters_resource_queries(cx: &mut T
 
 #[gpui_kit::test]
 async fn kubernetes_searches_namespace_and_context_by_value(cx: &mut TestAppContext) {
-    let test_pods = "{\"items\":[{\"metadata\":{\"name\":\"worker-0\",\"namespace\":\"test\"}}]}\n__SHELLRS_K8S_EXIT__:0\n";
+    let test_pods = "{\"items\":[{\"metadata\":{\"name\":\"worker-0\",\"namespace\":\"test\"}}]}\n__SHELLAS_K8S_EXIT__:0\n";
     let factory = Arc::new(FakeTerminalFactory::answering(&[
         CONTEXTS, NAMESPACES, PODS, test_pods, CONTEXTS, NAMESPACES, PODS,
     ]));
@@ -1528,8 +1528,8 @@ async fn kubernetes_workloads_link_to_namespaced_pods_and_logs(cx: &mut TestAppC
         PODS,
         DEPLOYMENTS,
         DEPLOY_DETAIL,
-        "{\"items\":[{\"metadata\":{\"name\":\"api-rs\",\"namespace\":\"prod\",\"uid\":\"rs\",\"ownerReferences\":[{\"kind\":\"Deployment\",\"name\":\"api\"}]}}]}\n__SHELLRS_K8S_EXIT__:0\n",
-        "{\"items\":[{\"metadata\":{\"name\":\"api-0\",\"namespace\":\"prod\",\"ownerReferences\":[{\"kind\":\"ReplicaSet\",\"name\":\"api-rs\",\"uid\":\"rs\"}]},\"spec\":{\"containers\":[{\"name\":\"api\"}]}}]}\n__SHELLRS_K8S_EXIT__:0\n",
+        "{\"items\":[{\"metadata\":{\"name\":\"api-rs\",\"namespace\":\"prod\",\"uid\":\"rs\",\"ownerReferences\":[{\"kind\":\"Deployment\",\"name\":\"api\"}]}}]}\n__SHELLAS_K8S_EXIT__:0\n",
+        "{\"items\":[{\"metadata\":{\"name\":\"api-0\",\"namespace\":\"prod\",\"ownerReferences\":[{\"kind\":\"ReplicaSet\",\"name\":\"api-rs\",\"uid\":\"rs\"}]},\"spec\":{\"containers\":[{\"name\":\"api\"}]}}]}\n__SHELLAS_K8S_EXIT__:0\n",
         POD_DETAIL,
         LOGS,
     ]));
@@ -1666,7 +1666,7 @@ async fn kubernetes_details_close_button_works_if_focus_returns_to_terminal(
 async fn kubernetes_rbac_failures_are_visible_without_partial_or_automatic_queries(
     cx: &mut TestAppContext,
 ) {
-    let denied = "Error from server (Forbidden): namespaces is forbidden\n__SHELLRS_K8S_EXIT__:1\n";
+    let denied = "Error from server (Forbidden): namespaces is forbidden\n__SHELLAS_K8S_EXIT__:1\n";
     let factory = Arc::new(FakeTerminalFactory::answering(&[CONTEXTS, denied]));
     let handle = open_kubernetes(cx, factory.clone());
     label(
@@ -1795,7 +1795,7 @@ async fn kubernetes_live_logs_are_serial_cancelable_and_copyable(cx: &mut TestAp
         window.input("ERROR", cx);
         window.click("k8s-live", cx);
     });
-    const LIVE_LOGS: &str = "2026-10-12T01:00:03Z ERROR {\"message\":\"新日志\",\"code\":500}\n2026-10-12T01:00:04Z INFO ok\n\n__SHELLRS_K8S_EXIT__:0\n";
+    const LIVE_LOGS: &str = "2026-10-12T01:00:03Z ERROR {\"message\":\"新日志\",\"code\":500}\n2026-10-12T01:00:04Z INFO ok\n\n__SHELLAS_K8S_EXIT__:0\n";
     reply(cx, handle, &factory, LIVE_LOGS).await;
     label(cx, handle, "k8s-log-count", "匹配 1 / 2 行").await;
     in_frame(cx, handle, |window, cx| window.click("k8s-copy-logs", cx));
@@ -1820,7 +1820,7 @@ async fn kubernetes_live_logs_are_serial_cancelable_and_copyable(cx: &mut TestAp
         cx,
         handle,
         &factory,
-        "late ERROR reply\n__SHELLRS_K8S_EXIT__:0\n",
+        "late ERROR reply\n__SHELLAS_K8S_EXIT__:0\n",
     )
     .await;
     in_frame(cx, handle, |window, _| {
@@ -1856,7 +1856,7 @@ async fn kubernetes_live_logs_are_serial_cancelable_and_copyable(cx: &mut TestAp
     in_frame(cx, handle, |window, cx| {
         window.within("k8s-detail-tabs").click(1usize, cx)
     });
-    reply(cx, handle, &factory, "Forbidden\n__SHELLRS_K8S_EXIT__:1\n").await;
+    reply(cx, handle, &factory, "Forbidden\n__SHELLAS_K8S_EXIT__:1\n").await;
     label(cx, handle, "k8s-logs-error", "Forbidden (exit 1)").await;
     in_frame(cx, handle, |window, _| {
         assert_eq!(window.find("k8s-live").checked(), Some(false))
@@ -1889,7 +1889,7 @@ async fn kubernetes_log_buffer_bounds_and_virtualizes_large_results(cx: &mut Tes
     let logs = (0..20_000)
         .map(|ix| format!("INFO line-{ix}\n"))
         .collect::<String>()
-        + "__SHELLRS_K8S_EXIT__:0\n";
+        + "__SHELLAS_K8S_EXIT__:0\n";
     let factory = Arc::new(FakeTerminalFactory::answering(&[
         CONTEXTS, NAMESPACES, PODS, POD_DETAIL, &logs,
     ]));
@@ -2065,7 +2065,7 @@ fn compressed_fixture(body: &str) -> String {
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
     encoder.write_all(body.as_bytes()).unwrap();
     format!(
-        "__SHELLRS_K8S_GZIP__\n{}",
+        "__SHELLAS_K8S_GZIP__\n{}",
         base64::engine::general_purpose::STANDARD.encode(encoder.finish().unwrap())
     )
 }
@@ -2091,7 +2091,7 @@ async fn kubernetes_large_lists_retry_smaller_pages_and_show_first_page_early(
         script(factory.commands.lock().unwrap().last().unwrap()).contains("/api/v1/pods?limit=50")
     );
     let too_large = compressed_fixture(&format!(
-        "{{\"data\":\"{}\"}}\n__SHELLRS_K8S_EXIT__:0\n",
+        "{{\"data\":\"{}\"}}\n__SHELLAS_K8S_EXIT__:0\n",
         "x".repeat(17 << 20)
     ));
     reply(cx, handle, &factory, &too_large).await;
@@ -2103,7 +2103,7 @@ async fn kubernetes_large_lists_retry_smaller_pages_and_show_first_page_early(
         script(factory.commands.lock().unwrap().last().unwrap()).contains("/api/v1/pods?limit=25")
     );
     let first = serde_json::json!({"metadata":{"continue":"next+/=&","resourceVersion":"42"},"items":[{"metadata":{"name":"first","namespace":"prod","annotations":{"kubectl.kubernetes.io/last-applied-configuration":"annotation".repeat(150_000)}},"spec":{"containers":[{"name":"api"}]},"status":{"phase":"Running"}}]});
-    let first = format!("{first}\n__SHELLRS_K8S_EXIT__:0\n");
+    let first = format!("{first}\n__SHELLAS_K8S_EXIT__:0\n");
     assert!(first.len() > 1 << 20);
     let wire = compressed_fixture(&first);
     assert!(wire.len() < 1 << 20);
@@ -2119,7 +2119,7 @@ async fn kubernetes_large_lists_retry_smaller_pages_and_show_first_page_early(
     let next = script(factory.commands.lock().unwrap().last().unwrap());
     assert!(next.contains("limit=25&continue=next%2B%2F%3D%26"));
     let last = r#"{"metadata":{"resourceVersion":"42"},"items":[{"metadata":{"name":"last","namespace":"prod"},"spec":{"containers":[{"name":"worker"}]}}]}
-__SHELLRS_K8S_EXIT__:0
+__SHELLAS_K8S_EXIT__:0
 "#;
     reply(cx, handle, &factory, &compressed_fixture(last)).await;
     label(cx, handle, "k8s-count", "2 项资源 · 2 个命名空间").await;
@@ -2129,7 +2129,7 @@ __SHELLRS_K8S_EXIT__:0
 #[gpui_kit::test]
 async fn kubernetes_repeated_page_tokens_stop_with_visible_error(cx: &mut TestAppContext) {
     let page = r#"{"metadata":{"continue":"same","resourceVersion":"42"},"items":[{"metadata":{"name":"api","namespace":"prod"}}]}
-__SHELLRS_K8S_EXIT__:0
+__SHELLAS_K8S_EXIT__:0
 "#;
     let factory = Arc::new(FakeTerminalFactory::answering(&[
         CONTEXTS, NAMESPACES, page, page,
@@ -2152,13 +2152,13 @@ async fn kubernetes_relationship_navigation_reuses_cache_and_refresh_removes_old
     cx: &mut TestAppContext,
 ) {
     let rs = r#"{"kind":"ReplicaSet","metadata":{"name":"api-rs","namespace":"prod","uid":"rs-uid","ownerReferences":[{"kind":"Deployment","name":"api","uid":"deploy-uid"}]}}
-__SHELLRS_K8S_EXIT__:0
+__SHELLAS_K8S_EXIT__:0
 "#;
     let rs_list = format!(
-        "{{\"items\":[{}]}}\n__SHELLRS_K8S_EXIT__:0\n",
-        rs.split("\n__SHELLRS").next().unwrap()
+        "{{\"items\":[{}]}}\n__SHELLAS_K8S_EXIT__:0\n",
+        rs.split("\n__SHELLAS").next().unwrap()
     );
-    let empty = "{\"items\":[]}\n__SHELLRS_K8S_EXIT__:0\n";
+    let empty = "{\"items\":[]}\n__SHELLAS_K8S_EXIT__:0\n";
     let factory = Arc::new(FakeTerminalFactory::answering(&[
         CONTEXTS,
         NAMESPACES,
@@ -2230,7 +2230,7 @@ __SHELLRS_K8S_EXIT__:0
 #[gpui_kit::test]
 async fn kubernetes_configuration_cards_page_locally_and_open_details(cx: &mut TestAppContext) {
     let mut value: serde_json::Value =
-        serde_json::from_str(POD_DETAIL.split("\n__SHELLRS").next().unwrap()).unwrap();
+        serde_json::from_str(POD_DETAIL.split("\n__SHELLAS").next().unwrap()).unwrap();
     value["spec"]["containers"][0]["envFrom"] = serde_json::json!(
         (0..4)
             .map(|ix| serde_json::json!({"configMapRef":{"name":format!("cfg-{ix}")}}))
@@ -2241,7 +2241,7 @@ async fn kubernetes_configuration_cards_page_locally_and_open_details(cx: &mut T
     let cm = mutation_wire(
         &serde_json::json!({"kind":"ConfigMap", "metadata":{"name":"cfg-0","namespace":"prod"}, "data":{"app.yaml":"port: 80"}}),
     );
-    let empty = "{\"items\":[]}\n__SHELLRS_K8S_EXIT__:0\n";
+    let empty = "{\"items\":[]}\n__SHELLAS_K8S_EXIT__:0\n";
     let factory = Arc::new(FakeTerminalFactory::answering(&[
         CONTEXTS, NAMESPACES, PODS, &pod, &cm, empty, empty, empty, empty, empty, empty, &pod,
     ]));
@@ -2300,7 +2300,7 @@ async fn kubernetes_configuration_cards_page_locally_and_open_details(cx: &mut T
 #[gpui_kit::test]
 async fn kubernetes_owner_navigation_rejects_a_recreated_resource(cx: &mut TestAppContext) {
     let mut value: serde_json::Value =
-        serde_json::from_str(POD_DETAIL.split("\n__SHELLRS").next().unwrap()).unwrap();
+        serde_json::from_str(POD_DETAIL.split("\n__SHELLAS").next().unwrap()).unwrap();
     value["metadata"]["ownerReferences"] = serde_json::json!([{"apiVersion":"apps/v1", "kind":"ReplicaSet", "name":"api-rs", "uid":"original"}]);
     let pod = mutation_wire(&value);
     let rs = mutation_wire(

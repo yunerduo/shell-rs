@@ -487,8 +487,8 @@ fn devices_sync_through_a_server_that_refuses_with_412_for_missing_folders() {
 }
 
 /// The store against a real server, on Unix: an Apache started for the
-/// test, or the server `SHELLRS_TEST_WEBDAV_URL` names, signed in to as
-/// `SHELLRS_TEST_WEBDAV_USER` with `SHELLRS_TEST_WEBDAV_PASSWORD`. There,
+/// test, or the server `SHELLAS_TEST_WEBDAV_URL` names, signed in to as
+/// `SHELLAS_TEST_WEBDAV_USER` with `SHELLAS_TEST_WEBDAV_PASSWORD`. There,
 /// each test goes in a folder of its own, and what it writes stays.
 #[cfg(unix)]
 mod server {
@@ -517,11 +517,11 @@ mod server {
     impl Server {
         /// The named server, or else an Apache.
         fn start() -> Self {
-            match std::env::var("SHELLRS_TEST_WEBDAV_URL") {
+            match std::env::var("SHELLAS_TEST_WEBDAV_URL") {
                 Ok(url) => Self::Named {
                     url: url.trim_end_matches('/').to_owned(),
-                    user: std::env::var("SHELLRS_TEST_WEBDAV_USER").unwrap_or_default(),
-                    password: std::env::var("SHELLRS_TEST_WEBDAV_PASSWORD").unwrap_or_default(),
+                    user: std::env::var("SHELLAS_TEST_WEBDAV_USER").unwrap_or_default(),
+                    password: std::env::var("SHELLAS_TEST_WEBDAV_PASSWORD").unwrap_or_default(),
                 },
                 Err(_) => Self::Apache(Apache::start(true)),
             }
@@ -559,8 +559,8 @@ mod server {
     }
 
     /// Apache with mod_dav on a port of its own, in a folder of its own, with
-    /// one user. `SHELLRS_TEST_HTTPD`, `SHELLRS_TEST_HTTPD_MODULES` and
-    /// `SHELLRS_TEST_HTPASSWD` name its programs where they are not where
+    /// one user. `SHELLAS_TEST_HTTPD`, `SHELLAS_TEST_HTTPD_MODULES` and
+    /// `SHELLAS_TEST_HTPASSWD` name its programs where they are not where
     /// macOS and Debian put them.
     struct Apache {
         child: Child,
@@ -583,15 +583,15 @@ mod server {
         /// Without `etags`, it gives none, neither listing nor reading.
         fn start(etags: bool) -> Self {
             let httpd = found(
-                "SHELLRS_TEST_HTTPD",
+                "SHELLAS_TEST_HTTPD",
                 &["/usr/sbin/httpd", "/usr/sbin/apache2"],
             );
             let modules = found(
-                "SHELLRS_TEST_HTTPD_MODULES",
+                "SHELLAS_TEST_HTTPD_MODULES",
                 &["/usr/libexec/apache2", "/usr/lib/apache2/modules"],
             );
             let htpasswd = found(
-                "SHELLRS_TEST_HTPASSWD",
+                "SHELLAS_TEST_HTPASSWD",
                 &["/usr/sbin/htpasswd", "/usr/bin/htpasswd"],
             );
             let dir = tempfile::tempdir().unwrap();
@@ -804,7 +804,7 @@ mod server {
     #[test]
     #[ignore = "needs Apache"]
     fn devices_sync_through_apache_without_etags() {
-        if std::env::var("SHELLRS_TEST_WEBDAV_URL").is_ok() {
+        if std::env::var("SHELLAS_TEST_WEBDAV_URL").is_ok() {
             return;
         }
         let server = Server::Apache(Apache::start(false));

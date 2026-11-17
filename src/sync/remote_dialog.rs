@@ -95,7 +95,7 @@ impl RemoteForm {
         let fields = match &dialog {
             RemoteDialog::SetUp(RemoteKind::WebDav)
             | RemoteDialog::Login(SyncLocation::Folder { .. }) => Fields::WebDav {
-                url: field("", "https://dav.example.com/ShellRS", false),
+                url: field("", "https://dav.example.com/ShellAs", false),
                 username: field("", "", false),
                 password: field("", "", true),
             },
@@ -108,7 +108,7 @@ impl RemoteForm {
                 endpoint: field("", "https://<ACCOUNT_ID>.r2.cloudflarestorage.com", false),
                 region: field("", "us-east-1", false),
                 bucket: field("", "", false),
-                prefix: field("ShellRS", "", false),
+                prefix: field("ShellAs", "", false),
                 access_key: field("", "", false),
                 secret_key: field("", "", true),
                 path_style: false,

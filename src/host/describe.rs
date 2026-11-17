@@ -287,9 +287,13 @@ fn secret_failure(secret: &SecretRef, writing: bool) -> fn(&str) -> SharedString
         (SecretRef::Temporary { .. }, _) => {
             |error| t!("host.store.secret.temporary", error = error)
         }
-        (SecretRef::SyncKeyring | SecretRef::SyncLogin, _) => {
-            |error| t!("host.store.secret.sync_keyring", error = error)
-        }
+        (
+            SecretRef::SyncKeyring
+            | SecretRef::SyncLogin
+            | SecretRef::AccountToken
+            | SecretRef::AccountSyncPassword,
+            _,
+        ) => |error| t!("host.store.secret.sync_keyring", error = error),
     }
 }
 
@@ -366,19 +370,19 @@ mod tests {
     };
 
     #[test]
-    fn a_refused_database_says_which_shellrs_wrote_it() {
+    fn a_refused_database_says_which_shellas_wrote_it() {
         let newer = OpenError::Newer {
             version: 21,
             supported: 20,
         };
         assert_eq!(
             newer.message(),
-            "数据库来自更新版本的 Agree ShellAS（结构版本 21，本版本支持到 20），请安装最新版本"
+            "数据库来自更新版本的 ShellAs（结构版本 21，本版本支持到 20），请安装最新版本"
         );
         let old = OpenError::TooOld { version: 12 };
         assert_eq!(
             old.message(),
-            "数据库来自 Agree ShellAS 的早期开发版本（结构版本 12），无法升级"
+            "数据库来自 ShellAs 的早期开发版本（结构版本 12），无法升级"
         );
     }
 
@@ -405,7 +409,7 @@ mod tests {
         assert_eq!(ForwardKind::Local.label(), "Local");
         assert_eq!(
             OpenError::TooOld { version: 12 }.message(),
-            "The database is from an early development version of Agree ShellAS (schema version 12) and can’t be upgraded."
+            "The database is from an early development version of ShellAs (schema version 12) and can’t be upgraded."
         );
         assert_eq!(FlowControl::RtsCts.label(), "RTS/CTS");
     }
@@ -426,10 +430,10 @@ mod tests {
         assert_eq!(
             credential_summary(&key, Some(Path::new("/Users/me/.ssh"))),
             "deploy · 密钥",
-            "a key ShellRS keeps is not known by its file name"
+            "a key ShellAs keeps is not known by its file name"
         );
         assert_eq!(
-            credential_summary(&key, Some(Path::new("/Users/me/Library/shellrs/keys"))),
+            credential_summary(&key, Some(Path::new("/Users/me/Library/shellas/keys"))),
             "deploy · id_ed25519"
         );
         let agent = Credential::new(

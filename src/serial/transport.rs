@@ -148,7 +148,7 @@ fn serve(
         let events = events.clone();
         let device = device.to_owned();
         thread::Builder::new()
-            .name("shellrs-serial-reader".into())
+            .name("shellas-serial-reader".into())
             .spawn(move || read(&port, &device, &stop, &events))
             .context(t!("serial.reader_thread"))?
     };

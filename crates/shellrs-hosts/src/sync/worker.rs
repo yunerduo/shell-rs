@@ -55,7 +55,7 @@ pub fn keep_login(secrets: &dyn SecretStore, login: Option<&str>) -> Result<(), 
 /// folder, which is all sync asks of a store.
 pub fn probe(store: &dyn SyncStore, name: &str) -> Result<(), JobError> {
     let path = format!("shellrs-sync/{name}");
-    let wrote = b"ShellRS".to_vec();
+    let wrote = b"ShellAs".to_vec();
     store.list("shellrs-sync".into()).map_err(SyncError::from)?;
     store
         .put(path.clone(), wrote.clone(), PutCondition::Overwrite)

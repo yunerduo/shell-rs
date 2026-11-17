@@ -104,7 +104,7 @@ impl NativeTray {
                 DestroyIcon(icon);
                 return Err(error);
             }
-            let callback = RegisterWindowMessageW(wide("ShellRS.TrayIcon").as_ptr());
+            let callback = RegisterWindowMessageW(wide("ShellAs.TrayIcon").as_ptr());
             let taskbar_created = RegisterWindowMessageW(wide("TaskbarCreated").as_ptr());
             let mut data = NOTIFYICONDATAW {
                 cbSize: size_of::<NOTIFYICONDATAW>() as _,
@@ -313,7 +313,7 @@ mod tests {
                 ptr::null(),
             );
             assert!(!hwnd.is_null());
-            let callback = RegisterWindowMessageW(wide("ShellRS.TrayIcon.Test").as_ptr());
+            let callback = RegisterWindowMessageW(wide("ShellAs.TrayIcon.Test").as_ptr());
             assert_ne!(callback, 0);
             let state = Rc::new(State {
                 data: NOTIFYICONDATAW {

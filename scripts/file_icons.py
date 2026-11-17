@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pick the SFTP list's color icons out of Material Icon Theme (MIT).
 
-ShellRS ships a part of the theme: the icons in ICONS below, each with every
+ShellAs ships a part of the theme: the icons in ICONS below, each with every
 file name, extension and folder name the theme gives it. This writes them to
 assets/icons/files/ (with the theme's license) and the lookup tables to
 src/explorer/file_icons_table.rs, then formats the tables with rustfmt.
@@ -19,7 +19,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-# The icons ShellRS ships: what is common on servers, in projects deployed to
+# The icons ShellAs ships: what is common on servers, in projects deployed to
 # them and in home folders. A name or extension the theme gives an icon not
 # listed here gets the plain file or folder.
 ICONS = [

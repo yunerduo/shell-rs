@@ -48,7 +48,7 @@ impl Console<'_> {
             });
             let _ = writeln!(self.stdout, "{}", ascii_json(&error));
         } else {
-            let _ = writeln!(self.stderr, "shellrs: [{}] {message}", code.as_str());
+            let _ = writeln!(self.stderr, "shellas: [{}] {message}", code.as_str());
         }
         FAILURE_EXIT
     }
@@ -142,7 +142,7 @@ pub fn activate_running_app(endpoint: &Path, open: Option<OpenLink>) -> bool {
     // that hangs must not hang the one being opened.
     let (done, heard) = mpsc::channel();
     let asked = std::thread::Builder::new()
-        .name("shellrs-activate".into())
+        .name("shellas-activate".into())
         .spawn(move || {
             let _ = done.send(ask_to_come_forward(&stream, open));
         });

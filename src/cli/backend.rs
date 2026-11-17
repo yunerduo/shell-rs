@@ -60,7 +60,7 @@ impl SshCliBackend {
         let (commands, command_receiver) = async_channel::unbounded();
         let (event_sender, events) = async_channel::unbounded();
         let worker = std::thread::Builder::new()
-            .name("shellrs-cli-sftp".into())
+            .name("shellas-cli-sftp".into())
             .spawn(move || transport.run(command_receiver, event_sender))
             .map_err(|error| CliError::new(ErrorCode::ConnectFailed, error.to_string()))?;
         let mut run = Transfer::default();
@@ -143,7 +143,7 @@ impl CliBackend for SshCliBackend {
             Ok(ExecExit::Signal(signal)) => {
                 let _ = output(
                     ExecStream::Stderr,
-                    format!("shellrs: {}\n", t!("cli.exec.signal", signal = signal)).as_bytes(),
+                    format!("shellas: {}\n", t!("cli.exec.signal", signal = signal)).as_bytes(),
                 );
                 Ok(signal_exit_code(&signal))
             }

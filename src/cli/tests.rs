@@ -321,7 +321,7 @@ fn failures_carry_their_code_and_exit_255() {
     assert!(
         String::from_utf8(stderr)
             .unwrap()
-            .starts_with("shellrs: [host_key_unknown]")
+            .starts_with("shellas: [host_key_unknown]")
     );
 
     let (code, _, stderr) = run(
@@ -373,7 +373,7 @@ fn with_the_switch_off_nothing_reaches_the_backend() {
     assert_eq!(code, 255);
     assert!(stdout.is_empty());
     let stderr = String::from_utf8(stderr).unwrap();
-    assert!(stderr.starts_with("shellrs: [not_enabled]"));
+    assert!(stderr.starts_with("shellas: [not_enabled]"));
     assert!(stderr.contains("设置 → 外部 CLI"));
     assert!(fixture.backend.calls.lock().unwrap().is_empty());
 }
@@ -390,7 +390,7 @@ fn without_the_app_the_command_says_it_is_not_running() {
     assert!(
         String::from_utf8(stderr)
             .unwrap()
-            .starts_with("shellrs: [not_running]")
+            .starts_with("shellas: [not_running]")
     );
 
     // Nor when a crashed app left its socket behind, with nobody on it.
@@ -405,7 +405,7 @@ fn without_the_app_the_command_says_it_is_not_running() {
         assert!(
             String::from_utf8(stderr)
                 .unwrap()
-                .starts_with("shellrs: [not_running]")
+                .starts_with("shellas: [not_running]")
         );
     }
 }
@@ -450,7 +450,7 @@ fn opening_shellrs_again_brings_the_running_one_forward() {
     assert!(
         String::from_utf8(stderr)
             .unwrap()
-            .starts_with("shellrs: [not_enabled]")
+            .starts_with("shellas: [not_enabled]")
     );
     assert_eq!(fixture.server.take_activation(), None);
 }
@@ -631,7 +631,7 @@ fn the_socket_belongs_to_one_app_at_a_time_and_goes_with_it() {
     assert!(
         String::from_utf8(stderr)
             .unwrap()
-            .starts_with("shellrs: [not_running]")
+            .starts_with("shellas: [not_running]")
     );
     #[cfg(unix)]
     {
@@ -647,11 +647,11 @@ fn the_socket_belongs_to_one_app_at_a_time_and_goes_with_it() {
 fn exec_takes_its_command_as_one_argument_or_from_stdin() {
     let parse = |args: &[&str]| Cli::try_parse_from(args).map(|cli| cli.command);
     assert!(matches!(
-        parse(&["shellrs", "exec", "ID", "df -h | head"]),
+        parse(&["shellas", "exec", "ID", "df -h | head"]),
         Ok(Command::Exec { command: Some(command), stdin: false, .. }) if command == "df -h | head"
     ));
     assert!(matches!(
-        parse(&["shellrs", "exec", "ID", "--stdin"]),
+        parse(&["shellas", "exec", "ID", "--stdin"]),
         Ok(Command::Exec {
             command: None,
             stdin: true,
@@ -659,11 +659,11 @@ fn exec_takes_its_command_as_one_argument_or_from_stdin() {
         })
     ));
     // Neither, or both.
-    assert!(parse(&["shellrs", "exec", "ID"]).is_err());
-    assert!(parse(&["shellrs", "exec", "ID", "ls", "--stdin"]).is_err());
+    assert!(parse(&["shellas", "exec", "ID"]).is_err());
+    assert!(parse(&["shellas", "exec", "ID", "ls", "--stdin"]).is_err());
     // JSON brings the host and the command with it, and nothing else does.
     assert!(matches!(
-        parse(&["shellrs", "exec", "--json"]),
+        parse(&["shellas", "exec", "--json"]),
         Ok(Command::Exec {
             id: None,
             command: None,
@@ -671,18 +671,18 @@ fn exec_takes_its_command_as_one_argument_or_from_stdin() {
             ..
         })
     ));
-    assert!(parse(&["shellrs", "exec"]).is_err());
-    assert!(parse(&["shellrs", "exec", "ID", "--json"]).is_err());
-    assert!(parse(&["shellrs", "exec", "--json", "--stdin"]).is_err());
+    assert!(parse(&["shellas", "exec"]).is_err());
+    assert!(parse(&["shellas", "exec", "ID", "--json"]).is_err());
+    assert!(parse(&["shellas", "exec", "--json", "--stdin"]).is_err());
     // Split words are a mistake, not a longer command.
-    assert!(parse(&["shellrs", "exec", "ID", "ls", "-la"]).is_err());
+    assert!(parse(&["shellas", "exec", "ID", "ls", "-la"]).is_err());
     // Typed into the open terminal, in any of the forms.
     assert!(matches!(
-        parse(&["shellrs", "exec", "ID", "--terminal", "ls"]),
+        parse(&["shellas", "exec", "ID", "--terminal", "ls"]),
         Ok(Command::Exec { terminal: true, command: Some(command), .. }) if command == "ls"
     ));
     assert!(matches!(
-        parse(&["shellrs", "exec", "--json", "--terminal"]),
+        parse(&["shellas", "exec", "--json", "--terminal"]),
         Ok(Command::Exec {
             terminal: true,
             json: true,
@@ -825,34 +825,34 @@ fn exec_json_gathers_the_output_and_says_errors_in_json() {
 fn the_new_commands_read_their_arguments() {
     let parse = |args: &[&str]| Cli::try_parse_from(args).map(|cli| cli.command);
     assert!(matches!(
-        parse(&["shellrs", "hosts", "show", "ID", "--json"]),
+        parse(&["shellas", "hosts", "show", "ID", "--json"]),
         Ok(Command::Hosts { command: HostsCommand::Show { id, json: true } }) if id == "ID"
     ));
     assert!(matches!(
-        parse(&["shellrs", "hosts", "delete", "ID", "--force"]),
+        parse(&["shellas", "hosts", "delete", "ID", "--force"]),
         Ok(Command::Hosts {
             command: HostsCommand::Delete { force: true, .. }
         })
     ));
     assert!(matches!(
-        parse(&["shellrs", "credentials", "list", "-q", "deploy"]),
+        parse(&["shellas", "credentials", "list", "-q", "deploy"]),
         Ok(Command::Credentials { command: CredentialsCommand::List { query: Some(query), .. } })
             if query == "deploy"
     ));
     assert!(matches!(
-        parse(&["shellrs", "sync", "ID", "./dist", "/srv/app", "--delete"]),
+        parse(&["shellas", "sync", "ID", "./dist", "/srv/app", "--delete"]),
         Ok(Command::Sync { delete: true, remote, .. }) if remote == "/srv/app"
     ));
     // Hosts are listed under `hosts`, like the rest of what is done to them.
     assert!(matches!(
-        parse(&["shellrs", "hosts", "list", "-q", "web"]),
+        parse(&["shellas", "hosts", "list", "-q", "web"]),
         Ok(Command::Hosts { command: HostsCommand::List { query: Some(query), .. } })
             if query == "web"
     ));
-    assert!(parse(&["shellrs", "list"]).is_err());
+    assert!(parse(&["shellas", "list"]).is_err());
     // `credentials` has no --force: nothing of it stays open.
-    assert!(parse(&["shellrs", "credentials", "delete", "ID", "--force"]).is_err());
-    assert!(parse(&["shellrs", "sync", "ID", "./dist"]).is_err());
+    assert!(parse(&["shellas", "credentials", "delete", "ID", "--force"]).is_err());
+    assert!(parse(&["shellas", "sync", "ID", "./dist"]).is_err());
 }
 
 fn saved_host(name: &str) -> HostDetails {
@@ -939,7 +939,7 @@ fn a_change_waits_for_the_app_and_comes_back_as_it_made_it() {
     assert_eq!(code, 255);
     assert_eq!(
         String::from_utf8(stderr).unwrap(),
-        "shellrs: [host_in_use] 主机「x」有打开的标签\n"
+        "shellas: [host_in_use] 主机「x」有打开的标签\n"
     );
 }
 
@@ -977,7 +977,7 @@ fn a_change_nobody_takes_up_is_taken_back_and_one_dropped_says_so() {
     assert!(
         String::from_utf8(stderr)
             .unwrap()
-            .contains("Agree ShellAS 在处理改动时关闭了")
+            .contains("ShellAs 在处理改动时关闭了")
     );
 }
 
@@ -996,7 +996,7 @@ fn with_the_switch_off_no_change_reaches_the_app() {
     assert!(
         String::from_utf8(stderr)
             .unwrap()
-            .starts_with("shellrs: [not_enabled]")
+            .starts_with("shellas: [not_enabled]")
     );
     assert!(fixture.server.take_change().is_none());
 }
@@ -1083,7 +1083,7 @@ fn showing_a_host_or_a_credential_says_what_is_saved_and_never_what() {
     assert!(
         String::from_utf8(stderr)
             .unwrap()
-            .starts_with("shellrs: [credential_not_found]")
+            .starts_with("shellas: [credential_not_found]")
     );
 }
 
@@ -1180,7 +1180,7 @@ fn an_app_that_does_not_know_the_command_is_said_to_be_older() {
     assert!(
         String::from_utf8(stderr)
             .unwrap()
-            .starts_with("shellrs: [version_mismatch] 正在运行的 Agree ShellAS 不认识这个命令"),
+            .starts_with("shellas: [version_mismatch] 正在运行的 ShellAs 不认识这个命令"),
     );
 }
 
@@ -1308,7 +1308,7 @@ fn a_run_that_cannot_be_typed_says_why() {
         let (exit, stderr) = command.join().unwrap();
         assert_eq!(exit, 255);
         assert!(
-            stderr.starts_with(&format!("shellrs: [{code}] ")),
+            stderr.starts_with(&format!("shellas: [{code}] ")),
             "{stderr}"
         );
         stderr

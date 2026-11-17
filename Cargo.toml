@@ -1,24 +1,24 @@
 [package]
 name = "shellrs"
-version = "0.1.19"
+version = "0.1.20"
 edition = "2024"
 publish = false
 description = "SSH client and host manager: terminal, SFTP, port forwarding"
 license = "GPL-3.0-only"
 repository = "https://github.com/since2006/shell-rs"
-default-run = "shellrs"
+default-run = "shellas"
 
-# The app. On macOS and Linux it doubles as the `shellrs` command when
+# The app. On macOS and Linux it doubles as the `shellas` command when
 # started with arguments.
 [[bin]]
-name = "shellrs"
+name = "shellas"
 path = "src/main.rs"
 
-# The `shellrs` command on its own, as a console program: Windows needs it,
+# The `shellas` command on its own, as a console program: Windows needs it,
 # because the app is a GUI program there and has no console to print to.
 [[bin]]
-name = "shellrs-cli"
-path = "src/bin/shellrs-cli.rs"
+name = "shellas-cli"
+path = "src/bin/shellas-cli.rs"
 
 # The sync, SSH and hosts cores are crates of their own, under MIT, so the
 # mobile apps can link them as well. Cargo commands here build, test and lint them
@@ -62,6 +62,9 @@ gpui-kit = { version = "0.6.1", features = [
 alacritty_terminal = "0.26"
 anyhow = "1"
 argon2 = { version = "0.6", default-features = false, features = ["alloc", "zeroize"] }
+# The account's cloud sync documents, sealed with a key derived from the
+# sync password. In the lock file already, through the GPUI stack.
+aes-gcm = "0.10"
 subtle = "2"
 async-channel = "2"
 # A terminal's parser thread waits for output only until a synchronized
@@ -124,7 +127,7 @@ trash = "5"
 # (a GUI app started from Finder or the Start menu has no HTTPS_PROXY).
 # `socks` adds the SOCKS5 proxy the assistant can be pointed at.
 minisign-verify = "0.2"
-reqwest = { version = "0.13", features = ["blocking", "socks"] }
+reqwest = { version = "0.13", features = ["blocking", "socks", "json"] }
 semver = { version = "1", features = ["serde"] }
 # 匿名使用统计: the system's name and version for Aptabase, as its own Tauri
 # plugin reads them.
@@ -133,12 +136,12 @@ serde_yaml_ng = "0.10.0"
 # ZMODEM (`rz` / `sz` in a terminal): the protocol only, driven by the
 # terminal's parser thread. Pinned: its 0.x API changes between releases.
 zmodem2 = "=0.7.3"
-# 显示或隐藏 ShellRS, the shortcut that works in any app: the system's
+# 显示或隐藏 ShellAs, the shortcut that works in any app: the system's
 # hot keys (Carbon on macOS, RegisterHotKey on Windows, X11 on Linux).
 global-hotkey = "0.9"
 
 [target.'cfg(unix)'.dependencies]
-# `access(2)`: whether the folder ShellRS runs from can take its update.
+# `access(2)`: whether the folder ShellAs runs from can take its update.
 libc = "0.2"
 
 # The Dock icon when running outside an app bundle (`cargo run`), and the

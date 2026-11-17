@@ -1,6 +1,6 @@
-# ShellRS sync format, version 1
+# Agree ShellAs sync format, version 1
 
-What a store holds, so that every ShellRS — desktop, mobile, every version —
+What a store holds, so that every Agree ShellAs — desktop, mobile, every version —
 reads it the same. **Nothing here may change once released**: a change that an
 older reader would misread needs a new `min_reader` (or, for the files' own
 layout, a new folder `v2`).
@@ -138,12 +138,12 @@ sync; there is no setting to keep them out.
 
 Every field listed is written, `null` where it has none: a record missing one
 is damaged, kept and passed on but not used. The fields marked ¹ were added
-after ShellRS 0.1.17, and a copy an older version wrote has none of them:
+after Agree ShellAs 0.1.17, and a copy an older version wrote has none of them:
 missing, `parent` reads as null and `sort_order` as 0. An older version keeps
 them as fields it does not know, so they survive its edits; it lists snippet
 categories flat.
 
-The fields and kind marked ² were added after ShellRS 0.1.18. Missing,
+The fields and kind marked ² were added after Agree ShellAs 0.1.18. Missing,
 `credential_username` reads as null, and so does an empty one. It counts only
 while `auth` is `credential`: an older version that turns the host to another
 sign-in keeps it as it was. Repairing a host whose credential was deleted sets
@@ -202,7 +202,7 @@ check (4): the first bytes of the SHA-256 of all before it
   version 0, shorter than a header, a tag and a check, with a wrong check or
   a cost out of bounds is not a setup code. The check tells a code cut short
   from a wrong password; it protects nothing.
-- A version above the reader's own needs a newer ShellRS, which is told
+- A version above the reader's own needs a newer Agree ShellAs, which is told
   before anything after the version is read: only the prefix, the base64url,
   the magic and the version byte are the same in every version. A writer
   keeps to version 1 while it can say what the code holds.
@@ -218,7 +218,7 @@ check (4): the first bytes of the SHA-256 of all before it
 ```
 
 - Unknown fields are ignored. A `kind` the reader does not know needs a
-  newer ShellRS. A local folder has no setup code: its path is one device's.
+  newer Agree ShellAs. A local folder has no setup code: its path is one device's.
 - The code is no easier to guess the password of than `vault.json`, which
   has the same salt and cost. Whoever has a code and the password it was made
   under has the login, even after the password changed.

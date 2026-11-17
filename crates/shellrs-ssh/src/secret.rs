@@ -51,6 +51,12 @@ pub enum SecretRef {
     /// an S3 secret key), one per device: a device syncs to one place at a
     /// time.
     SyncLogin,
+    /// The account server's login token, one per device. The account is
+    /// optional, so this entry may never exist.
+    AccountToken,
+    /// The account's cloud sync password, when the user asked for it to be
+    /// remembered. By default the password stays in memory only.
+    AccountSyncPassword,
 }
 
 impl SecretRef {
@@ -103,6 +109,8 @@ impl SecretRef {
             Self::Temporary { host } => format!("temporary:{host}"),
             Self::SyncKeyring => "sync:keyring".into(),
             Self::SyncLogin => "sync:login".into(),
+            Self::AccountToken => "account:token".into(),
+            Self::AccountSyncPassword => "account:sync-password".into(),
         }
     }
 }
@@ -175,6 +183,11 @@ mod tests {
         assert_eq!(SecretRef::temporary(7).account(), "temporary:7");
         assert_eq!(SecretRef::SyncKeyring.account(), "sync:keyring");
         assert_eq!(SecretRef::SyncLogin.account(), "sync:login");
+        assert_eq!(SecretRef::AccountToken.account(), "account:token");
+        assert_eq!(
+            SecretRef::AccountSyncPassword.account(),
+            "account:sync-password"
+        );
     }
 
     #[test]
@@ -188,6 +201,8 @@ mod tests {
             SecretRef::temporary(22),
             SecretRef::SyncKeyring,
             SecretRef::SyncLogin,
+            SecretRef::AccountToken,
+            SecretRef::AccountSyncPassword,
         ]
         .map(|secret| secret.account());
         for (ix, account) in accounts.iter().enumerate() {

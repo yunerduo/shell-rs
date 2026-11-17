@@ -1,4 +1,4 @@
-//! ShellRS: an SSH host manager with real SSH and local terminals.
+//! ShellAs: an SSH host manager with real SSH and local terminals.
 //!
 //! Modules are organized by capability so they can become crates later:
 //! `host` (主机管理), `terminal` (终端), `ssh` (SSH 连接), `sftp` (SFTP
@@ -8,6 +8,7 @@
 //! `secrets` (系统钥匙串), `settings` (设置), `cli` (外部 CLI), `update` (在线升级), `analytics`
 //! (匿名使用统计), `connection` 与 `shared` (跨模块共用), `i18n` (多语言), `workspace` (窗口壳), `app` (动作、快捷键、资源).
 
+pub mod account;
 pub mod analytics;
 pub mod app;
 pub mod app_lock;

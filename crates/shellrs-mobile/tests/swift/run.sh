@@ -7,12 +7,12 @@ ios=target/mobile/ios
 out=target/mobile/swift-check
 rm -rf "$out"
 mkdir -p "$out"
-swiftc -swift-version 6 -module-name ShellRSCore -parse-as-library \
-    -emit-library -emit-module -emit-module-path "$out/ShellRSCore.swiftmodule" \
+swiftc -swift-version 6 -module-name ShellAsCore -parse-as-library \
+    -emit-library -emit-module -emit-module-path "$out/ShellAsCore.swiftmodule" \
     -I "$ios/include" -L target/debug -lshellrs_mobile \
-    "$ios/Sources/ShellRSCore.swift" -o "$out/libShellRSCore.dylib"
+    "$ios/Sources/ShellAsCore.swift" -o "$out/libShellAsCore.dylib"
 swiftc -swift-version 6 -I "$out" -I "$ios/include" \
-    -L "$out" -lShellRSCore -L target/debug -lshellrs_mobile \
+    -L "$out" -lShellAsCore -L target/debug -lshellrs_mobile \
     -Xlinker -rpath -Xlinker "$PWD/$out" -Xlinker -rpath -Xlinker "$PWD/target/debug" \
     crates/shellrs-mobile/tests/swift/main.swift -o "$out/check"
 "$out/check"

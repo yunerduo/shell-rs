@@ -13,7 +13,7 @@ use crate::failure::SshError;
 pub(crate) trait CallError: Send + 'static {
     /// The core is gone, and its runtime with it.
     fn closed() -> Self;
-    /// The work panicked: a bug in ShellRS.
+    /// The work panicked: a bug in ShellAs.
     fn internal(detail: String) -> Self;
 }
 

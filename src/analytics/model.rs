@@ -29,7 +29,7 @@ const LONGEST_WAIT: TimeDelta = TimeDelta::hours(6);
 const DEBUG_SUMMARY_SPAN: TimeDelta = TimeDelta::minutes(1);
 const DEBUG_WAIT: TimeDelta = TimeDelta::seconds(10);
 /// Which SDK sent the events, as Aptabase's own SDKs name themselves.
-const SDK_VERSION: &str = concat!("shellrs@", env!("CARGO_PKG_VERSION"));
+const SDK_VERSION: &str = concat!("shellas@", env!("CARGO_PKG_VERSION"));
 
 /// A use of a feature, summed into the next `usage` event. The keys are
 /// what the dashboard shows and the manual lists: never rename one.
@@ -96,7 +96,7 @@ pub enum Counter {
     NoticeProgram,
     NoticeBell,
     NoticeKeyword,
-    /// A `shellrs` command served.
+    /// A `shellas` command served.
     CliExec,
     CliExecTerminal,
     CliUpload,
@@ -740,8 +740,8 @@ mod tests {
         Snapshot {
             appearance: "system",
             language: "zh-CN",
-            light_theme: "shellrs-light",
-            dark_theme: "shellrs-dark",
+            light_theme: "shellas-light",
+            dark_theme: "shellas-dark",
             update_channel: "stable",
             file_icons: "monochrome",
             install: "portable",
@@ -809,7 +809,7 @@ mod tests {
             props["sdkVersion"]
                 .as_str()
                 .unwrap()
-                .starts_with("shellrs@")
+                .starts_with("shellas@")
         );
         // Nothing about where the user is or what language they read.
         assert!(props.get("locale").is_none());

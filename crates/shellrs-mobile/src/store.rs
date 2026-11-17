@@ -130,7 +130,7 @@ pub enum StoreError {
     },
     /// The core is gone.
     Closed,
-    /// What should never happen: a bug in ShellRS.
+    /// What should never happen: a bug in ShellAs.
     Internal {
         detail: String,
     },

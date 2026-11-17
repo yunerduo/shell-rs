@@ -163,7 +163,7 @@ impl Render for StartupFailure {
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .child(TitleBar::new().child("ShellRS"))
+            .child(TitleBar::new().child("ShellAs"))
             .child(
                 v_flex()
                     .flex_1()
