@@ -62,17 +62,18 @@ fn settings_open_from_the_host_list_as_one_tab(cx: &mut TestAppContext) {
         assert_eq!(window.find("settings").focused(), Some(true));
         assert_eq!(window.find("settings-tab").label(), Some("设置"));
         // Two columns: the first category, 外观, is shown until another is
-        // picked. `Settings` names its category rows by position.
+        // picked.
         assert_eq!(appearance_dropdown(window, 0).as_deref(), Some("简体中文"));
         assert!(window.try_find("terminal-font-preview").is_none());
-        window.within("settings").click("0-1", cx);
+        window
+            .within("settings")
+            .click(category_row("settings.category.terminal"), cx);
     })
     .unwrap();
     cx.run_until_parked();
 
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
-        // 终端 is the second.
         assert!(window.find("terminal-font-preview").visible());
         window.click(("terminal-tab", INITIAL_WEB_TERMINAL), cx);
     })
@@ -118,8 +119,13 @@ fn settings_open_from_the_host_list_as_one_tab(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert!(window.find("settings").visible());
         assert_eq!(window.find("settings").focused(), Some(true));
-        // The platform close shortcut closes it like any other tab.
-        window.press("secondary-w", cx);
+        // The platform close shortcut closes it like any other tab: ⌘W on
+        // macOS, Ctrl+Shift+W elsewhere (Ctrl+W belongs to the shell in a
+        // terminal).
+        #[cfg(target_os = "macos")]
+        window.press("cmd-w", cx);
+        #[cfg(not(target_os = "macos"))]
+        window.press("ctrl-shift-w", cx);
     })
     .unwrap();
     cx.run_until_parked();

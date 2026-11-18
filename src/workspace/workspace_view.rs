@@ -1619,11 +1619,15 @@ impl Workspace {
 
     /// Open the settings tab, or bring the open one forward: settings are
     /// one place, not one tab per visit.
+    ///
+    /// Bringing it forward leaves the category alone: the open tab is where
+    /// the user left it, and jumping back to the first page on every ⌘, would
+    /// take them away from what they were changing.
     fn on_open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_settings_at(0, window, cx);
+        self.open_settings_at(None, window, cx);
     }
 
-    /// The account entry opens 设置 › 账号; the rest opens the first category.
+    /// The account entry opens 设置 › 账号.
     fn on_open_account_settings(
         &mut self,
         _: &OpenAccountSettings,
@@ -1631,15 +1635,24 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.open_settings_at(
-            crate::settings::category_index("settings.category.account"),
+            Some(crate::settings::category_index("settings.category.account")),
             window,
             cx,
         );
     }
 
-    fn open_settings_at(&mut self, category: usize, window: &mut Window, cx: &mut Context<Self>) {
+    /// `category` names a page to show; `None` keeps the one the open tab is
+    /// on, and starts a new tab on the first.
+    fn open_settings_at(
+        &mut self,
+        category: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(panel) = self.settings_tab.clone() {
-            panel.update(cx, |panel, _| panel.start_at(category));
+            if let Some(category) = category {
+                panel.update(cx, |panel, _| panel.start_at(category));
+            }
             let group = panel.read(cx).tab_group();
             self.activate_tab(group, panel.entity_id(), window, cx);
             // Already displayed, the group reports nothing, so the panel
@@ -1657,7 +1670,9 @@ impl Workspace {
         let panel = cx.new(|cx| {
             let mut panel =
                 SettingsPanel::new(store, integration, updater, sync, account, window, cx);
-            panel.start_at(category);
+            if let Some(category) = category {
+                panel.start_at(category);
+            }
             panel
         });
         let subscription = cx.subscribe_in(
