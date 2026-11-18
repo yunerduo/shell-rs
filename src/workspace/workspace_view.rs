@@ -1630,7 +1630,11 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_settings_at(crate::settings::ACCOUNT_CATEGORY_INDEX, window, cx);
+        self.open_settings_at(
+            crate::settings::category_index("settings.category.account"),
+            window,
+            cx,
+        );
     }
 
     fn open_settings_at(&mut self, category: usize, window: &mut Window, cx: &mut Context<Self>) {

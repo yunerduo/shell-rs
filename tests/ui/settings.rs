@@ -13,6 +13,12 @@ fn app_list_hover(theme: &gpui_kit::component::Theme) -> bool {
     }
 }
 
+/// The left column row of a settings category, addressed by its title key:
+/// the rows move when a category is added, the names do not.
+fn category_row(title: &str) -> String {
+    format!("0-{}", shellrs::settings::category_index(title))
+}
+
 #[gpui_kit::test]
 fn theme_toggle_flips_mode(cx: &mut TestAppContext) {
     let (handle, _) = open_workspace(cx);
@@ -563,9 +569,10 @@ fn the_window_settings_are_on_until_turned_off(cx: &mut TestAppContext) {
         cx.update(|cx| workspace.read(cx).settings().read(cx).settings().window)
     };
     in_frame(cx, handle, |window, cx| window.click("open-settings", cx));
-    // 应用 comes right before 关于.
     in_frame(cx, handle, |window, cx| {
-        window.within("settings").click("0-7", cx)
+        window
+            .within("settings")
+            .click(category_row("settings.category.application"), cx)
     });
     let switch = |item: usize| {
         move |window: &mut gpui_kit::Window| {
@@ -597,9 +604,23 @@ fn closing_to_the_tray_is_off_and_offered_only_on_windows(cx: &mut TestAppContex
     let (handle, workspace) = open_workspace(cx);
     in_frame(cx, handle, |window, cx| window.click("open-settings", cx));
     in_frame(cx, handle, |window, cx| {
-        window.within("settings").click("0-7", cx);
+        window
+            .within("settings")
+            .click(category_row("settings.category.application"), cx)
     });
     in_frame(cx, handle, |window, _| {
+        // 应用's first item is 记住窗口大小. Checking it here means a row that
+        // points at another page fails everywhere, not only where the tray
+        // switch is expected.
+        assert_eq!(
+            window
+                .within("settings")
+                .within("group-0")
+                .within("item-0")
+                .find("check")
+                .checked(),
+            Some(true)
+        );
         let offered = gpui_kit::base::test_support::snapshots(window)
             .iter()
             .any(|element| {

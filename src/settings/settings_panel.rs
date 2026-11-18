@@ -54,9 +54,15 @@ pub enum SettingsPanelEvent {
     Closed,
 }
 
-/// The 账号 category's place in `CATEGORIES`, for the account entry in the
-/// sidebar popover to open settings on it.
-pub const ACCOUNT_CATEGORY_INDEX: usize = 6;
+/// Where the category with this title key sits in `CATEGORIES`. Callers name
+/// the category instead of counting rows: a category added above it moves the
+/// rows, and a position kept by the caller would open another page.
+pub fn category_index(title: &str) -> usize {
+    CATEGORIES
+        .iter()
+        .position(|category| category.title == title)
+        .unwrap_or_else(|| panic!("no settings category titled {title}"))
+}
 
 /// The 设置 tab in the center. There is at most one: opening settings again
 /// brings this tab forward.
