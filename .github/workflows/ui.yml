@@ -1,0 +1,68 @@
+# 在 macOS 和 Linux 上跑同一组 UI 测试。
+#
+# UI 测试用的是一个假平台（`TestPlatform`：没有窗口服务，也没有字体系统），
+# 两个系统都不需要 xvfb，只需要 gpui 链接的库。Windows 的同类 job 在
+# windows.yml；这里沿用它的过滤器，好让只在 macOS / Linux 上坏掉的改动在
+# 发版前暴露出来。
+#
+# 推送只在动到界面代码时跑；其余时候手动触发（Actions › ui › Run workflow）。
+name: ui
+
+on:
+  push:
+    branches: ["dev"]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "crates/**"
+      - "locales/**"
+      - "assets/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/ui.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ui-macos:
+    # Intel，同 package.yml：arm64 的 runner 常常排不上机器，任务会被判成
+    # cancelled。
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ui-macos
+      - run: "cargo test --locked --test ui connection::"
+      - run: "cargo test --locked --test ui settings::"
+      - run: "cargo test --locked --test ui editor::quitting_with_unsaved_changes"
+      - run: "cargo test --locked --test ui projects::a_snippet_beside_a_local_terminal"
+      - run: "cargo test --locked --test ui workspace::close_shortcut"
+
+  ui-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      # gpui 链接的库，同 package.yml 的 Linux 构建。
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake clang pkg-config libfontconfig-dev \
+            libfreetype-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libx11-xcb-dev libxcb1-dev libvulkan-dev libdbus-1-dev libssl-dev
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ui-linux
+      - run: "cargo test --locked --test ui connection::"
+      - run: "cargo test --locked --test ui settings::"
+      - run: "cargo test --locked --test ui editor::quitting_with_unsaved_changes"
+      - run: "cargo test --locked --test ui projects::a_snippet_beside_a_local_terminal"
+      - run: "cargo test --locked --test ui workspace::close_shortcut"

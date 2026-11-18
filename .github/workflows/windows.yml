@@ -63,6 +63,7 @@ on:
       - "tests/cli_bin.rs"
       - "build.rs"
       - ".cargo/config.toml"
+      - ".github/workflows/windows.yml"
       - "scripts/windows-runtime.ps1"
       - "Cargo.toml"
       - "Cargo.lock"
