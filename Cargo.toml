@@ -24,9 +24,6 @@ path = "src/bin/shellas-cli.rs"
 # mobile apps can link them as well. Cargo commands here build, test and lint them
 # too.
 [workspace]
-# The server (`server/`) is a separate program with its own lock file and
-# deployment; it is not built or linted by the app's workspace commands.
-exclude = ["server"]
 # The mobile apps' bindings build only when asked for (`-p shellrs-mobile`):
 # their generator and its dependencies are no use to the desktop app.
 members = [

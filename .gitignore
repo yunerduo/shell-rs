@@ -6,10 +6,6 @@
 .env
 .env.*
 !.env.example
-# 后台前端的构建配置不是秘密，要跟着仓库走。
-!server/admin-ui/.env.development
-!server/admin-ui/.env.production
-!server/admin-ui/.env.staging
 .claude/settings.local.json
 
 # 本机发布/运维 skill 与凭据，只留在工作区外或本地。

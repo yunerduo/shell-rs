@@ -2,7 +2,7 @@
 
 [返回 README](../README.zh-CN.md)
 
-发布、官网后台与服务器重建流程见 [发布运维手册](release-ops-manual.zh.md)。
+官网与后台代码在独立私有仓库。
 
 ## 构建
 

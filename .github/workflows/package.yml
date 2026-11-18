@@ -6,7 +6,7 @@
 #
 # 手动触发（Actions › package › Run workflow），或推到 `package-*` 分支。
 # 产物在该次运行的 Artifacts 里：ShellAs-<版本>-<平台>-<架构>.<扩展名>，
-# 之后用 `shellas-server publish` 把包和签名清单发到 shellas.agree.host。
+# 之后由独立私有仓库里的发布工具把包和签名清单发到 shellas.agree.host。
 #
 # macOS 的两个架构都在 Intel 机器上交叉编译：GitHub 的 arm64 runner 常常
 # 排不上机器，会把任务判成 cancelled。

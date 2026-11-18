@@ -175,7 +175,7 @@ cargo run
 - [使用手册](docs/manual.zh.md)：每个功能的详细说明和快捷键
 - [开发与测试](docs/development.md)：构建、测试和数据目录
 - [发布流程](docs/release.md)：打包、签名和在线更新的发布步骤
-- [发布运维手册](docs/release-ops-manual.zh.md)：服务划分、上线 skill、后台发布、服务器目录与重建顺序
+- 官网与后台代码在独立私有仓库
 - [更新日志](CHANGELOG.zh.md)
 
 ## 路线图

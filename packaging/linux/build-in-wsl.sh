@@ -31,8 +31,7 @@ fi
 log "复制源码到 $build"
 mkdir -p "$build"
 tar -C "$root" -czf /tmp/shellrs-src.tgz \
-    --exclude=./target --exclude=./.git --exclude=./.screenshots \
-    --exclude=./server/target --exclude=./server/data .
+    --exclude=./target --exclude=./.git --exclude=./.screenshots .
 tar -C "$build" -xzf /tmp/shellrs-src.tgz
 
 # Windows 上的检出会把脚本和 .desktop 换成 CRLF，Linux 里执行不了。
