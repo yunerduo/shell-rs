@@ -32,23 +32,13 @@ ShellAs 把 Xshell 式的主机管理和多标签终端、WinSCP 式的双栏 SF
 
 ## 关于这个仓库
 
-本仓库是 [since2006/shell-rs](https://github.com/since2006/shell-rs) 的 fork，发布出来的应用叫 ShellAs。上游是原作者的项目，本仓库在它的基础上继续开发，主要方向：
+本仓库 fork 自 [since2006/shell-rs](https://github.com/since2006/shell-rs)，发布的应用叫 ShellAs。在上游基础上主要加了这些：
 
-- 把主机管理做成完整的桌面客户端：分组主机树、多标签终端、WinSCP 式双栏 SFTP、端口转发，以及右侧栏的系统监控、进程、服务、Docker 和 Kubernetes 工具。
-- 补齐日常运维要用的部分：Telnet 与串口、堡垒机和外部链接、导入 Xshell 配置、在线升级、简体中文与英文界面。
-- 账号与内置 AI 助手，以及给 Claude Code、Codex 等 Agent 用的 `shellas` 命令行和 Agent Skill。
+- 一套完整的主机管理客户端：分组主机树、多标签终端、双栏 SFTP、端口转发，以及右侧栏的监控、进程、服务、Docker 和 Kubernetes 工具。
+- 日常运维需要的部分：Telnet 与串口、堡垒机与外部链接、导入 Xshell 配置、在线升级、中英文界面。
+- 账号与内置 AI 助手，以及给 AI Agent 用的 `shellas` 命令行和 Agent Skill。
 
-`main` 是上游的镜像，不承载本仓库的改动；`dev` 是集成分支，功能和发布包都从它出。同步上游：
-
-```sh
-git fetch upstream
-git switch main
-git merge --ff-only upstream/main
-git switch dev
-git merge main
-```
-
-许可证仍是 GPL-3.0，fork 不改变这一点；`crates/shellrs-sync` 仍按 MIT 发布。
+许可证仍是 GPL-3.0。
 
 ## 功能
 
