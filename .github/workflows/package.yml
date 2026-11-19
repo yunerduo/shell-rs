@@ -5,8 +5,17 @@
 # 不公证。用户首次打开时需要右键 → 打开，或去掉隔离标记（下载页有说明）。
 #
 # 手动触发（Actions › package › Run workflow），或推到 `package-*` 分支。
-# 产物在该次运行的 Artifacts 里：ShellAs-<版本>-<平台>-<架构>.<扩展名>，
-# 之后由独立私有仓库里的发布工具把包和签名清单发到 shellas.agree.host。
+# 产物在该次运行的 Artifacts 里：ShellAs-<版本>-<平台>-<架构>.<扩展名>。
+#
+# 手动触发时勾选 publish，构建完成后 publish 任务在 CI 内组装并签名更新
+# 清单，把产物和清单直接推给 shellas.agree.host 的发布流水线接口
+# （/pipeline/v1/*，契约见服务端仓库 docs/release-pipeline-api.zh.md），
+# 最后从公网拉回清单验签、逐个下载资产核对大小与 SHA-256。不再需要把
+# 产物下载到本地签名再手工上传。
+#
+# 签名私钥与口令是仓库级 secret：MINISIGN_SECRET_KEY、MINISIGN_PASSWORD；
+# 流水线令牌是 secrets.SHELLAS_PIPELINE_TOKEN。公钥与 key id 仍在客户端
+# src/update/build_info.rs 的 TRUSTED_KEYS 里，工作流只从那里取公钥复核。
 #
 # macOS 的两个架构都在 Intel 机器上交叉编译：GitHub 的 arm64 runner 常常
 # 排不上机器，会把任务判成 cancelled。
@@ -18,6 +27,10 @@ on:
       version:
         description: 版本号（留空用 Cargo.toml 里的）
         required: false
+      publish:
+        description: 构建完成后把产物与签名清单推到发布后台（需要流水线令牌）
+        type: boolean
+        default: false
   push:
     branches: ["package-*"]
     paths:
@@ -44,6 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      channel: ${{ steps.version.outputs.channel }}
     steps:
       - uses: actions/checkout@v4
       - name: Version
@@ -53,7 +67,9 @@ jobs:
           if [ -z "$version" ]; then
             version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
           fi
+          case "$version" in *-*) channel=beta ;; *) channel=stable ;; esac
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
 
   macos:
     needs: version
@@ -207,3 +223,260 @@ jobs:
         with:
           name: linux
           path: dist/*
+
+  # 在 CI 内组装并签名清单，把产物和清单直接推给发布后台
+  # （/pipeline/v1/*，见服务端仓库 docs/release-pipeline-api.zh.md）。
+  # 只有手动触发并勾选 publish 才运行；推到 package-* 分支仍只出包。
+  publish:
+    needs: [version, macos, windows, linux]
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      CHANNEL: ${{ needs.version.outputs.channel }}
+      PUBLIC_URL: ${{ vars.SHELLAS_PUBLIC_URL || 'https://shellas.agree.host' }}
+      PIPELINE_TOKEN: ${{ secrets.SHELLAS_PIPELINE_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Collect
+        run: |
+          set -euo pipefail
+          if [ -z "$PIPELINE_TOKEN" ]; then
+            echo "::error::secrets.SHELLAS_PIPELINE_TOKEN is not set"
+            exit 1
+          fi
+          mkdir -p dist
+          find artifacts -type f -name 'ShellAs-*' -exec cp -v {} dist/ \;
+          for name in \
+            "ShellAs-$VERSION-windows-x86_64-setup.exe" \
+            "ShellAs-$VERSION-windows-x86_64-portable.zip" \
+            "ShellAs-$VERSION-macos-aarch64.app.zip" \
+            "ShellAs-$VERSION-macos-aarch64.dmg" \
+            "ShellAs-$VERSION-macos-x86_64.app.zip" \
+            "ShellAs-$VERSION-macos-x86_64.dmg" \
+            "ShellAs-$VERSION-linux-x86_64.AppImage"; do
+            test -f "dist/$name" || {
+              echo "::error::missing $name among the build artifacts"
+              exit 1
+            }
+          done
+          ls -l dist
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minisign jq curl
+      - name: Upload the packages
+        run: |
+          set -euo pipefail
+          resp="$RUNNER_TEMP/upload.json"
+          upload() {
+            local file name sha code attempt
+            file=$1
+            name=$(basename "$file")
+            sha=$(sha256sum "$file" | cut -d' ' -f1)
+            for attempt in 1 2 3; do
+              code=$(curl -sS -o "$resp" -w '%{http_code}' -X PUT \
+                "$PUBLIC_URL/pipeline/v1/releases/$VERSION/$name" \
+                -H "Authorization: Bearer $PIPELINE_TOKEN" \
+                -H "X-Shellas-Sha256: $sha" \
+                -H "X-Shellas-Source: github-actions" \
+                -H "Content-Type: application/octet-stream" \
+                --data-binary @"$file") || code=000
+              case "$code" in
+                200)
+                  jq -e '.ok == true' "$resp" > /dev/null
+                  jq -r '"  " + .file + ": " + (.size | tostring) + " bytes, created=" + (.created | tostring) + ", idempotent=" + (.idempotent | tostring)' "$resp"
+                  return 0
+                  ;;
+                429 | 500 | 502)
+                  echo "  $name: HTTP $code, retrying ($attempt/3)"
+                  sleep $((attempt * 10))
+                  ;;
+                *)
+                  echo "::error::uploading $name failed: HTTP $code"
+                  cat "$resp"
+                  return 1
+                  ;;
+              esac
+            done
+            echo "::error::uploading $name kept failing"
+            return 1
+          }
+          for file in dist/ShellAs-*; do
+            upload "$file"
+          done
+      - name: Build and sign the manifest
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/manifest"
+          mkdir -p "$work"
+          # 仓库里的 secret 没有结尾换行，这里补一个，minisign 才能读。
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$work/minisign.key"
+
+          section() {
+            awk -v heading="## [$VERSION]" '
+              index($0, heading) == 1 { found = 1; next }
+              found && /^## \[/ { exit }
+              found { print }
+            ' "$1" | sed -e '/./,$!d'
+          }
+          if [ -z "$(section CHANGELOG.zh.md)" ]; then
+            echo "::error::CHANGELOG.zh.md has no section ## [$VERSION]"
+            exit 1
+          fi
+          section CHANGELOG.zh.md > "$work/notes.md"
+
+          asset() {
+            local file="$dist/$1" size
+            size=$(wc -c <"$file" | tr -d ' ')
+            jq -n \
+              --arg url "$base/$1" \
+              --argjson size "$size" \
+              --arg sha256 "$(sha256sum "$file" | cut -d' ' -f1)" \
+              '{urls: [$url], size: $size, sha256: $sha256}'
+          }
+
+          base="$PUBLIC_URL/releases/$VERSION"
+          dist=dist
+          mac_arm="ShellAs-$VERSION-macos-aarch64.app.zip"
+          mac_intel="ShellAs-$VERSION-macos-x86_64.app.zip"
+          dmg_arm="ShellAs-$VERSION-macos-aarch64.dmg"
+          dmg_intel="ShellAs-$VERSION-macos-x86_64.dmg"
+          win="ShellAs-$VERSION-windows-x86_64-setup.exe"
+          win_portable="ShellAs-$VERSION-windows-x86_64-portable.zip"
+          linux="ShellAs-$VERSION-linux-x86_64.AppImage"
+
+          jq -n -j \
+            --arg version "$VERSION" \
+            --arg channel "$CHANNEL" \
+            --arg published "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --rawfile notes "$work/notes.md" \
+            --arg notes_url "$PUBLIC_URL/changelog#$VERSION" \
+            --argjson mac_arm "$(asset "$mac_arm")" \
+            --argjson mac_intel "$(asset "$mac_intel")" \
+            --argjson win "$(asset "$win")" \
+            --argjson win_portable "$(asset "$win_portable")" \
+            --argjson linux "$(asset "$linux")" \
+            --arg dmg_arm "$base/$dmg_arm" \
+            --arg dmg_intel "$base/$dmg_intel" \
+            --arg win_url "$base/$win" \
+            --arg win_portable_url "$base/$win_portable" \
+            --arg linux_url "$base/$linux" \
+            '{
+                schema: 1,
+                channel: $channel,
+                version: $version,
+                published_at: $published,
+                minimum_version: null,
+                rollout: 1.0,
+                notes: $notes,
+                notes_url: $notes_url,
+                assets: {
+                    "macos-aarch64": $mac_arm,
+                    "macos-x86_64": $mac_intel,
+                    "windows-x86_64": $win,
+                    "windows-x86_64-portable": $win_portable,
+                    "linux-x86_64": $linux
+                },
+                installers: {
+                    "macos-aarch64": $dmg_arm,
+                    "macos-x86_64": $dmg_intel,
+                    "windows-x86_64": $win_url,
+                    "windows-x86_64-portable": $win_portable_url,
+                    "linux-x86_64": $linux_url
+                }
+            }' > "$work/manifest.json"
+
+          # trusted comment 与客户端 verify.rs 校对的格式一致。
+          printf '%s\n' "$MINISIGN_PASSWORD" | minisign -S \
+            -s "$work/minisign.key" \
+            -m "$work/manifest.json" \
+            -x "$work/manifest.json.minisig" \
+            -t "shellas-manifest $CHANNEL $VERSION"
+          rm -f "$work/minisign.key"
+
+          jq -n \
+            --rawfile manifest "$work/manifest.json" \
+            --rawfile signature "$work/manifest.json.minisig" \
+            --arg signedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{manifest: $manifest, signature: $signature, signedAt: $signedAt}' \
+            > "$work/envelope.json"
+
+          resp="$RUNNER_TEMP/manifest-response.json"
+          for attempt in 1 2 3; do
+            code=$(curl -sS -o "$resp" -w '%{http_code}' -X PUT \
+              "$PUBLIC_URL/pipeline/v1/manifest/$CHANNEL" \
+              -H "Authorization: Bearer $PIPELINE_TOKEN" \
+              -H "Content-Type: application/json" \
+              --data-binary @"$work/envelope.json") || code=000
+            case "$code" in
+              200)
+                jq -e '.ok == true' "$resp" > /dev/null
+                jq -r '{channel, version, sha256, signedAt, idempotent}' "$resp"
+                break
+                ;;
+              429 | 500 | 502)
+                echo "manifest: HTTP $code, retrying ($attempt/3)"
+                sleep $((attempt * 10))
+                ;;
+              *)
+                echo "::error::manifest upload failed: HTTP $code"
+                cat "$resp"
+                exit 1
+                ;;
+            esac
+            [ "$attempt" = 3 ] && {
+              echo "::error::manifest upload kept failing"
+              exit 1
+            }
+          done
+      - name: Verify what the public server serves
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/verify"
+          mkdir -p "$work"
+          # 公钥是客户端写死在 TRUSTED_KEYS 里的那一把（key id
+          # 9A7DE51998612035），这里从源码取，不在工作流里另存一份。
+          pubkey=$(sed -n 's/^[[:space:]]*"\(RWS[^"]*\)",$/\1/p' \
+            src/update/build_info.rs | head -n1)
+          if [ -z "$pubkey" ]; then
+            echo "::error::no trusted key in src/update/build_info.rs"
+            exit 1
+          fi
+
+          curl -fsS --retry 5 --retry-delay 5 \
+            "$PUBLIC_URL/update/v1/$CHANNEL.json" -o "$work/envelope.json"
+          # -j: 原样取出字符串，不给清单和签名补结尾换行，否则验签失败。
+          jq -j .manifest "$work/envelope.json" > "$work/manifest.json"
+          jq -j .signature "$work/envelope.json" > "$work/manifest.json.minisig"
+
+          verified=$(minisign -V -P "$pubkey" \
+            -m "$work/manifest.json" -x "$work/manifest.json.minisig" 2>&1)
+          echo "$verified"
+          grep -q "shellas-manifest $CHANNEL $VERSION" <<<"$verified"
+          jq -e --arg v "$VERSION" --arg c "$CHANNEL" \
+            '.channel == $c and .version == $v' "$work/manifest.json" > /dev/null
+          test "$(jq '.assets | length' "$work/manifest.json")" = 5
+
+          jq -r '.assets | to_entries[]
+            | [.key, .value.urls[0], (.value.size | tostring), .value.sha256]
+            | @tsv' "$work/manifest.json" |
+            while IFS=$'\t' read -r platform url size sha; do
+              file="$work/$(basename "${url%%\?*}")"
+              curl -fsS --retry 5 --retry-delay 5 "$url" -o "$file"
+              got_size=$(wc -c <"$file" | tr -d ' ')
+              got_sha=$(sha256sum "$file" | cut -d' ' -f1)
+              if [ "$got_size" != "$size" ] || [ "$got_sha" != "$sha" ]; then
+                echo "::error::$platform does not match the manifest"
+                echo "  size $got_size (want $size), sha256 $got_sha (want $sha)"
+                exit 1
+              fi
+              echo "  $platform ok: $got_size bytes, $got_sha"
+            done
