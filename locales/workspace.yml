@@ -103,6 +103,7 @@ workspace.title_bar.to_dark:
   zh-CN: 切换为深色
   en: Switch to dark
 
+# The title bar's 设置 entry, and its tooltip.
 workspace.sidebar.settings:
   zh-CN: 设置
   en: Settings

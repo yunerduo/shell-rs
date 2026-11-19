@@ -101,6 +101,7 @@ pub fn render_title_bar(
         Button::new("account-button")
             .ghost()
             .icon(CatalogIcon::CircleUser)
+            .label(t!("account.sign_in"))
     };
     // The title bar drags the window on mouse down; keep clicks on its
     // controls from starting a drag.
