@@ -1,6 +1,6 @@
 [package]
 name = "shellrs"
-version = "0.1.21"
+version = "0.1.22"
 edition = "2024"
 publish = false
 description = "SSH client and host manager: terminal, SFTP, port forwarding"
@@ -98,6 +98,8 @@ russh-sftp = "=3.0.0"
 serde_json = "1"
 sys-locale = "0.3"
 sha2 = "0.10"
+# Gravatar addresses a mailbox by the MD5 of its lowercase address.
+md-5 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
 rusqlite = { version = "0.40", features = ["bundled"] }

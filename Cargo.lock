@@ -8012,7 +8012,7 @@ dependencies = [
 
 [[package]]
 name = "shellrs"
-version = "0.1.21"
+version = "0.1.22"
 dependencies = [
  "aes-gcm 0.10.3",
  "alacritty_terminal",
@@ -8033,6 +8033,7 @@ dependencies = [
  "image",
  "keyring",
  "libc",
+ "md-5",
  "minisign",
  "minisign-verify",
  "objc2 0.6.4",
