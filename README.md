@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/yunerduo/shell-rs/releases"><img src="https://img.shields.io/github/v/release/yunerduo/shell-rs?include_prereleases&label=release" alt="Release"></a>
+  <a href="https://github.com/yunerduo/shellas/releases"><img src="https://img.shields.io/github/v/release/yunerduo/shellas?include_prereleases&label=release" alt="Release"></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="License: GPL-3.0"></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey" alt="Platform: macOS | Windows | Linux">
   <img src="https://img.shields.io/badge/rust-1.98-orange" alt="Rust 1.98">
@@ -29,6 +29,26 @@
 ShellAs brings Xshell-style host management and tabbed terminals, a WinSCP-style dual-pane SFTP browser and SSH port forwarding together in one cross-platform app, which bastion hosts such as JumpServer can launch the way they launch Xshell and WinSCP. It is written in Rust, and its UI is built on GPUI, the GPU-accelerated UI framework of the Zed editor (through [gpui-kit](https://gpui-kit.com)). There is no Electron and no JVM.
 
 Hosts, groups, credentials and forwarding rules live in a local SQLite database. Passwords and key passphrases go only into the system keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service); the database never holds a secret. ShellAs also ships a `shellas` command that lets AI agents such as Claude Code or Codex run commands and transfer files on your saved hosts without ever seeing a password.
+
+## About this repository
+
+This repository is a fork of [since2006/shell-rs](https://github.com/since2006/shell-rs); the released application is called ShellAs. The upstream is the original author's project, and this fork continues development on top of it, mainly in these directions:
+
+- Making host management a complete desktop client: a grouped host tree, tabbed terminals, a WinSCP-style dual-pane SFTP browser, port forwarding, and the right sidebar's system, process, service, Docker and Kubernetes tools.
+- Filling in what daily operations need: Telnet and serial ports, bastion hosts and external links, importing Xshell profiles, in-app updates, and Simplified Chinese and English interfaces.
+- An account and a built-in AI assistant, plus the `shellas` command line and Agent Skill for agents such as Claude Code and Codex.
+
+`main` mirrors upstream and carries none of this fork's changes; `dev` is the integration branch, where features and release builds come from. To sync with upstream:
+
+```sh
+git fetch upstream
+git switch main
+git merge --ff-only upstream/main
+git switch dev
+git merge main
+```
+
+The license stays GPL-3.0; forking does not change that. `crates/shellrs-sync` remains MIT.
 
 ## Features
 
@@ -122,7 +142,7 @@ Hosts, groups, credentials and forwarding rules live in a local SQLite database.
 
 ## Download
 
-Download from GitHub [Releases](https://github.com/yunerduo/shell-rs/releases). Betas are marked Pre-release there; to get new features early, switch the update channel to Beta in Settings › About.
+Download from GitHub [Releases](https://github.com/yunerduo/shellas/releases). Betas are marked Pre-release there; to get new features early, switch the update channel to Beta in Settings › About.
 
 | System | Package | Notes |
 | --- | --- | --- |
@@ -163,8 +183,8 @@ The command hands each request to the running ShellAs, which logs in with the sa
 Install [rustup](https://rustup.rs). The repository's `rust-toolchain.toml` pins Rust 1.98.1, which rustup installs on the first build.
 
 ```sh
-git clone https://github.com/yunerduo/shell-rs.git
-cd shell-rs
+git clone https://github.com/yunerduo/shellas.git
+cd shellas
 cargo run
 ```
 
@@ -191,7 +211,7 @@ Not implemented yet:
 
 ## Contributing
 
-Issues and pull requests are welcome on [GitHub](https://github.com/yunerduo/shell-rs/issues). Architecture notes and code conventions are in [CLAUDE.md](CLAUDE.md) (in Chinese). Before sending a change, make sure these pass:
+Issues and pull requests are welcome on [GitHub](https://github.com/yunerduo/shellas/issues). Architecture notes and code conventions are in [CLAUDE.md](CLAUDE.md) (in Chinese). Before sending a change, make sure these pass:
 
 ```sh
 cargo fmt --check

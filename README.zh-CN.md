@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/yunerduo/shell-rs/releases"><img src="https://img.shields.io/github/v/release/yunerduo/shell-rs?include_prereleases&label=release" alt="Release"></a>
+  <a href="https://github.com/yunerduo/shellas/releases"><img src="https://img.shields.io/github/v/release/yunerduo/shellas?include_prereleases&label=release" alt="Release"></a>
   <a href="#许可证"><img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="License: GPL-3.0"></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey" alt="Platform: macOS | Windows | Linux">
   <img src="https://img.shields.io/badge/rust-1.98-orange" alt="Rust 1.98">
@@ -29,6 +29,26 @@
 ShellAs 把 Xshell 式的主机管理和多标签终端、WinSCP 式的双栏 SFTP 文件管理、SSH 端口转发放进同一个跨平台应用，JumpServer 等堡垒机也可以像调用 Xshell、WinSCP 一样调用它。它用 Rust 编写，界面基于 Zed 编辑器的 GPU 加速 UI 框架 GPUI（通过 [gpui-kit](https://gpui-kit.com)），不依赖 Electron 或 JVM。
 
 主机、分组、凭据和转发规则保存在本地的 SQLite 数据库里。密码和私钥口令只存进系统钥匙串（macOS 钥匙串、Windows 凭据管理器、Linux Secret Service），数据库里没有任何秘密。ShellAs 还带一个 `shellas` 命令，让 Claude Code、Codex 等 AI Agent 用你保存的主机执行命令、传输文件，不用把密码交给它们。
+
+## 关于这个仓库
+
+本仓库是 [since2006/shell-rs](https://github.com/since2006/shell-rs) 的 fork，发布出来的应用叫 ShellAs。上游是原作者的项目，本仓库在它的基础上继续开发，主要方向：
+
+- 把主机管理做成完整的桌面客户端：分组主机树、多标签终端、WinSCP 式双栏 SFTP、端口转发，以及右侧栏的系统监控、进程、服务、Docker 和 Kubernetes 工具。
+- 补齐日常运维要用的部分：Telnet 与串口、堡垒机和外部链接、导入 Xshell 配置、在线升级、简体中文与英文界面。
+- 账号与内置 AI 助手，以及给 Claude Code、Codex 等 Agent 用的 `shellas` 命令行和 Agent Skill。
+
+`main` 是上游的镜像，不承载本仓库的改动；`dev` 是集成分支，功能和发布包都从它出。同步上游：
+
+```sh
+git fetch upstream
+git switch main
+git merge --ff-only upstream/main
+git switch dev
+git merge main
+```
+
+许可证仍是 GPL-3.0，fork 不改变这一点；`crates/shellrs-sync` 仍按 MIT 发布。
 
 ## 功能
 
@@ -122,7 +142,7 @@ ShellAs 把 Xshell 式的主机管理和多标签终端、WinSCP 式的双栏 SF
 
 ## 下载
 
-到 GitHub [Releases](https://github.com/yunerduo/shell-rs/releases) 下载。Beta 版在 Releases 里标为 Pre-release，想提前用上新功能，可以在「设置 › 关于」里把更新渠道切到 Beta。
+到 GitHub [Releases](https://github.com/yunerduo/shellas/releases) 下载。Beta 版在 Releases 里标为 Pre-release，想提前用上新功能，可以在「设置 › 关于」里把更新渠道切到 Beta。
 
 | 系统 | 安装包 | 说明 |
 | --- | --- | --- |
@@ -163,8 +183,8 @@ shellas sync <ID> ./dist /opt/app --delete         # 同步目录，没变的文
 需要先装 [rustup](https://rustup.rs)。仓库里的 `rust-toolchain.toml` 固定了 Rust 1.98.1，第一次构建时会自动安装。
 
 ```sh
-git clone https://github.com/yunerduo/shell-rs.git
-cd shell-rs
+git clone https://github.com/yunerduo/shellas.git
+cd shellas
 cargo run
 ```
 
@@ -190,7 +210,7 @@ cargo run
 
 ## 参与贡献
 
-欢迎提交 [Issue](https://github.com/yunerduo/shell-rs/issues) 和 Pull Request。架构说明和代码约定见 [CLAUDE.md](CLAUDE.md)。提交前请确认下面三条都通过：
+欢迎提交 [Issue](https://github.com/yunerduo/shellas/issues) 和 Pull Request。架构说明和代码约定见 [CLAUDE.md](CLAUDE.md)。提交前请确认下面三条都通过：
 
 ```sh
 cargo fmt --check
