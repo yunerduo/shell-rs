@@ -102,8 +102,8 @@ sync.dialog.change_title:
   zh-CN: 更换同步密码
   en: Change sync password
 sync.dialog.create_description:
-  zh-CN: 这个文件夹里还没有同步。设一个同步密码，别的电脑加入时要输入它。
-  en: This folder has no sync yet. Choose a sync password; your other computers ask for it when they join.
+  zh-CN: 同步密码用来加密上传的主机和设置数据，远端只保存密文，看不到内容，所以它和登录密码不是一回事，请单独记住。忘了它就解不开已上传的数据，只能重置后重新上传，其他设备也要重新输入。
+  en: The sync password encrypts the hosts and settings that are uploaded; the remote side stores only ciphertext and cannot read it. It is not the same as the login password, so keep it separately. If you forget it, the uploaded data cannot be decrypted — you can only reset and upload again, and enter it again on your other devices.
 sync.dialog.join_description:
   zh-CN: 这个文件夹里已有同步。输入创建时设的同步密码，这台电脑上的数据会和其他设备的合并。
   en: This folder has sync already. Enter its sync password; what’s on this computer is merged with the other devices’.
@@ -114,8 +114,8 @@ sync.dialog.reset_description:
   zh-CN: 同步已在别的设备上重置。输入现在的同步密码重新加入，这台电脑上的数据会和其他设备的合并。
   en: Sync was reset on another device. Enter its sync password to rejoin; what’s on this computer is merged with the other devices’.
 sync.dialog.change_description:
-  zh-CN: 同时换一把新的数据密钥：已移除的设备即使知道旧密码，也读不了之后的数据。别的设备下次同步时要输入新密码。
-  en: A new data key comes with it, so a removed device can’t read anything newer even with the old password. Your other devices ask for the new password when they next sync.
+  zh-CN: 同步密码用来加密上传的主机和设置数据，远端只保存密文，看不到内容，所以它和登录密码不是一回事。更换时同时换一把新的数据密钥：已移除的设备即使知道旧密码，也读不了之后的数据。别的设备下次同步时要输入新密码；忘了新密码，已上传的数据同样解不开，只能重置后重新上传。
+  en: The sync password encrypts the hosts and settings that are uploaded; the remote side stores only ciphertext and cannot read it. It is not the same as the login password. A new data key comes with the change, so a removed device cannot read anything newer even with the old password. Your other devices must enter the new password when they next sync; if it is forgotten, the uploaded data cannot be decrypted either, and can only be reset and uploaded again.
 sync.dialog.create:
   zh-CN: 创建同步
   en: Set up sync

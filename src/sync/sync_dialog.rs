@@ -11,7 +11,7 @@ use gpui_kit::component::{
     checkbox::Checkbox,
     dialog::{DialogAction, DialogClose, DialogFooter},
     form::{Field, Form},
-    input::{Input, InputContentType, InputState},
+    input::{Input, InputContentType, InputEvent, InputState},
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -127,6 +127,9 @@ pub struct PasswordForm {
     /// The new password again.
     repeat: Option<Entity<InputState>>,
     working: bool,
+    /// Re-render as either field changes, so a mismatch shows while typing
+    /// instead of only when the dialog is submitted.
+    _subscriptions: Vec<Subscription>,
 }
 
 impl PasswordForm {
@@ -142,6 +145,16 @@ impl PasswordForm {
         };
         let password = field(window, cx);
         let repeat = dialog.is_new().then(|| field(window, cx));
+        let _subscriptions = std::iter::once(&password)
+            .chain(repeat.iter())
+            .map(|state| {
+                cx.subscribe(state, |_, _, event: &InputEvent, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        cx.notify();
+                    }
+                })
+            })
+            .collect();
         Self {
             service,
             dialog,
@@ -149,7 +162,16 @@ impl PasswordForm {
             password,
             repeat,
             working: false,
+            _subscriptions,
         }
+    }
+
+    /// The two fields disagree while the second one has something in it.
+    fn mismatch(&self, cx: &App) -> bool {
+        self.repeat.as_ref().is_some_and(|repeat| {
+            let typed = repeat.read(cx).value();
+            !typed.is_empty() && typed != self.password.read(cx).value()
+        })
     }
 
     fn focus(&self, window: &mut Window, cx: &mut App) {
@@ -229,6 +251,7 @@ impl Render for PasswordForm {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let new = self.dialog.is_new();
+        let mismatch = self.mismatch(cx);
         let password_label = if new {
             t!("sync.dialog.new_password")
         } else {
@@ -272,6 +295,16 @@ impl Render for PasswordForm {
                         )
                     }),
             )
+            .when(mismatch, |view| {
+                view.child(
+                    div()
+                        .id("sync-password-mismatch")
+                        .test_support()
+                        .text_sm()
+                        .text_color(cx.theme().danger)
+                        .child(t!("sync.dialog.mismatch")),
+                )
+            })
             .when(new, |view| {
                 view.child(
                     Button::new("sync-generate-password")
