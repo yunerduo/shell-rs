@@ -23,23 +23,25 @@ use gpui_kit::*;
 use super::editors::describe_files;
 use super::front::follow_focus;
 use crate::account::{
-    AccountEvent, AccountStore, HttpAccountService, LoginMode, SyncKind, cloud_sync,
+    AccountEvent, AccountStore, HttpAccountService, LoginMode, ProfileChange, SyncKind,
+    account_error, cloud_sync, open_change_email_dialog, open_change_password_dialog,
     open_login_dialog, open_nickname_dialog, open_sync_password_dialog, upload_error,
 };
 use crate::analytics::{Analytics, AnalyticsServices, Counter};
 use crate::app::ExplorerDispatch as _;
 use crate::app::{
-    CenterTab, ChangeAccountAvatar, ClearTerminal, CloseActiveTab, CloseEditor, CloseExplorer,
-    CloseLocalTerminal, CloseSettings, CloseTabs, CloseTerminal, CollapseAllGroups, ConnectGroup,
-    ConnectHost, ConnectHosts, CopyAgentSkill, CopyHostAddress, CopyHostAddresses, CopyHostId,
-    CopyHostIds, CopyTerminal, DeleteGroup, DeleteHost, DeleteHosts, DisconnectTerminal,
-    DismissTerminalFind, DuplicateHost, DuplicateHosts, DuplicateTerminal, EditAccountNickname,
-    EditHost, ExpandAllGroups, ExplorerAction, ExplorerCommand, ExplorerShortcut, FindInTerminal,
-    FindNextInTerminal, FindPreviousInTerminal, FocusSearch, InstallAgentSkill, InstallCliCommand,
-    MaximizeWindow, MoveHostNode, NewChildGroup, NewGroup, NewHost, NewHostInGroup,
-    NewLocalTerminal, NewTemporaryConnection, OpenAccountSettings, OpenExplorer, OpenExplorerHosts,
-    OpenSettings, PasteTerminal, QuickConnect, ReconnectTerminal, RefreshCliIntegration,
-    RegisterAccount, RemoveAgentSkill, RemoveCliCommand, RenameExplorer, RenameGroup,
+    CenterTab, ChangeAccountAvatar, ChangeAccountEmail, ChangeAccountPassword, ClearTerminal,
+    CloseActiveTab, CloseEditor, CloseExplorer, CloseLocalTerminal, CloseSettings, CloseTabs,
+    CloseTerminal, CollapseAllGroups, ConnectGroup, ConnectHost, ConnectHosts, CopyAgentSkill,
+    CopyHostAddress, CopyHostAddresses, CopyHostId, CopyHostIds, CopyTerminal, DeleteGroup,
+    DeleteHost, DeleteHosts, DisconnectTerminal, DismissTerminalFind, DuplicateHost,
+    DuplicateHosts, DuplicateTerminal, EditAccountNickname, EditHost, ExpandAllGroups,
+    ExplorerAction, ExplorerCommand, ExplorerShortcut, FindInTerminal, FindNextInTerminal,
+    FindPreviousInTerminal, FocusSearch, InstallAgentSkill, InstallCliCommand, MaximizeWindow,
+    MoveHostNode, NewChildGroup, NewGroup, NewHost, NewHostInGroup, NewLocalTerminal,
+    NewTemporaryConnection, OpenAccountSettings, OpenExplorer, OpenExplorerHosts, OpenSettings,
+    PasteTerminal, QuickConnect, ReconnectTerminal, RefreshCliIntegration, RegisterAccount,
+    RemoveAccountAvatar, RemoveAgentSkill, RemoveCliCommand, RenameExplorer, RenameGroup,
     RenameTerminal, RestartLocalTerminal, RestoreWindow, SelectAllTerminal, SendBreak,
     SetCloudSync, SetFileSizeFormat, SetRememberSyncPassword, ShowOrHideApp, SignInAccount,
     SignOutAccount, ToggleHiddenFiles, ToggleHostDetails, ToggleHostPanel, ToggleTheme, ToolKind,
@@ -611,6 +613,9 @@ impl Workspace {
                     this.on_account_event(event, window, cx)
                 },
             ),
+            // The title bar draws the account's avatar and name, so a profile
+            // change has to redraw the workspace, not just the account panels.
+            cx.observe(&account, |_, _, cx| cx.notify()),
             cx.subscribe_in(
                 &dock_area,
                 window,
@@ -1784,17 +1789,23 @@ impl Workspace {
             let Some(source) = paths.into_iter().next() else {
                 return;
             };
-            let result = account.update(cx, |account, cx| account.set_avatar(&source, cx));
-            if let Err(error) = result {
-                let _ = this.update_in(cx, |_, window, cx| {
-                    window.push_notification(
-                        Notification::error(t!("account.avatar.failed", error = error)),
-                        cx,
-                    );
-                });
-            }
+            // Uploading is a crop first: the picture is squared to what the
+            // user framed, then copied in by `set_avatar`.
+            let _ = this.update_in(cx, |_, window, cx| {
+                crate::account::open_avatar_crop_dialog(account, source, window, cx);
+            });
         })
         .detach();
+    }
+
+    fn on_remove_account_avatar(
+        &mut self,
+        _: &RemoveAccountAvatar,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.account
+            .update(cx, |account, cx| account.remove_avatar(cx));
     }
 
     fn on_edit_account_nickname(
@@ -1804,6 +1815,24 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         open_nickname_dialog(self.account.clone(), window, cx);
+    }
+
+    fn on_change_account_password(
+        &mut self,
+        _: &ChangeAccountPassword,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        open_change_password_dialog(self.account.clone(), window, cx);
+    }
+
+    fn on_change_account_email(
+        &mut self,
+        _: &ChangeAccountEmail,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        open_change_email_dialog(self.account.clone(), window, cx);
     }
 
     /// What the account has to say: a failed write, a finished upload, or a
@@ -1871,6 +1900,38 @@ impl Workspace {
                     )),
                     cx,
                 );
+            }
+            // 改密码 signs this computer out; 改邮箱 keeps it signed in. The
+            // dialogs have already closed, so the outcome is said here.
+            AccountEvent::PasswordChanged => {
+                window.push_notification(
+                    Notification::success(t!("account.notify.password_changed")),
+                    cx,
+                );
+            }
+            AccountEvent::EmailChanged(email) => {
+                window.push_notification(
+                    Notification::success(t!(
+                        "account.notify.email_changed",
+                        email = email.clone()
+                    )),
+                    cx,
+                );
+            }
+            // A nickname or picture the server refused. The store has already
+            // put the local state back; the notice says what went wrong.
+            AccountEvent::ProfileFailed { change, error } => {
+                let reason = account_error(error);
+                let text = match change {
+                    ProfileChange::Nickname => {
+                        t!("account.notify.nickname_failed", error = reason)
+                    }
+                    ProfileChange::Avatar => t!("account.notify.avatar_failed", error = reason),
+                    ProfileChange::AvatarRemoval => {
+                        t!("account.notify.avatar_removal_failed", error = reason)
+                    }
+                };
+                window.push_notification(Notification::error(text), cx);
             }
         }
     }
@@ -3622,7 +3683,10 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_set_remember_sync_password))
             .on_action(cx.listener(Self::on_upload_cloud_sync_now))
             .on_action(cx.listener(Self::on_change_account_avatar))
+            .on_action(cx.listener(Self::on_remove_account_avatar))
             .on_action(cx.listener(Self::on_edit_account_nickname))
+            .on_action(cx.listener(Self::on_change_account_password))
+            .on_action(cx.listener(Self::on_change_account_email))
             .on_action(cx.listener(Self::on_install_cli_command))
             .on_action(cx.listener(Self::on_remove_cli_command))
             .on_action(cx.listener(Self::on_install_agent_skill))
@@ -3758,6 +3822,8 @@ impl Render for Workspace {
                 sidebar,
                 running_forwards,
                 self.updater.read(cx).snapshot().badge(),
+                &self.account.read(cx).snapshot(),
+                window.viewport_size().width,
                 &self.switch_end,
                 cx.entity_id(),
                 &self.focus_handle,
@@ -3765,10 +3831,6 @@ impl Render for Workspace {
             ))
             .child(render_sidebar_toggle(
                 sidebar.is_some(),
-                self.dock_area
-                    .read(cx)
-                    .dock_size(DockPlacement::Left)
-                    .unwrap_or_default(),
                 &self.switch_end,
                 &self.focus_handle,
             ))

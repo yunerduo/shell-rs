@@ -290,12 +290,16 @@ async fn quick_connect_finds_saved_hosts_and_connects_one(cx: &mut TestAppContex
         .map(|id| window.find(id).bounds());
         for pair in controls.windows(2) {
             assert!(pair[0].right() <= pair[1].left());
+        }
+        // The window-level commands share one size; the sidebar toggle is
+        // the list switch's small companion, not one of them.
+        for pair in controls[1..].windows(2) {
             assert_eq!(pair[0].size, pair[1].size);
         }
         assert!(
             (controls[0].left()
-                - window.find("workspace-sidebar").bounds().right()
-                - window.rem_size() * 0.5)
+                - window.find("show-credentials").bounds().right()
+                - window.rem_size() * 0.25)
                 .abs()
                 <= px(1.)
         );
@@ -1640,11 +1644,11 @@ fn the_tool_sidebar_drags_wider_and_down_to_its_minimum(cx: &mut TestAppContext)
     );
 }
 
-/// The title-bar toggle sits just past the actual dock edge, including
-/// after a pointer resize, interface zoom and a hide/show round trip; past
-/// the list switch instead, beside a sidebar narrower than that.
+/// The title-bar toggle sits right beside the list switch, next to「凭据」,
+/// and stays there through a sidebar pointer resize, interface zoom and a
+/// hide/show round trip: the two read as one group.
 #[gpui_kit::test]
-fn the_sidebar_toggle_tracks_the_host_panel_edge(cx: &mut TestAppContext) {
+fn the_sidebar_toggle_sits_beside_the_list_switch(cx: &mut TestAppContext) {
     use gpui_kit::component::dock::DockPlacement;
 
     let (handle, workspace) = open_workspace(cx);
@@ -1652,16 +1656,16 @@ fn the_sidebar_toggle_tracks_the_host_panel_edge(cx: &mut TestAppContext) {
         in_frame(cx, handle, |window, cx| {
             let button = window.find("toggle-hosts");
             let panel = window.find("workspace-sidebar").bounds();
-            let gap = window.rem_size() * 0.5;
+            let gap = window.rem_size() * 0.25;
             let switch = window.find("show-credentials").bounds();
             assert!(
-                (button.bounds().left() - panel.right().max(switch.right()) - gap).abs() <= px(1.),
-                "button {:?}, panel {:?}, gap {:?}",
+                (button.bounds().left() - switch.right() - gap).abs() <= px(1.),
+                "button {:?}, switch {:?}, gap {:?}",
                 button.bounds(),
-                panel,
+                switch,
                 gap
             );
-            assert!(button.bounds().left() >= window.find("show-credentials").bounds().right());
+            assert!(button.bounds().left() >= switch.right());
             assert_eq!(button.label(), Some("隐藏侧栏"));
             let area = workspace.read(cx).dock_area().read(cx);
             assert!(area.is_dock_open(DockPlacement::Left));
@@ -1675,9 +1679,8 @@ fn the_sidebar_toggle_tracks_the_host_panel_edge(cx: &mut TestAppContext) {
     });
     let (resized, resized_panel) = aligned(cx);
     assert!(resized_panel.size.width > panel.size.width + px(80.));
-    assert!(
-        (resized.left() - opened.left() - (resized_panel.right() - panel.right())).abs() <= px(1.)
-    );
+    // The dock widened; the switch and its toggle did not move.
+    assert_eq!(resized.left(), opened.left());
 
     in_frame(cx, handle, |window, cx| window.click("toggle-hosts", cx));
     in_frame(cx, handle, |window, cx| {
@@ -1710,8 +1713,7 @@ fn the_sidebar_toggle_tracks_the_host_panel_edge(cx: &mut TestAppContext) {
     cx.simulate_window_resize(handle.into(), size(px(1000.), px(700.)));
     aligned(cx);
     // Dragged back past its minimum, 100 narrower than it opened, it stops
-    // there. The toggle follows the clamped edge, or stays past the list
-    // switch where that ends later, as after the macOS window buttons.
+    // there. The toggle stays beside the list switch, which never moves.
     in_frame(cx, handle, |window, cx| {
         let wide = window.find("workspace-sidebar").bounds();
         let from = point(wide.right() - px(2.), wide.center().y);
@@ -1782,7 +1784,7 @@ fn the_sidebars_keep_their_widths_until_reset(cx: &mut TestAppContext) {
     assert_eq!(widths(cx, &workspace), (px(280.), px(320.)));
     in_frame(cx, handle, |window, cx| window.click("open-settings", cx));
     in_frame(cx, handle, |window, cx| {
-        window.within("settings").click("0-7", cx)
+        window.within("settings").click("0-8", cx)
     });
     // Nothing to restore yet.
     in_frame(cx, handle, |window, _| {

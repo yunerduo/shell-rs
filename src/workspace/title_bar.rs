@@ -4,15 +4,18 @@ use std::rc::Rc;
 use gpui_kit::base::{GlobalState, TextSelection};
 use gpui_kit::component::{
     ActiveTheme as _, IconName, Selectable as _, Sizable as _, TITLE_BAR_HEIGHT, TitleBar,
+    avatar::Avatar,
     button::{Button, ButtonGroup, ButtonVariants as _},
     h_flex,
+    popover::Popover,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use crate::account::{AccountSnapshot, account_popover};
 use crate::app::{
-    CatalogIcon, NewLocalTerminal, NewTemporaryConnection, QuickConnect, ShowCredentials,
-    ShowForwards, ShowHosts, ShowUpdate, ToggleHostPanel, ToggleTheme,
+    CatalogIcon, NewLocalTerminal, NewTemporaryConnection, OpenSettings, QuickConnect,
+    ShowCredentials, ShowForwards, ShowHosts, ShowUpdate, ToggleHostPanel, ToggleTheme,
 };
 use crate::i18n::t;
 use crate::shared::tinted;
@@ -27,21 +30,32 @@ use super::sidebar::SidebarMode;
 ///
 /// `sidebar` is what the left dock is showing, or `None` while it is hidden;
 /// `forwards` is how many port forwards are running; `update` is the
-/// newer ShellRS waiting to be installed, when there is one.
+/// newer ShellRS waiting to be installed, when there is one; `account` is the
+/// account's plain snapshot, and `width` is the window's, which decides how
+/// much of the bar is dropped as it narrows.
 ///
 /// `switch_end` learns where the list switch ends, and `view` is redrawn
 /// when that moves.
+#[allow(clippy::too_many_arguments)]
 pub fn render_title_bar(
     sidebar: Option<SidebarMode>,
     forwards: usize,
     update: Option<UpdateBadge>,
+    account: &AccountSnapshot,
+    width: Pixels,
     switch_end: &SwitchEnd,
     view: EntityId,
     target: &FocusHandle,
     cx: &App,
 ) -> impl IntoElement {
+    // Narrowing costs the app name first, then the account's name, and
+    // finally the account's mailbox. The right-hand buttons never wrap.
+    let compact = width < px(700.);
+    let show_account_name = width >= px(880.);
+    let show_account_email = width >= px(1120.);
     let dark = cx.theme().is_dark();
-    let (mode, quick, temporary, new_local, theme, show_update) = (
+    let (mode, quick, temporary, new_local, theme, show_update, settings) = (
+        target.clone(),
         target.clone(),
         target.clone(),
         target.clone(),
@@ -49,6 +63,45 @@ pub fn render_title_bar(
         target.clone(),
         target.clone(),
     );
+    let account = account.clone();
+    let account_target = target.clone();
+    let account_theme = cx.theme().clone();
+    // The nickname, else the username, with the mailbox when there is room.
+    // A narrow window keeps only the picture: the bar never grows for it.
+    let account_label: Option<SharedString> = if !account.signed_in || !show_account_name {
+        None
+    } else if show_account_email && !account.email.is_empty() {
+        Some(t!(
+            "account.button.label_with_email",
+            name = account.display_name.clone(),
+            email = account.email.clone()
+        ))
+    } else {
+        Some(account.display_name.clone().into())
+    };
+    let account_trigger = if account.signed_in {
+        let picture = account
+            .avatar
+            .clone()
+            .map(|path| Avatar::new().src(path).small())
+            .unwrap_or_else(|| Avatar::new().name(account.initial.clone()).small());
+        let trigger = Button::new("account-button").ghost().child(picture);
+        match account_label {
+            Some(label) => trigger.accessibility_label(label.clone()).child(
+                div()
+                    .min_w_0()
+                    .max_w(px(220.))
+                    .truncate()
+                    .text_sm()
+                    .child(label),
+            ),
+            None => trigger,
+        }
+    } else {
+        Button::new("account-button")
+            .ghost()
+            .icon(CatalogIcon::CircleUser)
+    };
     // The title bar drags the window on mouse down; keep clicks on its
     // controls from starting a drag.
     let no_drag = |_: &MouseDownEvent, _: &mut Window, cx: &mut App| cx.stop_propagation();
@@ -63,15 +116,22 @@ pub fn render_title_bar(
         })
         .child(
             TitleBar::new()
+                .overflow_x_hidden()
                 .child(
                     h_flex()
+                        .min_w_0()
+                        .flex_1()
                         .gap_3()
-                        .child(
-                            div()
-                                .text_sm()
-                                .font_weight(FontWeight::MEDIUM)
-                                .child(crate::app::WINDOW_TITLE),
-                        )
+                        .when(!compact, |row| {
+                            row.child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(crate::app::WINDOW_TITLE),
+                            )
+                        })
                         .child(
                             // Which list the sidebar shows. The choice stays marked
                             // while that list is up, and a hidden sidebar marks none.
@@ -143,6 +203,7 @@ pub fn render_title_bar(
                 )
                 .child(
                     h_flex()
+                        .flex_shrink_0()
                         .justify_end()
                         .px_2()
                         .gap_1()
@@ -150,7 +211,6 @@ pub fn render_title_bar(
                         .child(
                             Button::new("title-quick-connect")
                                 .ghost()
-                                .small()
                                 .icon(IconName::Search)
                                 .tooltip(t!("workspace.title_bar.quick_connect"))
                                 .accessibility_label(t!("workspace.title_bar.quick_connect"))
@@ -163,7 +223,6 @@ pub fn render_title_bar(
                             // quick way in, to a host that is not saved.
                             Button::new("temporary-connection")
                                 .ghost()
-                                .small()
                                 .icon(CatalogIcon::Zap)
                                 .accessibility_label(t!("workspace.title_bar.temporary_connection"))
                                 .tooltip(t!("workspace.title_bar.temporary_connection_tooltip"))
@@ -174,7 +233,6 @@ pub fn render_title_bar(
                         .child(
                             Button::new("new-local-terminal")
                                 .ghost()
-                                .small()
                                 .icon(CatalogIcon::Terminal)
                                 .accessibility_label(t!("workspace.title_bar.local_terminal"))
                                 .tooltip_with_action(
@@ -198,7 +256,6 @@ pub fn render_title_bar(
                                     },
                                     cx,
                                 ))
-                                .small()
                                 .icon(CatalogIcon::CircleArrowUp)
                                 .tooltip(update.label.clone())
                                 .accessibility_label(update.label)
@@ -207,9 +264,40 @@ pub fn render_title_bar(
                                 })
                         }))
                         .child(
+                            // 设置 and the optional account live in the corner,
+                            // where the window-level commands are.
+                            Button::new("open-settings")
+                                .ghost()
+                                .icon(CatalogIcon::Settings)
+                                .label(t!("workspace.sidebar.settings"))
+                                .tooltip_with_action(
+                                    t!("workspace.sidebar.open_settings"),
+                                    &OpenSettings,
+                                    None,
+                                )
+                                .on_click(move |_, window, cx| {
+                                    settings.dispatch_action(&OpenSettings, window, cx)
+                                }),
+                        )
+                        .child(
+                            Popover::new("account-button-popover")
+                                .anchor(Anchor::TopRight)
+                                .trigger(
+                                    account_trigger
+                                        .tooltip(t!("account.button.tooltip"))
+                                        .accessibility_label(t!("account.button.tooltip")),
+                                )
+                                .content(move |_, _, _| {
+                                    account_popover(
+                                        account.clone(),
+                                        account_target.clone(),
+                                        account_theme.clone(),
+                                    )
+                                }),
+                        )
+                        .child(
                             Button::new("theme-toggle")
                                 .ghost()
-                                .small()
                                 .icon(if dark { IconName::Sun } else { IconName::Moon })
                                 .tooltip(if dark {
                                     t!("workspace.title_bar.to_light")
@@ -294,13 +382,11 @@ impl SwitchEnd {
 }
 
 /// Position against the workspace, whose left edge is also the dock's,
-/// rather than against TitleBar's platform-dependent traffic-light inset:
-/// just past the sidebar's edge, or past the list switch when the sidebar
-/// is narrower than that. The closed dock keeps its width, so the reopen
-/// button stays put.
+/// rather than against TitleBar's platform-dependent traffic-light inset.
+/// It sits just past the list switch, so「凭据」and 显示/隐藏侧栏 read as one
+/// group and stay together however narrow the window gets.
 pub(super) fn render_sidebar_toggle(
     open: bool,
-    sidebar_width: Pixels,
     switch_end: &SwitchEnd,
     target: &FocusHandle,
 ) -> impl IntoElement {
@@ -313,9 +399,9 @@ pub(super) fn render_sidebar_toggle(
     h_flex()
         .absolute()
         .top_0()
-        .left(sidebar_width.max(switch_end.0.get()))
+        .left(switch_end.0.get())
         .h(TITLE_BAR_HEIGHT)
-        .pl_2()
+        .pl_1()
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(
             Button::new("toggle-hosts")

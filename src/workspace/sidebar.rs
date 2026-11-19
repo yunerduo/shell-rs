@@ -1,5 +1,6 @@
 use gpui_kit::component::{
     ActiveTheme as _, Icon, Sizable as _,
+    avatar::Avatar,
     button::{Button, ButtonVariants as _},
     dock::{BasePanel, Panel, PanelControl, PanelEvent},
     h_flex,
@@ -26,8 +27,7 @@ pub enum SidebarMode {
 }
 
 /// The left dock's one panel: the host tree, the port-forwarding list or
-/// the credential list, whichever the title bar's switch picked, over the
-/// 设置 button they share.
+/// the credential list, whichever the title bar's switch picked.
 ///
 /// One panel showing either list rather than two panels swapped in the dock:
 /// swapping would take the displaced list out of the dock (and the focus
@@ -175,7 +175,24 @@ impl Render for Sidebar {
             SidebarMode::Credentials => self.credentials.clone().into_any_element(),
         };
         let account = self.account.read(cx).snapshot();
+        let target = self.focus_handle(cx);
         let theme = cx.theme().clone();
+        let account_trigger = if account.signed_in {
+            let picture = account
+                .avatar
+                .clone()
+                .map(|path| Avatar::new().src(path).small())
+                .unwrap_or_else(|| Avatar::new().name(account.initial.clone()).small());
+            Button::new("sidebar-account-button")
+                .ghost()
+                .small()
+                .child(picture)
+        } else {
+            Button::new("sidebar-account-button")
+                .ghost()
+                .small()
+                .icon(Icon::new(CatalogIcon::CircleUser))
+        };
         v_flex()
             .id("workspace-sidebar")
             .test_support()
@@ -184,7 +201,8 @@ impl Render for Sidebar {
             .text_color(cx.theme().sidebar_foreground)
             .child(div().flex_1().min_h_0().child(list))
             .child(
-                // Pinned under the list, where desktop apps keep settings.
+                // The corner is where desktop apps keep settings; the title
+                // bar's copy is the main way in, this one stays for reach.
                 h_flex()
                     .p_2()
                     .w_full()
@@ -192,7 +210,7 @@ impl Render for Sidebar {
                     .border_t_1()
                     .border_color(cx.theme().sidebar_border)
                     .child(
-                        Button::new("open-settings")
+                        Button::new("sidebar-open-settings")
                             .ghost()
                             .small()
                             .icon(Icon::new(CatalogIcon::Settings))
@@ -210,17 +228,15 @@ impl Render for Sidebar {
                     // signed out it says so and offers a way in, and nothing
                     // here blocks or asks on start-up.
                     .child(
-                        Popover::new("account-button-popover")
+                        Popover::new("sidebar-account-popover")
                             .anchor(Anchor::TopLeft)
                             .trigger(
-                                Button::new("account-button")
-                                    .ghost()
-                                    .small()
-                                    .icon(Icon::new(CatalogIcon::CircleUser))
-                                    .tooltip(t!("account.button.tooltip")),
+                                account_trigger
+                                    .tooltip(t!("account.button.tooltip"))
+                                    .accessibility_label(t!("account.button.tooltip")),
                             )
                             .content(move |_, _, _| {
-                                account_popover(account.clone(), theme.clone())
+                                account_popover(account.clone(), target.clone(), theme.clone())
                             }),
                     ),
             )
