@@ -6,15 +6,13 @@
 use std::time::Duration;
 
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _,
-    accordion::Accordion,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     checkbox::Checkbox,
     dialog::{DialogClose, DialogFooter},
     form::{Field, Form},
     h_flex,
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
-    tab::{Tab, TabBar},
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -40,7 +38,7 @@ use super::settings::{
 
 /// The dialog is wide enough for a form's label and control on one line, and
 /// never wider than the window it opens in.
-const DIALOG_WIDTH: f32 = 760.0;
+const DIALOG_WIDTH: f32 = 820.0;
 /// The margin left between the dialog and the window's edges.
 const DIALOG_MARGIN: f32 = 32.0;
 /// How long one model test may take before it is called a failure. A test
@@ -51,7 +49,6 @@ const MODEL_TEST_TIMEOUT: Duration = Duration::from_secs(60);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ConfigTab {
     Model,
-    Models,
     Roles,
     Proxy,
     Headers,
@@ -61,9 +58,8 @@ enum ConfigTab {
 }
 
 impl ConfigTab {
-    const ALL: [ConfigTab; 8] = [
+    const ALL: [ConfigTab; 7] = [
         ConfigTab::Model,
-        ConfigTab::Models,
         ConfigTab::Roles,
         ConfigTab::Proxy,
         ConfigTab::Headers,
@@ -75,20 +71,18 @@ impl ConfigTab {
     fn index(self) -> usize {
         match self {
             ConfigTab::Model => 0,
-            ConfigTab::Models => 1,
-            ConfigTab::Roles => 2,
-            ConfigTab::Proxy => 3,
-            ConfigTab::Headers => 4,
-            ConfigTab::Rules => 5,
-            ConfigTab::Classifier => 6,
-            ConfigTab::Schedules => 7,
+            ConfigTab::Roles => 1,
+            ConfigTab::Proxy => 2,
+            ConfigTab::Headers => 3,
+            ConfigTab::Rules => 4,
+            ConfigTab::Classifier => 5,
+            ConfigTab::Schedules => 6,
         }
     }
 
     fn label(self) -> SharedString {
         match self {
             ConfigTab::Model => t!("assistant.config.tab.model"),
-            ConfigTab::Models => t!("assistant.config.tab.models"),
             ConfigTab::Roles => t!("assistant.config.tab.roles"),
             ConfigTab::Proxy => t!("assistant.config.tab.proxy"),
             ConfigTab::Headers => t!("assistant.config.tab.headers"),
@@ -259,6 +253,9 @@ pub struct AssistantConfigDialog {
     model_stop: Entity<InputState>,
     model_instruction: Entity<InputState>,
     model_extra: Entity<InputState>,
+    /// Whether the model form's advanced parameters are showing. Folded by
+    /// default; the fields are always there, this only decides the height.
+    model_advanced_open: bool,
     /// The last test of the form, while it runs and after it answers.
     model_test: Option<ModelCheck>,
     /// The roles and skills tab: the role being written (or edited), and
@@ -541,6 +538,7 @@ impl AssistantConfigDialog {
             model_stop,
             model_instruction,
             model_extra,
+            model_advanced_open: false,
             model_test: None,
             editing_role: None,
             role_name,
@@ -1036,7 +1034,13 @@ impl AssistantConfigDialog {
 
     fn activate_model(&mut self, id: String, cx: &mut Context<Self>) {
         self.settings.update(cx, |store, cx| {
-            store.update(|settings| settings.assistant.active_model = id, cx)
+            store.update(
+                |settings| {
+                    settings.assistant.active_model = id;
+                    settings.assistant.trial_selected = Some(false);
+                },
+                cx,
+            )
         });
         self.error = None;
         self.notice = None;
@@ -1976,7 +1980,79 @@ impl AssistantConfigDialog {
         cx.notify();
     }
 
-    fn render_model(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// One section of a page: a heading, one line of explanation, and the
+    /// controls. Every page is built from these so the spacing matches.
+    fn section(
+        &self,
+        title: impl Into<SharedString>,
+        hint: impl Into<SharedString>,
+        body: impl IntoElement,
+        cx: &App,
+    ) -> AnyElement {
+        v_flex()
+            .w_full()
+            .gap_3()
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(title.into()),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(hint.into()),
+            )
+            .child(body)
+            .into_any_element()
+    }
+
+    /// 模型: what answers a conversation now, the models that can be picked,
+    /// their parameters, and the connection they fall back to.
+    fn render_model_page(&self, cx: &mut Context<Self>) -> AnyElement {
+        let assistant = self.settings.read(cx).settings().assistant.clone();
+        let current: SharedString = if assistant.prefers_trial() {
+            t!("assistant.trial.name")
+        } else if let Some(profile) = assistant.active_profile() {
+            profile.display_name().to_string().into()
+        } else if assistant.active().model.trim().is_empty() {
+            t!("assistant.model.default_none")
+        } else {
+            assistant.active().model.clone().into()
+        };
+        let current_hint = if assistant.prefers_trial() {
+            t!("assistant.settings.models.current.trial")
+        } else {
+            t!("assistant.settings.models.current.hint")
+        };
+        v_flex()
+            .w_full()
+            .gap_6()
+            .child(
+                self.section(
+                    t!("assistant.settings.models.current"),
+                    current_hint,
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(current),
+                    cx,
+                ),
+            )
+            .child(self.render_models(cx))
+            .child(self.section(
+                t!("assistant.settings.models.connection"),
+                t!("assistant.settings.models.connection.hint"),
+                self.render_connection(cx),
+                cx,
+            ))
+            .into_any_element()
+    }
+
+    /// The provider a model falls back to: where requests go when no
+    /// configured model is picked, and the key they carry.
+    fn render_connection(&self, cx: &mut Context<Self>) -> AnyElement {
         let protocols = SegmentedControl::new("assistant-config-protocol")
             .selected_index(
                 ProviderProtocol::ALL
@@ -2011,6 +2087,7 @@ impl AssistantConfigDialog {
             .child(
                 Field::new()
                     .label(t!("assistant.settings.model.label"))
+                    .description(t!("assistant.settings.model.hint"))
                     .child(Input::new(&self.model).id("assistant-config-model")),
             )
             .child(
@@ -2157,157 +2234,171 @@ impl AssistantConfigDialog {
                             })),
                     ),
             );
-        let advanced = Accordion::new("assistant-config-model-advanced")
-            .bordered(false)
-            .item(|item| {
-                item.title(t!("assistant.settings.models.advanced")).child(
-                    v_flex()
-                        .w_full()
-                        .gap_4()
-                        .child(
-                            Field::new()
-                                .label(t!("assistant.settings.models.context_window"))
-                                .description(t!("assistant.settings.models.context_window.hint"))
-                                .child(
-                                    v_flex()
-                                        .gap_2()
-                                        .child(
-                                            Input::new(&self.model_context)
-                                                .id("assistant-config-model-context"),
-                                        )
-                                        .child(chip_row(
-                                            "context",
-                                            self.model_context.clone(),
-                                            &[
-                                                ("assistant.settings.models.preset.128k", "128000"),
-                                                ("assistant.settings.models.preset.256k", "256000"),
-                                                ("assistant.settings.models.preset.512k", "512000"),
-                                                ("assistant.settings.models.preset.1m", "1000000"),
-                                            ],
-                                            cx,
-                                        )),
-                                ),
-                        )
-                        .child(
-                            Field::new()
-                                .label(t!("assistant.settings.models.output_tokens"))
-                                .description(t!("assistant.settings.models.output_tokens.hint"))
-                                .child(
-                                    v_flex()
-                                        .gap_2()
-                                        .child(
-                                            Input::new(&self.model_max_tokens)
-                                                .id("assistant-config-model-max-tokens"),
-                                        )
-                                        .child(chip_row(
-                                            "output",
-                                            self.model_max_tokens.clone(),
-                                            &[
-                                                ("assistant.settings.models.preset.4k", "4096"),
-                                                ("assistant.settings.models.preset.16k", "16384"),
-                                                ("assistant.settings.models.preset.32k", "32768"),
-                                                ("assistant.settings.models.preset.128k", "131072"),
-                                            ],
-                                            cx,
-                                        )),
-                                ),
-                        )
-                        .child(
-                            Field::new()
-                                .label(t!("assistant.settings.models.tool_rounds"))
-                                .description(t!("assistant.settings.models.tool_rounds.hint"))
-                                .child(
-                                    Input::new(&self.model_tool_rounds)
-                                        .id("assistant-config-model-tool-rounds"),
-                                ),
-                        )
-                        .child(
-                            Field::new()
-                                .label(t!("assistant.settings.models.thinking"))
-                                .description(t!("assistant.settings.models.thinking.hint"))
-                                .child(
-                                    v_flex()
-                                        .gap_2()
-                                        .child(
-                                            Input::new(&self.model_thinking_param)
-                                                .id("assistant-config-model-thinking-param"),
-                                        )
-                                        .child(
-                                            Input::new(&self.model_thinking_effort)
-                                                .id("assistant-config-model-thinking-effort"),
-                                        )
-                                        .child(chip_row(
-                                            "thinking",
-                                            self.model_thinking_effort.clone(),
-                                            &[
-                                                ("assistant.settings.models.thinking.default", ""),
-                                                (
-                                                    "assistant.settings.models.thinking.disabled",
-                                                    "none",
-                                                ),
-                                                ("assistant.settings.models.thinking.low", "low"),
-                                                (
-                                                    "assistant.settings.models.thinking.medium",
-                                                    "medium",
-                                                ),
-                                                ("assistant.settings.models.thinking.high", "high"),
-                                            ],
-                                            cx,
-                                        )),
-                                ),
-                        )
-                        .child(
-                            Field::new()
-                                .label(t!("assistant.settings.models.temperature"))
-                                .child(
-                                    Input::new(&self.model_temperature)
-                                        .id("assistant-config-model-temperature"),
-                                ),
-                        )
-                        .child(
-                            Field::new()
-                                .label(t!("assistant.settings.models.top_p"))
-                                .child(
-                                    Input::new(&self.model_top_p)
-                                        .id("assistant-config-model-top-p"),
-                                ),
-                        )
-                        .child(
-                            Field::new()
-                                .label(t!("assistant.settings.models.top_k"))
-                                .child(
-                                    Input::new(&self.model_top_k)
-                                        .id("assistant-config-model-top-k"),
-                                ),
-                        )
-                        .child(
-                            Field::new()
-                                .label(t!("assistant.settings.models.stop"))
-                                .child(
-                                    Input::new(&self.model_stop).id("assistant-config-model-stop"),
-                                ),
-                        )
-                        .child(
-                            Field::new()
-                                .label(t!("assistant.settings.models.instruction"))
-                                .description(t!("assistant.settings.models.instruction.hint"))
-                                .child(
-                                    Input::new(&self.model_instruction)
-                                        .id("assistant-config-model-instruction"),
-                                ),
-                        )
-                        .child(
-                            Field::new()
-                                .label(t!("assistant.settings.models.extra"))
-                                .description(t!("assistant.settings.models.extra.hint"))
-                                .child(
-                                    Input::new(&self.model_extra)
-                                        .id("assistant-config-model-extra"),
-                                ),
-                        ),
-                )
-            });
+        let advanced_fields = v_flex()
+            .w_full()
+            .gap_4()
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.context_window"))
+                    .description(t!("assistant.settings.models.context_window.hint"))
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .child(
+                                Input::new(&self.model_context)
+                                    .id("assistant-config-model-context"),
+                            )
+                            .child(chip_row(
+                                "context",
+                                self.model_context.clone(),
+                                &[
+                                    ("assistant.settings.models.preset.128k", "128000"),
+                                    ("assistant.settings.models.preset.256k", "256000"),
+                                    ("assistant.settings.models.preset.512k", "512000"),
+                                    ("assistant.settings.models.preset.1m", "1000000"),
+                                ],
+                                cx,
+                            )),
+                    ),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.output_tokens"))
+                    .description(t!("assistant.settings.models.output_tokens.hint"))
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .child(
+                                Input::new(&self.model_max_tokens)
+                                    .id("assistant-config-model-max-tokens"),
+                            )
+                            .child(chip_row(
+                                "output",
+                                self.model_max_tokens.clone(),
+                                &[
+                                    ("assistant.settings.models.preset.4k", "4096"),
+                                    ("assistant.settings.models.preset.16k", "16384"),
+                                    ("assistant.settings.models.preset.32k", "32768"),
+                                    ("assistant.settings.models.preset.128k", "131072"),
+                                ],
+                                cx,
+                            )),
+                    ),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.tool_rounds"))
+                    .description(t!("assistant.settings.models.tool_rounds.hint"))
+                    .child(
+                        Input::new(&self.model_tool_rounds)
+                            .id("assistant-config-model-tool-rounds"),
+                    ),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.thinking"))
+                    .description(t!("assistant.settings.models.thinking.hint"))
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .child(
+                                Input::new(&self.model_thinking_param)
+                                    .id("assistant-config-model-thinking-param"),
+                            )
+                            .child(
+                                Input::new(&self.model_thinking_effort)
+                                    .id("assistant-config-model-thinking-effort"),
+                            )
+                            .child(chip_row(
+                                "thinking",
+                                self.model_thinking_effort.clone(),
+                                &[
+                                    ("assistant.settings.models.thinking.default", ""),
+                                    ("assistant.settings.models.thinking.disabled", "none"),
+                                    ("assistant.settings.models.thinking.low", "low"),
+                                    ("assistant.settings.models.thinking.medium", "medium"),
+                                    ("assistant.settings.models.thinking.high", "high"),
+                                ],
+                                cx,
+                            )),
+                    ),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.temperature"))
+                    .child(
+                        Input::new(&self.model_temperature)
+                            .id("assistant-config-model-temperature"),
+                    ),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.top_p"))
+                    .child(Input::new(&self.model_top_p).id("assistant-config-model-top-p")),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.top_k"))
+                    .child(Input::new(&self.model_top_k).id("assistant-config-model-top-k")),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.stop"))
+                    .child(Input::new(&self.model_stop).id("assistant-config-model-stop")),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.instruction"))
+                    .description(t!("assistant.settings.models.instruction.hint"))
+                    .child(
+                        Input::new(&self.model_instruction)
+                            .id("assistant-config-model-instruction"),
+                    ),
+            )
+            .child(
+                Field::new()
+                    .label(t!("assistant.settings.models.extra"))
+                    .description(t!("assistant.settings.models.extra.hint"))
+                    .child(Input::new(&self.model_extra).id("assistant-config-model-extra")),
+            );
+        let advanced_toggle = h_flex()
+            .id("assistant-config-model-advanced-toggle")
+            .w_full()
+            .items_center()
+            .gap_2()
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.model_advanced_open = !this.model_advanced_open;
+                cx.notify();
+            }))
+            .child(
+                Icon::new(if self.model_advanced_open {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                })
+                .xsmall()
+                .text_color(muted),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(t!("assistant.settings.models.advanced")),
+            );
+        let advanced = v_flex()
+            .w_full()
+            .gap_3()
+            .child(advanced_toggle)
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(t!("assistant.settings.models.advanced.hint")),
+            )
+            .when(self.model_advanced_open, |this| this.child(advanced_fields));
         let form = v_flex()
+            .w_full()
             .gap_4()
             .child(basic)
             .child(advanced)
@@ -2418,20 +2509,20 @@ impl AssistantConfigDialog {
             );
         }
         v_flex()
-            .gap_4()
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(t!("assistant.settings.models.hint")),
-            )
-            .child(form)
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(div().text_sm().child(t!("assistant.settings.models.list"))),
-            )
-            .child(list)
+            .w_full()
+            .gap_6()
+            .child(self.section(
+                t!("assistant.settings.models.list"),
+                t!("assistant.settings.models.hint"),
+                list,
+                cx,
+            ))
+            .child(self.section(
+                t!("assistant.settings.models.form"),
+                t!("assistant.settings.models.form.hint"),
+                form,
+                cx,
+            ))
             .into_any_element()
     }
 
@@ -3665,24 +3756,21 @@ impl Render for AssistantConfigDialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let danger = cx.theme().danger;
         let muted = cx.theme().muted_foreground;
-        let mut tabs = TabBar::new("assistant-config-tabs")
-            .underline()
-            .small()
-            .selected_index(self.tab.index())
-            .on_click(cx.listener(|this, index: &usize, _, cx| {
+        let tabs = SegmentedControl::new("assistant-config-tabs")
+            .selected_index(Some(self.tab.index()))
+            .on_change(cx.listener(|this, index: &usize, _, cx| {
                 if let Some(tab) = ConfigTab::ALL.get(*index).copied() {
                     this.tab = tab;
                     this.error = None;
                     this.notice = None;
                     cx.notify();
                 }
-            }));
-        for tab in ConfigTab::ALL {
-            tabs = tabs.child(Tab::new().label(tab.label()));
-        }
+            }))
+            .segments(ConfigTab::ALL.map(|tab| Segment::new(tab.label())));
         v_flex()
             .id("assistant-config")
-            .gap_3()
+            .w_full()
+            .gap_4()
             .when_some(self.error.clone(), |body, error| {
                 body.child(div().text_sm().text_color(danger).child(error))
             })
@@ -3691,8 +3779,7 @@ impl Render for AssistantConfigDialog {
             })
             .child(tabs)
             .child(match self.tab {
-                ConfigTab::Model => self.render_model(cx),
-                ConfigTab::Models => self.render_models(cx),
+                ConfigTab::Model => self.render_model_page(cx),
                 ConfigTab::Roles => self.render_roles(cx),
                 ConfigTab::Proxy => self.render_proxy(cx),
                 ConfigTab::Headers => self.render_headers(cx),

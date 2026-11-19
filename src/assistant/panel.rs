@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
+    avatar::Avatar,
     button::{Button, ButtonVariants as _, DropdownButton},
     checkbox::Checkbox,
     h_flex,
@@ -317,9 +318,6 @@ pub struct AssistantPanel {
     /// The built-in trial's last status; `None` when signed out, offline or
     /// the server says it is off.
     trial: Option<trial::Status>,
-    /// This panel picked the trial for the next turn. Never written to the
-    /// settings: it follows the sign-in, not the saved model.
-    trial_selected: bool,
     /// The availability probe on its way.
     trial_probe: Option<Receiver<Option<trial::Status>>>,
     /// When the status last came back, so the 30-second loop does not ask
@@ -458,7 +456,6 @@ impl AssistantPanel {
             attachments: Vec::new(),
             stream: None,
             trial: None,
-            trial_selected: false,
             trial_probe: None,
             trial_checked: None,
             stream_trial: false,
@@ -1625,10 +1622,16 @@ impl AssistantPanel {
         trial::offer(self.account.read(cx).is_signed_in(), self.trial.as_ref())
     }
 
-    /// What the next request uses: the trial when this panel picked it and
-    /// it is still offered, otherwise the saved model.
+    /// Whether the saved choice is the trial. Missing means the user has not
+    /// chosen yet, and a fresh setup starts on the trial.
+    fn trial_selected(&self, cx: &App) -> bool {
+        self.settings.read(cx).settings().assistant.prefers_trial()
+    }
+
+    /// What the next request uses: the trial when it is the saved choice and
+    /// still offered, otherwise the saved model.
     fn selection(&self, cx: &App) -> ModelSelection {
-        if self.trial_selected
+        if self.trial_selected(cx)
             && self.trial_offer(cx) == trial::Offer::Ready
             && let Some(status) = &self.trial
         {
@@ -1639,7 +1642,7 @@ impl AssistantPanel {
 
     /// Why the picked trial cannot answer now, if it cannot.
     fn trial_blocked(&self, cx: &App) -> Option<SharedString> {
-        if !self.trial_selected {
+        if !self.trial_selected(cx) {
             return None;
         }
         match self.trial_offer(cx) {
@@ -1657,7 +1660,6 @@ impl AssistantPanel {
     fn trial_changed(&mut self, cx: &mut Context<Self>) {
         if !self.account.read(cx).is_signed_in() {
             self.trial = None;
-            self.trial_selected = false;
             self.trial_probe = None;
             self.trial_checked = None;
         } else {
@@ -1677,7 +1679,12 @@ impl AssistantPanel {
         if self.trial_offer(cx) != trial::Offer::Ready {
             return;
         }
-        self.trial_selected = true;
+        self.settings.update(cx, |store, cx| {
+            store.update(
+                |settings| settings.assistant.trial_selected = Some(true),
+                cx,
+            )
+        });
         self.refresh_trial(cx, true);
         cx.notify();
     }
@@ -1687,7 +1694,6 @@ impl AssistantPanel {
     fn refresh_trial(&mut self, cx: &mut Context<Self>, force: bool) {
         if !self.account.read(cx).is_signed_in() {
             self.trial = None;
-            self.trial_selected = false;
             self.trial_probe = None;
             self.trial_checked = None;
             return;
@@ -1734,12 +1740,6 @@ impl AssistantPanel {
         self.trial_probe = None;
         self.trial_checked = Some(Instant::now());
         self.trial = result;
-        // A trial that is no longer offered (signed out, turned off, not
-        // configured) stops being the picked model; a used-up quota keeps
-        // it so the menu can say why.
-        if self.trial_offer(cx) == trial::Offer::Hidden {
-            self.trial_selected = false;
-        }
         cx.notify();
         true
     }
@@ -1751,12 +1751,19 @@ impl AssistantPanel {
         if self.stream.is_some() || self.busy() {
             return;
         }
-        if self.settings.read(cx).settings().assistant.active_model == id && !self.trial_selected {
+        if self.settings.read(cx).settings().assistant.active_model == id
+            && !self.trial_selected(cx)
+        {
             return;
         }
-        self.trial_selected = false;
         self.settings.update(cx, |store, cx| {
-            store.update(|settings| settings.assistant.active_model = id, cx)
+            store.update(
+                |settings| {
+                    settings.assistant.active_model = id;
+                    settings.assistant.trial_selected = Some(false);
+                },
+                cx,
+            )
         });
         cx.notify();
     }
@@ -2095,8 +2102,10 @@ impl AssistantPanel {
                 instruction.push_str(note);
             }
         }
-        // Signed in, the user has a name: the assistant uses it instead of
-        // 「你」. Signed out — the default, and the only state offline — the
+        // Signed in, the user has a name the assistant may use once; it is
+        // a reference, not a required form of address, because a wording
+        // that demanded it made replies repeat the name in every sentence.
+        // Signed out — the default, and the only state offline — the
         // neutral wording stays.
         if let Some(name) = self.account.read(cx).assistant_addressing() {
             if !instruction.is_empty() {
@@ -4290,20 +4299,25 @@ impl AssistantPanel {
         &self,
         index: usize,
         message: &ChatMessage,
+        live: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         let border = cx.theme().border;
         let key = format!("thinking-{index}");
         let open = self.expanded.contains(&key);
+        let title = if live {
+            t!("assistant.thinking.streaming")
+        } else {
+            t!("assistant.thinking.title")
+        };
         let summary = message
             .reasoning
             .lines()
             .find(|line| !line.trim().is_empty())
-            .map(|line| one_line(line, 80))
-            .unwrap_or_else(|| t!("assistant.thinking.streaming").to_string());
+            .map(|line| one_line(line, 80));
         let toggle = key.clone();
-        let head = h_flex()
+        let mut head = h_flex()
             .id(("assistant-thinking", index))
             .w_full()
             .items_center()
@@ -4321,13 +4335,9 @@ impl AssistantPanel {
                 .xsmall()
                 .text_color(muted),
             )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(t!("assistant.thinking.title")),
-            )
-            .child(
+            .child(div().text_xs().text_color(muted).child(title));
+        if !live && let Some(summary) = summary {
+            head = head.child(
                 div()
                     .text_xs()
                     .text_color(muted)
@@ -4335,6 +4345,7 @@ impl AssistantPanel {
                     .min_w_0()
                     .child(summary),
             );
+        }
         let mut block = v_flex()
             .w_full()
             .gap_1()
@@ -4645,6 +4656,7 @@ impl AssistantPanel {
                     .child(div().h_px().flex_1().bg(cx.theme().border)),
             );
         }
+        let account = self.account.read(cx).snapshot();
         for (index, message) in self.messages.iter().enumerate() {
             // A result is drawn inside the call card it belongs to; only a
             // result whose call is gone is shown on its own.
@@ -4658,7 +4670,10 @@ impl AssistantPanel {
             {
                 continue;
             }
-            let role = match message.role {
+            let role: SharedString = match message.role {
+                chat::Role::User if account.signed_in && !account.display_name.is_empty() => {
+                    account.display_name.clone().into()
+                }
                 chat::Role::User => t!("assistant.role.user"),
                 chat::Role::Assistant | chat::Role::System => t!("assistant.role.assistant"),
                 chat::Role::Tool => t!("assistant.role.tool"),
@@ -4667,7 +4682,7 @@ impl AssistantPanel {
                 .id(("assistant-turn", index))
                 .w_full()
                 .gap_1()
-                .child(self.render_message_header(message, role, cx));
+                .child(self.render_message_header(message, role, &account, cx));
             match message.role {
                 chat::Role::Tool => {
                     let (summary, body) = tool_card_parts(&message.text);
@@ -4696,13 +4711,11 @@ impl AssistantPanel {
                 }
                 chat::Role::Assistant => {
                     if !message.reasoning.is_empty() {
-                        turn = turn.child(self.render_thinking(index, message, cx));
+                        let live = streaming && index + 1 == self.messages.len();
+                        turn = turn.child(self.render_thinking(index, message, live, cx));
                     }
                     if !message.text.is_empty() {
-                        turn = turn.child(
-                            TextView::markdown(("assistant-markdown", index), message.text.clone())
-                                .selectable(true),
-                        );
+                        turn = turn.child(message_body(index, &message.text, true));
                     }
                     for (position, call) in message.tool_calls.iter().enumerate() {
                         let result = self.messages.iter().find(|other| {
@@ -4714,7 +4727,7 @@ impl AssistantPanel {
                 }
                 _ => {
                     if !message.text.is_empty() {
-                        turn = turn.child(div().text_sm().child(message.text.clone()));
+                        turn = turn.child(message_body(index, &message.text, false));
                     }
                     if !message.attachments.is_empty() {
                         turn = turn.child(self.render_sent_attachments(index, message, cx));
@@ -4732,14 +4745,20 @@ impl AssistantPanel {
         &self,
         message: &ChatMessage,
         role: SharedString,
+        account: &crate::account::AccountSnapshot,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         let mut header = h_flex().w_full().items_center().gap_2();
-        if let Some(avatar) = self.render_speaker_avatar(message.role, cx) {
+        if let Some(avatar) = self.render_speaker_avatar(message.role, account, cx) {
             header = header.child(avatar);
         }
-        let header = header.child(div().text_sm().font_weight(FontWeight::MEDIUM).child(role));
+        let header = header.child(
+            div()
+                .text_base()
+                .font_weight(FontWeight::MEDIUM)
+                .child(role),
+        );
         match message_time(message.at) {
             Some(time) => header
                 .child(div().text_xs().text_color(muted).child(time))
@@ -4756,11 +4775,27 @@ impl AssistantPanel {
     fn render_speaker_avatar(
         &self,
         role: chat::Role,
+        account: &crate::account::AccountSnapshot,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let muted = cx.theme().muted_foreground;
         let (ink, glyph) = match role {
-            chat::Role::User => (muted, Icon::new(CatalogIcon::User)),
+            chat::Role::User => {
+                if account.signed_in {
+                    if let Some(path) = &account.avatar {
+                        return Some(Avatar::new().src(path.clone()).small().into_any_element());
+                    }
+                    if !account.initial.is_empty() {
+                        return Some(
+                            Avatar::new()
+                                .name(account.initial.clone())
+                                .small()
+                                .into_any_element(),
+                        );
+                    }
+                }
+                (muted, Icon::new(CatalogIcon::User))
+            }
             chat::Role::Assistant | chat::Role::System => {
                 (cx.theme().foreground, Icon::new(CatalogIcon::Bot))
             }
@@ -5266,7 +5301,7 @@ impl AssistantPanel {
         let active = assistant.active_profile();
         let provider_model = assistant.active().model.trim();
         let offer = self.trial_offer(cx);
-        let trial_selected = self.trial_selected && offer != trial::Offer::Hidden;
+        let trial_selected = self.trial_selected(cx) && offer != trial::Offer::Hidden;
         let label: SharedString = if trial_selected {
             t!("assistant.trial.name")
         } else {
@@ -5299,13 +5334,11 @@ impl AssistantPanel {
                     remaining = status.requests_remaining_today
                 ),
                 true,
-                self.trial_selected,
+                trial_selected,
             )),
-            (Some(_), trial::Offer::Exhausted) => Some((
-                t!("assistant.trial.menu.exhausted"),
-                false,
-                self.trial_selected,
-            )),
+            (Some(_), trial::Offer::Exhausted) => {
+                Some((t!("assistant.trial.menu.exhausted"), false, trial_selected))
+            }
             _ => None,
         };
         let profiles = assistant.models.clone();
@@ -5669,6 +5702,39 @@ fn one_line(text: &str, limit: usize) -> String {
     let mut cut: String = flat.chars().take(limit).collect();
     cut.push('…');
     cut
+}
+
+/// The user's words as HTML for a selectable text view: the tags are
+/// escaped, and each newline becomes a break so the paragraphs survive.
+fn escape_html_text(text: &str) -> String {
+    let mut html = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '&' => html.push_str("&amp;"),
+            '<' => html.push_str("&lt;"),
+            '>' => html.push_str("&gt;"),
+            '\n' => html.push_str("<br>"),
+            _ => html.push(character),
+        }
+    }
+    html
+}
+
+/// A message's words in a text view the user can select and copy. The
+/// assistant's answer keeps its Markdown; everything else is escaped so it
+/// stays text.
+fn message_body(index: usize, text: &str, markdown: bool) -> AnyElement {
+    if markdown {
+        TextView::markdown(("assistant-markdown", index), text.to_string())
+            .selectable(true)
+            .text_sm()
+            .into_any_element()
+    } else {
+        TextView::html(("assistant-user-text", index), escape_html_text(text))
+            .selectable(true)
+            .text_sm()
+            .into_any_element()
+    }
 }
 
 /// A duration for the opened card.

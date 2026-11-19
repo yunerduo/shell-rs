@@ -42,11 +42,10 @@ impl ProviderProtocol {
         }
     }
 
+    /// No provider invents a model: an empty field stays empty until the
+    /// user names one or the trial answers.
     fn default_model(self) -> &'static str {
-        match self {
-            ProviderProtocol::OpenAi => DEFAULT_OPENAI_MODEL,
-            ProviderProtocol::Anthropic => DEFAULT_ANTHROPIC_MODEL,
-        }
+        ""
     }
 
     fn default_keychain_id(self) -> &'static str {
@@ -58,9 +57,7 @@ impl ProviderProtocol {
 }
 
 pub const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
-pub const DEFAULT_OPENAI_MODEL: &str = "gpt-4o-mini";
 pub const DEFAULT_ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com";
-pub const DEFAULT_ANTHROPIC_MODEL: &str = "claude-sonnet-4-5";
 
 /// The keychain account that holds one provider's API key. The keychain's
 /// service name is the app's; the account is the assistant's alone.
@@ -279,7 +276,7 @@ impl Default for AssistantProvider {
     fn default() -> Self {
         Self {
             base_url: DEFAULT_OPENAI_BASE_URL.to_string(),
-            model: DEFAULT_OPENAI_MODEL.to_string(),
+            model: String::new(),
             keychain_id: "assistant-openai".to_string(),
             max_tokens: 2048,
             headers: Vec::new(),
@@ -308,9 +305,6 @@ impl AssistantProvider {
             self.base_url = protocol.default_base_url().to_string();
         }
         self.model = self.model.trim().to_string();
-        if self.model.is_empty() {
-            self.model = protocol.default_model().to_string();
-        }
         self.keychain_id = self
             .keychain_id
             .trim()
@@ -682,6 +676,11 @@ pub struct AssistantSettings {
     pub models: Vec<ModelProfile>,
     /// The id of the model picked; empty means the provider's own.
     pub active_model: String,
+    /// Whether the built-in trial is the saved choice. Missing means the
+    /// user never chose: a fresh setup starts on the trial, while an older
+    /// file that already named a model keeps it.
+    #[serde(default)]
+    pub trial_selected: Option<bool>,
     /// Roles people wrote. Built-in roles come from `roles`.
     pub roles: Vec<super::roles::Role>,
     /// Skills people added, each on or off.
@@ -719,6 +718,7 @@ impl Default for AssistantSettings {
             anthropic: AssistantProvider::for_protocol(ProviderProtocol::Anthropic),
             models: Vec::new(),
             active_model: String::new(),
+            trial_selected: None,
             roles: Vec::new(),
             skills: Vec::new(),
             packs: Vec::new(),
@@ -767,6 +767,13 @@ impl AssistantSettings {
             return None;
         }
         self.model_profile(&self.active_model)
+    }
+
+    /// Whether the built-in trial is the saved choice. A file that never
+    /// recorded a choice follows its model: nothing picked means the trial,
+    /// which is what a fresh sign-in should show.
+    pub fn prefers_trial(&self) -> bool {
+        self.trial_selected.unwrap_or(self.active_model.is_empty())
     }
 
     /// Everything the next request needs, from the picked model when there
@@ -1020,11 +1027,11 @@ mod tests {
         };
         settings.normalize();
         assert_eq!(settings.openai.base_url, "https://example.test/v1");
-        assert_eq!(settings.openai.model, DEFAULT_OPENAI_MODEL);
+        assert_eq!(settings.openai.model, "", "a blank model stays blank");
         assert_eq!(settings.openai.keychain_id, "mykey");
         assert_eq!(settings.openai.max_tokens, 1);
         assert_eq!(settings.anthropic.base_url, DEFAULT_ANTHROPIC_BASE_URL);
-        assert_eq!(settings.anthropic.model, DEFAULT_ANTHROPIC_MODEL);
+        assert_eq!(settings.anthropic.model, "");
         assert_eq!(settings.anthropic.keychain_id, "assistant-anthropic");
         assert_eq!(settings.anthropic.max_tokens, 8192);
         assert_eq!(settings.timeout_seconds, 10);
@@ -1153,7 +1160,38 @@ mod tests {
         assert_eq!(settings.active_model, "", "nothing matched, so the default");
         let selection = settings.selection();
         assert_eq!(selection.protocol, ProviderProtocol::OpenAi);
-        assert_eq!(selection.model, DEFAULT_OPENAI_MODEL);
+        assert_eq!(selection.model, "", "no provider invents a model");
+    }
+
+    #[test]
+    fn a_fresh_setup_prefers_the_trial_until_a_model_is_chosen() {
+        let mut settings = AssistantSettings::default();
+        assert!(
+            settings.prefers_trial(),
+            "nothing picked starts on the trial"
+        );
+
+        settings.active_model = "openai:gpt-4.1".into();
+        assert!(
+            !settings.prefers_trial(),
+            "a file that already picked a model keeps it"
+        );
+
+        settings.trial_selected = Some(true);
+        assert!(settings.prefers_trial(), "an explicit trial choice wins");
+
+        settings.trial_selected = Some(false);
+        settings.active_model.clear();
+        assert!(
+            !settings.prefers_trial(),
+            "an explicit provider choice is remembered"
+        );
+    }
+
+    #[test]
+    fn a_file_without_the_trial_field_leaves_it_unset() {
+        let settings: AssistantSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings.trial_selected, None);
     }
 
     #[test]

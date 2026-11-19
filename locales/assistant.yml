@@ -13,10 +13,7 @@ assistant.config.title:
   zh-CN: 助手设置
   en: Assistant settings
 assistant.config.tab.model:
-  zh-CN: 模型与协议
-  en: Model
-assistant.config.tab.models:
-  zh-CN: 模型列表
+  zh-CN: 模型
   en: Models
 assistant.config.tab.roles:
   zh-CN: 角色与技能
@@ -157,8 +154,8 @@ assistant.model.default:
   zh-CN: 供应商默认：%{model}
   en: "Provider default: %{model}"
 assistant.model.default_none:
-  zh-CN: 供应商默认（尚未填写模型）
-  en: Provider default (no model yet)
+  zh-CN: 未选择模型
+  en: No model selected
 assistant.trial.name:
   zh-CN: 内置 AI · 试用
   en: Built-in AI · Trial
@@ -223,11 +220,11 @@ assistant.compact.failed:
   zh-CN: 摘要生成失败，已裁剪最早的消息。
   en: Summarizing failed; the oldest messages were dropped.
 assistant.thinking.title:
-  zh-CN: 思考过程
-  en: Thinking
+  zh-CN: 🧠 思考过程
+  en: 🧠 Thinking
 assistant.thinking.streaming:
-  zh-CN: 思考中…
-  en: Thinking…
+  zh-CN: 🧠 思考中…
+  en: 🧠 Thinking…
 assistant.tool.running:
   zh-CN: 运行中…
   en: Running…
@@ -472,8 +469,11 @@ assistant.settings.base_url.hint:
   zh-CN: 服务商提供的地址，通常以 /v1 结尾。
   en: The address your provider gives you, usually ending in /v1.
 assistant.settings.model.label:
-  zh-CN: 模型
-  en: Model
+  zh-CN: 默认模型
+  en: Default model
+assistant.settings.model.hint:
+  zh-CN: 没有选择模型时使用；留空则不发送模型名。
+  en: Used when no model is picked; blank sends no model name.
 assistant.settings.api_key.label:
   zh-CN: API Key
   en: API Key
@@ -498,9 +498,30 @@ assistant.settings.key_kept:
 assistant.settings.key_failed:
   zh-CN: 保存 Key 失败：%{error}
   en: "The key could not be saved: %{error}"
+assistant.settings.models.current:
+  zh-CN: 当前模型
+  en: Current model
+assistant.settings.models.current.hint:
+  zh-CN: 下一轮对话使用的模型，可在输入框的模型菜单里切换。
+  en: The model the next turn uses; switch it from the composer's model menu.
+assistant.settings.models.current.trial:
+  zh-CN: 登录后默认使用内置 AI 试用；手动选择其他模型后，会记住你的选择。
+  en: Signed in, the built-in trial answers by default; picking another model is remembered.
 assistant.settings.models.hint:
-  zh-CN: 这里配置的模型会出现在聊天输入框的模型菜单里，点选即切换。地址与 Key 可各自覆盖，留空则沿用上面的供应商设置。
-  en: The models configured here are listed in the composer's model menu and switch with a click. Address and key can each be overridden; blank falls back to the provider above.
+  zh-CN: 点「使用」切换当前模型。地址与 Key 可各自覆盖，留空则沿用下方的默认连接。
+  en: Pick Use to switch. Address and key can each be overridden; blank falls back to the default connection below.
+assistant.settings.models.form:
+  zh-CN: 模型设置
+  en: Model settings
+assistant.settings.models.form.hint:
+  zh-CN: 添加新模型，或编辑列表里选中的模型。
+  en: Add a model, or edit the one picked from the list.
+assistant.settings.models.connection:
+  zh-CN: 默认连接
+  en: Default connection
+assistant.settings.models.connection.hint:
+  zh-CN: 没有选择模型、或模型自己没填地址和 Key 时，请求走这里。
+  en: Used when no model is picked, or when that model has no address or key of its own.
 assistant.settings.models.protocol:
   zh-CN: 协议
   en: Protocol
@@ -663,6 +684,9 @@ assistant.settings.models.thinking.high:
 assistant.settings.models.advanced:
   zh-CN: 高级配置
   en: Advanced
+assistant.settings.models.advanced.hint:
+  zh-CN: 上下文窗口、输出上限、采样参数和附加指令，留空即用服务端默认。
+  en: Context window, output limit, sampling and extra instructions; blank keeps the service's defaults.
 assistant.settings.models.temperature:
   zh-CN: 温度（0–2）
   en: Temperature (0–2)
@@ -733,8 +757,8 @@ assistant.settings.models.list:
   zh-CN: 已配置的模型
   en: Configured models
 assistant.settings.models.empty:
-  zh-CN: 还没有配置模型；聊天使用供应商默认模型。
-  en: No model is configured yet; chats use the provider's own model.
+  zh-CN: 还没有配置模型。
+  en: No model is configured yet.
 assistant.settings.models.active:
   zh-CN: 当前
   en: In use
