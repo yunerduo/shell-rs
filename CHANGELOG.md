@@ -4,6 +4,30 @@
 
 One section per version, titled `## [version]`, optionally followed by a date. Each section is written in English here and in Chinese in [CHANGELOG.zh.md](CHANGELOG.zh.md), in the same change. The release workflow (`.github/workflows/release.yml`) takes the section with the tag’s version, as it is, for the GitHub release. The website’s changelog shows this file in English and Japanese and CHANGELOG.zh.md in Chinese (Agree ShellAs’s update dialog opens it with What’s new). Written in Markdown, for users.
 
+## [0.1.22]
+
+### Added
+
+- Account avatar: upload a picture from this computer as your avatar, cropped square first; delete your own picture to fall back to the mailbox picture or the initial. A picture chosen on one computer comes back on another after signing in, without uploading it again.
+- Use mailbox avatar, in Settings › Account: when on, the mailbox service is asked for a picture by email address and the result is cached locally; when off, nothing is requested.
+- Change password, with the current password or an emailed code. The server ends every session, so this computer signs out and asks you to sign in again.
+- Change email: enter the new address and the code sent to it. The account keeps its old mailbox until the code checks out.
+- The sync password is explained where it is set or changed: it encrypts the hosts and settings that are uploaded and is not the login password. If it is forgotten, the uploaded data cannot be decrypted and can only be reset and uploaded again, and every other device must enter it again.
+
+### Improved
+
+- Assistant conversations: messages can be selected and copied, and each has its own copy button; the text follows the interface font size; once signed in, speakers show the account's avatar and nickname.
+- The assistant's thinking is collapsed by default: a progress title while it runs, a one-line summary after it finishes, and the full text on expanding.
+- The assistant remembers the model you last picked: the built-in trial stays the choice if that is what you used, a named model is kept for next time, and the trial is skipped when it is unavailable.
+- The assistant's new-conversation settings dialog is rearranged: the fields are always there and only the height changes, and the default model says whether one is chosen.
+- Title bar: Settings and the account move next to the window buttons, and the buttons are no longer small, so they are easier to hit. As the window narrows, the app name, then the nickname, then the email are dropped; the avatar stays. The sidebar toggle sits beside the Credentials switch, reading as one group.
+- Settings opens on the category you left it on instead of starting over at the first page.
+- After a password change, the cloud sync page says the sync password has expired and that this computer has to upload again; the cloud copies cannot be opened with the new password, and other devices must enter the new sync password when they next sync.
+
+### Other
+
+- The repository moved from yunerduo/shell-rs to yunerduo/shellas. The old address redirects, and existing installs and auto-updates are unaffected.
+
 ## [0.1.21]
 
 ### Added
