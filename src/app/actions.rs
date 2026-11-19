@@ -300,8 +300,15 @@ gpui_kit::actions!(
         UploadCloudSyncNow,
         /// Choose a picture for the account's avatar.
         ChangeAccountAvatar,
+        /// Delete the account's own picture from the server; the mailbox
+        /// picture or the initial takes its place.
+        RemoveAccountAvatar,
         /// Open the dialog that edits the account's nickname.
         EditAccountNickname,
+        /// Open 修改密码, with the current password or an emailed code.
+        ChangeAccountPassword,
+        /// Open 修改邮箱, which needs a code sent to the new address.
+        ChangeAccountEmail,
     ]
 );
 

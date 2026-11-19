@@ -12,13 +12,23 @@ use crate::app::data_dir;
 
 /// The account's public state, as `account.json` keeps it. It never holds
 /// the login token or the sync password.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AccountProfile {
     pub username: String,
     pub email: String,
     pub nickname: String,
     /// Relative to the data directory, e.g. `account/avatars/<uuid>.png`.
     pub avatar: Option<String>,
+    /// The server's picture, relative to the API's host. At most one profile
+    /// version owns it; `avatar` above is the local copy of this upload.
+    pub avatar_url: Option<String>,
+    /// The profile version the fields above came from. Local edits do not
+    /// raise it; only a server reply does, so a newer server profile always
+    /// wins over an older local copy.
+    pub profile_version: i64,
+    /// Whether the mailbox avatar service may be asked for a picture. On
+    /// unless the user turned it off; off means no request leaves the app.
+    pub email_avatar: bool,
     /// base64url, from the server: the salt the sync key is derived with.
     pub sync_salt: String,
     pub quota_bytes: u64,
@@ -30,6 +40,35 @@ pub struct AccountProfile {
     pub settings_version: Option<i64>,
     pub hosts_version: Option<i64>,
     pub last_sync_at: Option<String>,
+    /// The account's password changed, and with it the key the cloud copies
+    /// were sealed with. Nothing in the cloud can be opened until this
+    /// computer uploads again; see `finish_password_change`.
+    pub sync_stale: bool,
+}
+
+impl Default for AccountProfile {
+    fn default() -> Self {
+        Self {
+            username: String::new(),
+            email: String::new(),
+            nickname: String::new(),
+            avatar: None,
+            avatar_url: None,
+            profile_version: 0,
+            // A fresh profile takes the mailbox picture: the setting exists
+            // to turn it off, not to turn it on.
+            email_avatar: true,
+            sync_salt: String::new(),
+            quota_bytes: 0,
+            used_bytes: 0,
+            cloud_sync: false,
+            remember_sync_password: false,
+            settings_version: None,
+            hosts_version: None,
+            last_sync_at: None,
+            sync_stale: false,
+        }
+    }
 }
 
 impl AccountProfile {
@@ -97,6 +136,15 @@ impl AccountProfile {
             email: string("email"),
             nickname: string("nickname"),
             avatar: optional_string("avatar"),
+            avatar_url: optional_string("avatar_url"),
+            profile_version: object
+                .get("profile_version")
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+            email_avatar: object
+                .get("email_avatar")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
             sync_salt: string("sync_salt"),
             quota_bytes: number("quota_bytes"),
             used_bytes: number("used_bytes"),
@@ -111,6 +159,10 @@ impl AccountProfile {
             settings_version: version("settings_version"),
             hosts_version: version("hosts_version"),
             last_sync_at: optional_string("last_sync_at"),
+            sync_stale: object
+                .get("sync_stale")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         }
     }
 
@@ -122,6 +174,11 @@ impl AccountProfile {
         if let Some(avatar) = &self.avatar {
             object.insert("avatar".into(), avatar.clone().into());
         }
+        if let Some(avatar_url) = &self.avatar_url {
+            object.insert("avatar_url".into(), avatar_url.clone().into());
+        }
+        object.insert("profile_version".into(), self.profile_version.into());
+        object.insert("email_avatar".into(), self.email_avatar.into());
         object.insert("sync_salt".into(), self.sync_salt.clone().into());
         object.insert("quota_bytes".into(), self.quota_bytes.into());
         object.insert("used_bytes".into(), self.used_bytes.into());
@@ -139,6 +196,7 @@ impl AccountProfile {
         if let Some(at) = &self.last_sync_at {
             object.insert("last_sync_at".into(), at.clone().into());
         }
+        object.insert("sync_stale".into(), self.sync_stale.into());
         Value::Object(object).to_string()
     }
 
@@ -188,7 +246,11 @@ pub struct AccountSnapshot {
     pub email: String,
     pub nickname: String,
     pub avatar: Option<PathBuf>,
+    /// Whether the picture is the user's own (uploaded or from the server)
+    /// rather than the mailbox service's or the initial.
+    pub custom_avatar: bool,
     pub initial: String,
+    pub email_avatar: bool,
     pub cloud_sync: bool,
     pub remember_sync_password: bool,
     pub quota_bytes: u64,
@@ -196,6 +258,9 @@ pub struct AccountSnapshot {
     pub settings_version: Option<i64>,
     pub hosts_version: Option<i64>,
     pub last_sync_at: Option<String>,
+    /// The cloud copies were sealed with an older password; re-uploading is
+    /// the only way back. Shown in 设置 › 账号 › 云同步.
+    pub sync_stale: bool,
     pub notice: Option<AccountNotice>,
 }
 
@@ -374,6 +439,9 @@ mod tests {
             email: "a@b.co".into(),
             nickname: "Alice".into(),
             avatar: Some("account/avatars/one.png".into()),
+            avatar_url: Some("/api/v1/avatars/pic.png".into()),
+            profile_version: 4,
+            email_avatar: false,
             sync_salt: "c2FsdA".into(),
             quota_bytes: 1024,
             used_bytes: 12,
@@ -382,6 +450,7 @@ mod tests {
             settings_version: Some(3),
             hosts_version: None,
             last_sync_at: Some("2026-01-02T03:04:05Z".into()),
+            sync_stale: true,
         };
         assert_eq!(AccountProfile::from_json(&profile.to_json()), profile);
     }
@@ -395,6 +464,8 @@ mod tests {
         assert_eq!(profile.quota_bytes, 0);
         assert!(profile.cloud_sync);
         assert_eq!(profile.settings_version, Some(7));
+        // The mailbox picture is on unless a profile says otherwise.
+        assert!(profile.email_avatar);
         assert_eq!(
             AccountProfile::from_json("not json"),
             AccountProfile::default()

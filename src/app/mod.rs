@@ -25,7 +25,8 @@ pub use menu_bar::show_menu_bar;
 pub use paths::{
     PORTABLE_BIN, PORTABLE_DATA, SETUP_UNINSTALLER, account_path, analytics_path, avatars_dir,
     cli_endpoint, cli_socket_path, cloud_dir, compose_history_path, data_dir, database_path,
-    keys_dir, portable_root, settings_path, terminal_output_dir, updates_dir, window_state_path,
+    gravatar_dir, keys_dir, portable_root, server_avatar_dir, settings_path, terminal_output_dir,
+    updates_dir, window_state_path,
 };
 pub use quit::{quit_held_back, set_quit_guard};
 pub use rendering::{SOFTWARE_FRAME_INTERVAL, frame_due, note_renderer, software_rendering};

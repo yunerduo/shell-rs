@@ -16,10 +16,13 @@ use super::model::{AccountNotice, AccountSnapshot};
 use crate::app::{OpenAccountSettings, RegisterAccount, SignInAccount, SignOutAccount};
 use crate::i18n::t;
 
-/// The popover's contents. `snapshot` is plain data: the sidebar takes it
-/// from the store when it renders, so nothing here reads an entity.
+/// The popover's contents. `snapshot` is plain data: the title bar takes it
+/// from the store when it renders, so nothing here reads an entity. `target`
+/// is the workspace's focus handle, used the same way every title-bar button
+/// dispatches: the command lands even when the focus is inside a terminal.
 pub fn account_popover(
     snapshot: AccountSnapshot,
+    target: FocusHandle,
     theme: gpui_kit::component::Theme,
 ) -> impl IntoElement {
     let theme = &theme;
@@ -29,14 +32,19 @@ pub fn account_popover(
         .gap_3()
         .w_72()
         .when(!snapshot.signed_in, |view| {
-            view.child(signed_out(snapshot.notice, theme))
+            view.child(signed_out(snapshot.notice, &target, theme))
         })
         .when(snapshot.signed_in, |view| {
-            view.child(signed_in(&snapshot, theme))
+            view.child(signed_in(&snapshot, &target, theme))
         })
 }
 
-fn signed_out(notice: Option<AccountNotice>, theme: &gpui_kit::component::Theme) -> AnyElement {
+fn signed_out(
+    notice: Option<AccountNotice>,
+    target: &FocusHandle,
+    theme: &gpui_kit::component::Theme,
+) -> AnyElement {
+    let (sign_in, register) = (target.clone(), target.clone());
     v_flex()
         .id("account-signed-out")
         .test_support()
@@ -89,8 +97,8 @@ fn signed_out(notice: Option<AccountNotice>, theme: &gpui_kit::component::Theme)
                         .primary()
                         .small()
                         .label(t!("account.sign_in"))
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(Box::new(SignInAccount), cx)
+                        .on_click(move |_, window, cx| {
+                            sign_in.dispatch_action(&SignInAccount, window, cx)
                         }),
                 )
                 .child(
@@ -98,26 +106,35 @@ fn signed_out(notice: Option<AccountNotice>, theme: &gpui_kit::component::Theme)
                         .ghost()
                         .small()
                         .label(t!("account.register"))
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(Box::new(RegisterAccount), cx)
+                        .on_click(move |_, window, cx| {
+                            register.dispatch_action(&RegisterAccount, window, cx)
                         }),
                 ),
         )
         .into_any_element()
 }
 
-fn signed_in(snapshot: &AccountSnapshot, theme: &gpui_kit::component::Theme) -> AnyElement {
+fn signed_in(
+    snapshot: &AccountSnapshot,
+    target: &FocusHandle,
+    theme: &gpui_kit::component::Theme,
+) -> AnyElement {
+    let (open_settings, sign_out) = (target.clone(), target.clone());
     let avatar = snapshot
         .avatar
         .clone()
-        .map(|path| Avatar::new().src(path).small())
-        .unwrap_or_else(|| Avatar::new().name(snapshot.initial.clone()).small());
+        .map(|path| Avatar::new().src(path).with_size(px(64.)))
+        .unwrap_or_else(|| {
+            Avatar::new()
+                .name(snapshot.initial.clone())
+                .with_size(px(64.))
+        });
     v_flex()
         .id("account-profile")
         .test_support()
         .gap_3()
         .child(
-            h_flex().w_full().min_w_0().gap_2().child(avatar).child(
+            h_flex().w_full().min_w_0().gap_3().child(avatar).child(
                 v_flex()
                     .min_w_0()
                     .flex_1()
@@ -127,7 +144,7 @@ fn signed_in(snapshot: &AccountSnapshot, theme: &gpui_kit::component::Theme) -> 
                             .id("account-name")
                             .test_support()
                             .min_w_0()
-                            .text_sm()
+                            .text_base()
                             .font_medium()
                             .whitespace_normal()
                             .child(snapshot.display_name.clone()),
@@ -167,8 +184,8 @@ fn signed_in(snapshot: &AccountSnapshot, theme: &gpui_kit::component::Theme) -> 
                         .outline()
                         .small()
                         .label(t!("account.settings"))
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(Box::new(OpenAccountSettings), cx)
+                        .on_click(move |_, window, cx| {
+                            open_settings.dispatch_action(&OpenAccountSettings, window, cx)
                         }),
                 )
                 .child(
@@ -176,8 +193,8 @@ fn signed_in(snapshot: &AccountSnapshot, theme: &gpui_kit::component::Theme) -> 
                         .ghost()
                         .small()
                         .label(t!("account.sign_out"))
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(Box::new(SignOutAccount), cx)
+                        .on_click(move |_, window, cx| {
+                            sign_out.dispatch_action(&SignOutAccount, window, cx)
                         }),
                 ),
         )

@@ -6,6 +6,9 @@ _version: 2
 account.button.tooltip:
   zh-CN: 账号
   en: Account
+account.button.label_with_email:
+  zh-CN: "%{name}（%{email}）"
+  en: "%{name} (%{email})"
 account.signed_out:
   zh-CN: 未登录
   en: Not signed in
@@ -90,6 +93,12 @@ account.form.password.short:
 account.form.password.long:
   zh-CN: 密码最多 128 个字符
   en: Use at most 128 characters
+account.form.password.classes:
+  zh-CN: 密码至少包含字母、数字、符号中的两类
+  en: Use at least two of letters, digits and symbols
+account.form.password.mismatch:
+  zh-CN: 两次输入的密码不一致
+  en: The two passwords do not match
 account.form.email.invalid:
   zh-CN: 邮箱地址格式不对
   en: That email address is not valid
@@ -173,6 +182,74 @@ account.forgot.done:
   zh-CN: 密码已重置，请用新密码登录。
   en: The password was reset. Sign in with the new one.
 
+# 修改密码: the current password or a code mailed to the account. Either way
+# every session ends, this computer's included.
+account.change_password.title:
+  zh-CN: 修改密码
+  en: Change password
+account.change_password.description_current:
+  zh-CN: 输入当前密码和新密码。改完后所有设备都要重新登录，云端同步也需要用新密码重新上传。
+  en: Enter your current password and a new one. Every device will have to sign in again, and cloud sync has to be uploaded again with the new password.
+account.change_password.description_email:
+  zh-CN: 用账号邮箱收验证码，再设置新密码。改完后所有设备都要重新登录，云端同步也需要用新密码重新上传。
+  en: Get a code at the account's email, then choose a new password. Every device will have to sign in again, and cloud sync has to be uploaded again with the new password.
+account.change_password.mode_current:
+  zh-CN: 用当前密码
+  en: Current password
+account.change_password.mode_email:
+  zh-CN: 邮箱验证码
+  en: Email code
+account.change_password.current:
+  zh-CN: 当前密码
+  en: Current password
+account.change_password.new:
+  zh-CN: 新密码
+  en: New password
+account.change_password.repeat:
+  zh-CN: 确认新密码
+  en: Repeat new password
+account.change_password.commit:
+  zh-CN: 修改密码
+  en: Change password
+account.change_password.email_hint:
+  zh-CN: 验证码会发送到 %{email}，10 分钟内有效。
+  en: The code goes to %{email} and lasts ten minutes.
+account.change_password.no_email:
+  zh-CN: 账号还没有邮箱，先用当前密码修改。
+  en: The account has no email yet; use the current password instead.
+account.change_password.wrong_current:
+  zh-CN: 当前密码不对。
+  en: That is not your current password.
+
+# 修改邮箱: the code goes to the new address; the session is untouched.
+account.change_email.title:
+  zh-CN: 修改邮箱
+  en: Change email
+account.change_email.description:
+  zh-CN: 先给新邮箱发验证码，验证通过才换成新邮箱。换完当前设备和其他设备都不用重新登录，其他设备重启后会显示新邮箱。
+  en: Send a code to the new address and enter it to switch. You stay signed in, and so do your other devices; they show the new address after a restart.
+account.change_email.field:
+  zh-CN: 新邮箱
+  en: New email
+account.change_email.commit:
+  zh-CN: 修改邮箱
+  en: Change email
+account.change_email.hint:
+  zh-CN: 验证码会发送到这个新邮箱，10 分钟内有效。
+  en: The code goes to this new address and lasts ten minutes.
+account.change_email.same:
+  zh-CN: 新邮箱与当前邮箱相同。
+  en: That is already your email address.
+account.change_email.taken:
+  zh-CN: 该邮箱已被其他账号使用。
+  en: That email address is already in use.
+account.change_email.code_stale:
+  zh-CN: 邮箱改过了，请先获取验证码。
+  en: The address changed; get a new code first.
+account.change_email.code_sent:
+  zh-CN: 验证码已发送到新邮箱，请查收。
+  en: The code has been sent to the new address.
+
 account.popover.signed_out_hint:
   zh-CN: 登录后可同步设置与主机。本机功能不受影响。
   en: Sign in to sync settings and hosts. Local features stay as they are.
@@ -220,6 +297,12 @@ account.error.conflict:
 account.error.cloud_conflict:
   zh-CN: 云端已有更新的版本，请打开账号设置处理。
   en: The cloud has a newer version; open account settings to choose.
+account.error.not_supported:
+  zh-CN: 服务器暂不支持这个操作。
+  en: The server does not support this yet.
+account.error.avatar_format:
+  zh-CN: 服务器不接受这个图片格式，请换一张。
+  en: The server does not accept this picture's format. Choose another one.
 
 account.avatar.prompt:
   zh-CN: 选择头像
@@ -227,6 +310,33 @@ account.avatar.prompt:
 account.avatar.failed:
   zh-CN: 头像没有换成：%{error}
   en: "The picture could not be used: %{error}"
+account.avatar.too_large:
+  zh-CN: 头像不能超过 2 MB，请换一张。
+  en: The picture must be at most 2 MB. Choose another one.
+account.avatar.unsupported_format:
+  zh-CN: 头像只支持 PNG、JPEG 或 WebP 格式。
+  en: The picture must be PNG, JPEG or WebP.
+account.avatar.crop_title:
+  zh-CN: 裁剪头像
+  en: Crop the picture
+account.avatar.crop_hint:
+  zh-CN: 拖动图片调整位置，用滑块缩放。圆形以外的部分不会显示。
+  en: Drag the picture to move it, and use the slider to zoom. What is outside the circle is left out.
+account.avatar.crop_zoom:
+  zh-CN: 缩放
+  en: Zoom
+account.avatar.crop_save:
+  zh-CN: 保存头像
+  en: Save picture
+account.avatar.crop_loading:
+  zh-CN: 正在读取图片…
+  en: Reading the picture…
+account.avatar.crop_too_big:
+  zh-CN: 这张图片太大了，请换一张。
+  en: This picture is too large. Choose another one.
+account.avatar.crop_unreadable:
+  zh-CN: 这张图片打不开，请换一张。
+  en: This picture could not be opened. Choose another one.
 
 account.kind.settings:
   zh-CN: 设置
@@ -246,6 +356,21 @@ account.notify.hosts_downloaded:
 account.notify.phone_not_applied:
   zh-CN: 账号已创建，但手机号暂未生效。可以之后再补。
   en: The account was created, but the phone number did not take effect. You can add it later.
+account.notify.password_changed:
+  zh-CN: 密码已修改，所有设备都需要重新登录；云端同步需要用新密码重新上传。
+  en: The password was changed. Every device has to sign in again, and cloud sync has to be uploaded again with the new password.
+account.notify.email_changed:
+  zh-CN: 邮箱已改为 %{email}。
+  en: The email address is now %{email}.
+account.notify.nickname_failed:
+  zh-CN: 昵称没有改成功：%{error}
+  en: "The nickname was not changed: %{error}"
+account.notify.avatar_failed:
+  zh-CN: 头像没有换成功：%{error}
+  en: "The picture was not changed: %{error}"
+account.notify.avatar_removal_failed:
+  zh-CN: 头像没有删掉：%{error}
+  en: "The picture was not removed: %{error}"
 
 account.conflict.title:
   zh-CN: 云端有更新的版本
@@ -301,6 +426,18 @@ settings.account.avatar:
 settings.account.change_avatar:
   zh-CN: 更换头像…
   en: Change picture…
+settings.account.remove_avatar:
+  zh-CN: 删除头像
+  en: Remove picture
+settings.account.avatar_description:
+  zh-CN: 没上传时会用邮箱头像，再没有就用名称首字母。
+  en: Without an upload the picture comes from your e-mail address, and failing that from the initial of your name.
+settings.account.email_avatar:
+  zh-CN: 使用邮箱头像
+  en: Use the mailbox picture
+settings.account.email_avatar_description:
+  zh-CN: 按邮箱从头像服务取图。关掉后不会发出请求，只用名称首字母。
+  en: Ask the avatar service for your e-mail address's picture. Turned off, no request is sent and the initial is used.
 settings.account.nickname:
   zh-CN: 昵称
   en: Nickname
@@ -308,8 +445,8 @@ settings.account.nickname_empty:
   zh-CN: 未设置
   en: Not set
 settings.account.nickname_description:
-  zh-CN: AI 助手会用昵称称呼你。
-  en: The assistant uses it to address you.
+  zh-CN: 最多 24 个字符。AI 助手知道你的昵称，需要时才会称呼你。
+  en: Up to 24 characters. The assistant knows your nickname and uses it only when it fits.
 settings.account.edit_nickname:
   zh-CN: 修改…
   en: Edit…
@@ -320,8 +457,8 @@ settings.account.save_nickname:
   zh-CN: 保存
   en: Save
 settings.account.nickname_too_long:
-  zh-CN: 昵称最多 40 个字符
-  en: Use at most 40 characters
+  zh-CN: 昵称最多 24 个字符
+  en: Use at most 24 characters
 settings.account.username:
   zh-CN: 用户名
   en: Username
@@ -343,9 +480,9 @@ settings.account.change_password:
 settings.account.change_email:
   zh-CN: 修改邮箱
   en: Change email
-settings.account.change_unavailable:
-  zh-CN: 服务端暂未开放。
-  en: Not available yet.
+settings.account.password_description:
+  zh-CN: 用当前密码或邮箱验证码修改，改完所有设备都要重新登录。
+  en: Change it with the current password or an emailed code; every device then has to sign in again.
 settings.account.group.cloud:
   zh-CN: 云同步
   en: Cloud sync
@@ -379,8 +516,13 @@ settings.account.never_synced:
 settings.account.sync_off:
   zh-CN: 云同步已关闭
   en: Cloud sync is off
+settings.account.sync_stale:
+  zh-CN: 同步密码已过期，需要重新上传
+  en: Sync password expired; upload again
 
-# Given to the model when the user has an account, instead of 「你」.
+# Given to the model when the user has an account. The name is a reference,
+# not a required form of address: repeating it is the failure this wording
+# avoids.
 assistant.instruction.address_user:
-  zh-CN: 用户已登录账号，昵称是%{name}。用「%{name}」称呼用户，不要用「你」。
-  en: The user is signed in; their name is %{name}. Address them as %{name} instead of "you".
+  zh-CN: 用户已登录账号（昵称：%{name}）。需要称呼时，最多在开头用一次这个名字；其余时候用「你」，不要重复这个名字，也不要把名字硬塞进每句话。
+  en: 'The user is signed in (name: %{name}). If you address them by name, use it at most once at the beginning; otherwise use "you". Do not repeat the name or force it into every sentence.'

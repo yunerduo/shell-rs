@@ -60,6 +60,13 @@ pub fn account_error(error: &AccountError) -> SharedString {
                 message.clone().into()
             }
         }
+        AccountError::UnsupportedMedia(message) => {
+            if message.is_empty() {
+                t!("account.error.avatar_format")
+            } else {
+                message.clone().into()
+            }
+        }
         AccountError::BadRequest(message) => {
             if message.is_empty() {
                 t!("account.error.server")
@@ -89,6 +96,7 @@ pub fn account_error(error: &AccountError) -> SharedString {
         AccountError::EmailCodeLocked => t!("account.code.locked"),
         AccountError::EmailUnavailable => t!("account.code.service_unavailable"),
         AccountError::EmailSendFailed => t!("account.code.send_failed"),
+        AccountError::NotSupported => t!("account.error.not_supported"),
     }
 }
 
@@ -114,6 +122,27 @@ pub fn reset_error(error: &AccountError) -> SharedString {
         AccountError::EmailCodeExpired => t!("account.code.expired"),
         AccountError::EmailCodeLocked => t!("account.code.locked"),
         AccountError::TooMany(_) => t!("account.code.too_many"),
+        other => account_error(other),
+    }
+}
+
+/// What 改密码 with the current password says. The form has already checked
+/// the new one's shape, so a 400 is the old password being wrong.
+pub fn change_password_error(error: &AccountError) -> SharedString {
+    match error {
+        AccountError::BadRequest(_) => t!("account.change_password.wrong_current"),
+        other => account_error(other),
+    }
+}
+
+/// What 改邮箱 says. A taken address and three kinds of bad code each have
+/// their own sentence.
+pub fn change_email_error(error: &AccountError) -> SharedString {
+    match error {
+        AccountError::Conflict(_) => t!("account.change_email.taken"),
+        AccountError::EmailCodeInvalid => t!("account.code.invalid"),
+        AccountError::EmailCodeExpired => t!("account.code.expired"),
+        AccountError::EmailCodeLocked => t!("account.code.locked"),
         other => account_error(other),
     }
 }

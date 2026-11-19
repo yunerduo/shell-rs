@@ -13,15 +13,34 @@ use zeroize::Zeroizing;
 /// the same host.
 pub const API_BASE: &str = "https://shellas.agree.host";
 
+/// The largest picture the server takes, in bytes: 2 MiB.
+pub const MAX_AVATAR_BYTES: usize = 2 * 1024 * 1024;
+
 /// The account's profile as the server returns it.
 #[derive(Clone, Debug, Default)]
 pub struct MeReply {
     pub username: String,
     pub email: Option<String>,
+    pub nickname: Option<String>,
+    /// Relative to the API's scheme and host, e.g. `/api/v1/avatars/…png`.
+    pub avatar_url: Option<String>,
+    /// Grows by one whenever the nickname or the avatar really changes.
+    pub profile_version: i64,
+    pub profile_updated_at: String,
     pub quota_bytes: u64,
     pub used_bytes: u64,
     pub sync_salt: String,
     pub created_at: String,
+}
+
+/// What the profile endpoints return: the five fields they share.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProfileReply {
+    pub username: String,
+    pub nickname: Option<String>,
+    pub avatar_url: Option<String>,
+    pub profile_version: i64,
+    pub profile_updated_at: String,
 }
 
 /// A successful sign-in or registration.
@@ -95,6 +114,8 @@ pub enum AccountError {
     Locked(String),
     TooMany(String),
     TooLarge(String),
+    /// The server does not take this picture's format.
+    UnsupportedMedia(String),
     BadRequest(String),
     Conflict(String),
     Server(String),
@@ -117,6 +138,8 @@ pub enum AccountError {
     /// The mail server could not be reached, refused the login or the
     /// message. Worth trying again.
     EmailSendFailed,
+    /// The server has no route for this yet. Local state stays as it is.
+    NotSupported,
 }
 
 impl AccountError {
@@ -171,8 +194,56 @@ pub trait AccountService: Send + Sync + 'static {
     /// or not the address has an account, on purpose.
     fn request_password_code(&self, email: &str) -> Result<CodeSent, AccountError>;
     fn reset_password(&self, email: &str, code: &str, password: &str) -> Result<(), AccountError>;
+    /// 改密码 with the current password. The server ends every session,
+    /// this one included.
+    fn change_password(
+        &self,
+        _token: &str,
+        _current_password: &str,
+        _new_password: &str,
+    ) -> Result<(), AccountError> {
+        Err(AccountError::NotSupported)
+    }
+    /// Ask for the code a change of e-mail needs. It goes to the new
+    /// address; the account keeps its mailbox until the code checks out.
+    fn request_email_change_code(
+        &self,
+        _token: &str,
+        _email: &str,
+    ) -> Result<CodeSent, AccountError> {
+        Err(AccountError::NotSupported)
+    }
+    /// Change the mailbox with the code sent to it. The session stays
+    /// valid: the token is not tied to the address.
+    fn change_email(&self, _token: &str, _email: &str, _code: &str) -> Result<(), AccountError> {
+        Err(AccountError::NotSupported)
+    }
     fn logout(&self, token: &str) -> Result<(), AccountError>;
     fn me(&self, token: &str) -> Result<MeReply, AccountError>;
+    /// Set or clear the nickname. `None` clears it and the client shows the
+    /// username instead. The reply is the profile snapshot.
+    fn update_nickname(
+        &self,
+        _token: &str,
+        _nickname: Option<&str>,
+    ) -> Result<ProfileReply, AccountError> {
+        Err(AccountError::NotSupported)
+    }
+    /// Send the picture's bytes as they are (PNG, JPEG or WebP, at most
+    /// 2 MiB). The reply is the profile snapshot with the new `avatar_url`.
+    fn upload_avatar(&self, _token: &str, _picture: Vec<u8>) -> Result<ProfileReply, AccountError> {
+        Err(AccountError::NotSupported)
+    }
+    /// Remove the custom picture. The reply is the profile snapshot with a
+    /// null `avatar_url`.
+    fn delete_avatar(&self, _token: &str) -> Result<ProfileReply, AccountError> {
+        Err(AccountError::NotSupported)
+    }
+    /// Download a picture from the account server's own `avatar_url`. The
+    /// URL is relative to [`API_BASE`]'s scheme and host.
+    fn fetch_avatar(&self, _url: &str) -> Result<Vec<u8>, AccountError> {
+        Err(AccountError::NotSupported)
+    }
     fn upload_document(
         &self,
         token: &str,
@@ -252,6 +323,14 @@ struct MeBody {
     #[serde(default)]
     email: Option<String>,
     #[serde(default)]
+    nickname: Option<String>,
+    #[serde(default)]
+    avatar_url: Option<String>,
+    #[serde(default)]
+    profile_version: i64,
+    #[serde(default)]
+    profile_updated_at: String,
+    #[serde(default)]
     quota_bytes: i64,
     #[serde(default)]
     used_bytes: i64,
@@ -266,10 +345,41 @@ impl From<MeBody> for MeReply {
         Self {
             username: body.username,
             email: body.email,
+            nickname: body.nickname,
+            avatar_url: body.avatar_url,
+            profile_version: body.profile_version,
+            profile_updated_at: body.profile_updated_at,
             quota_bytes: body.quota_bytes.max(0) as u64,
             used_bytes: body.used_bytes.max(0) as u64,
             sync_salt: body.sync_salt,
             created_at: body.created_at,
+        }
+    }
+}
+
+/// The body the three profile endpoints share.
+#[derive(Deserialize)]
+struct ProfileBody {
+    #[serde(default)]
+    username: String,
+    #[serde(default)]
+    nickname: Option<String>,
+    #[serde(default)]
+    avatar_url: Option<String>,
+    #[serde(default)]
+    profile_version: i64,
+    #[serde(default)]
+    profile_updated_at: String,
+}
+
+impl From<ProfileBody> for ProfileReply {
+    fn from(body: ProfileBody) -> Self {
+        Self {
+            username: body.username,
+            nickname: body.nickname,
+            avatar_url: body.avatar_url,
+            profile_version: body.profile_version,
+            profile_updated_at: body.profile_updated_at,
         }
     }
 }
@@ -354,6 +464,7 @@ fn error_from(status: reqwest::StatusCode, body: &str) -> AccountError {
         429 if code == "locked" => AccountError::Locked(message),
         429 => AccountError::TooMany(message),
         413 => AccountError::TooLarge(message),
+        415 => AccountError::UnsupportedMedia(message),
         400 => AccountError::BadRequest(message),
         _ => AccountError::Server(if message.is_empty() {
             format!("HTTP {status}")
@@ -542,6 +653,53 @@ impl AccountService for HttpAccountService {
         Err(error_from(status, &body))
     }
 
+    fn change_password(
+        &self,
+        token: &str,
+        current_password: &str,
+        new_password: &str,
+    ) -> Result<(), AccountError> {
+        let payload = serde_json::json!({
+            "current_password": current_password,
+            "new_password": new_password,
+        });
+        let request = self
+            .authorized(reqwest::Method::PUT, "/api/v1/me/password", token)
+            .json(&payload);
+        let (status, body) = self.call(request)?;
+        if !status.is_success() {
+            return Err(error_from(status, &body));
+        }
+        Ok(())
+    }
+
+    fn request_email_change_code(
+        &self,
+        token: &str,
+        email: &str,
+    ) -> Result<CodeSent, AccountError> {
+        let request = self
+            .authorized(reqwest::Method::POST, "/api/v1/me/email/code", token)
+            .json(&serde_json::json!({ "email": email.trim() }));
+        let (status, body) = self.call(request)?;
+        if !status.is_success() {
+            return Err(error_from(status, &body));
+        }
+        code_sent(&body)
+    }
+
+    fn change_email(&self, token: &str, email: &str, code: &str) -> Result<(), AccountError> {
+        let payload = serde_json::json!({ "email": email.trim(), "code": code.trim() });
+        let request = self
+            .authorized(reqwest::Method::PUT, "/api/v1/me/email", token)
+            .json(&payload);
+        let (status, body) = self.call(request)?;
+        if !status.is_success() {
+            return Err(error_from(status, &body));
+        }
+        Ok(())
+    }
+
     fn me(&self, token: &str) -> Result<MeReply, AccountError> {
         let request = self.authorized(reqwest::Method::GET, "/api/v1/me", token);
         let (status, body) = self.call(request)?;
@@ -550,6 +708,71 @@ impl AccountService for HttpAccountService {
         }
         let me: MeBody = decode(&body)?;
         Ok(me.into())
+    }
+
+    fn update_nickname(
+        &self,
+        token: &str,
+        nickname: Option<&str>,
+    ) -> Result<ProfileReply, AccountError> {
+        let payload = serde_json::json!({ "nickname": nickname });
+        let request = self
+            .authorized(reqwest::Method::PUT, "/api/v1/me/profile", token)
+            .json(&payload);
+        let (status, body) = self.call(request)?;
+        if !status.is_success() {
+            return Err(error_from(status, &body));
+        }
+        let profile: ProfileBody = decode(&body)?;
+        Ok(profile.into())
+    }
+
+    fn upload_avatar(&self, token: &str, picture: Vec<u8>) -> Result<ProfileReply, AccountError> {
+        let request = self
+            .authorized(reqwest::Method::POST, "/api/v1/me/avatar", token)
+            .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+            .body(picture);
+        let (status, body) = self.call(request)?;
+        if !status.is_success() {
+            return Err(error_from(status, &body));
+        }
+        let profile: ProfileBody = decode(&body)?;
+        Ok(profile.into())
+    }
+
+    fn delete_avatar(&self, token: &str) -> Result<ProfileReply, AccountError> {
+        let request = self.authorized(reqwest::Method::DELETE, "/api/v1/me/avatar", token);
+        let (status, body) = self.call(request)?;
+        if !status.is_success() {
+            return Err(error_from(status, &body));
+        }
+        let profile: ProfileBody = decode(&body)?;
+        Ok(profile.into())
+    }
+
+    fn fetch_avatar(&self, url: &str) -> Result<Vec<u8>, AccountError> {
+        let url = if url.starts_with("http://") || url.starts_with("https://") {
+            url.to_string()
+        } else {
+            self.url(url)
+        };
+        let response = self
+            .client
+            .get(url)
+            .header(reqwest::header::ACCEPT, "image/png, image/jpeg, image/webp")
+            .send()
+            .map_err(network_error)?;
+        let status = response.status();
+        let bytes = response.bytes().map_err(network_error)?;
+        if !status.is_success() {
+            return Err(error_from(status, &String::from_utf8_lossy(&bytes)));
+        }
+        // The server caps its own pictures at 2 MiB; anything larger is not
+        // the picture the profile named.
+        if bytes.len() > MAX_AVATAR_BYTES {
+            return Err(AccountError::TooLarge(String::new()));
+        }
+        Ok(bytes.to_vec())
     }
 
     fn upload_document(

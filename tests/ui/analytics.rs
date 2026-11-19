@@ -207,7 +207,7 @@ fn the_settings_switch_decides_whether_anything_is_reported(cx: &mut TestAppCont
     // 设置 › 关于 › 隐私 › 发送匿名使用统计.
     in_frame(cx, handle, |window, cx| window.click("open-settings", cx));
     in_frame(cx, handle, |window, cx| {
-        window.within("settings").click("0-8", cx)
+        window.within("settings").click("0-9", cx)
     });
     assert!(counted(&signals.try_iter().collect::<Vec<_>>()).is_empty());
 

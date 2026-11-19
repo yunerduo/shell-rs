@@ -102,6 +102,20 @@ pub fn avatars_dir() -> PathBuf {
     data_dir().join("account").join("avatars")
 }
 
+/// Where the email avatar service's pictures are cached, one file per
+/// mailbox hash. Kept apart from the avatars the user chose. Created when
+/// the first picture arrives.
+pub fn gravatar_dir() -> PathBuf {
+    data_dir().join("account").join("gravatar")
+}
+
+/// Where the account server's own avatar is cached, one file per URL, so a
+/// picture uploaded on another computer shows after a restart without the
+/// network. Created when the first picture arrives.
+pub fn server_avatar_dir() -> PathBuf {
+    data_dir().join("account").join("server-avatar")
+}
+
 /// Where a cloud sync download that is not applied is kept for review,
 /// e.g. the cloud's hosts document. Created when the first one arrives.
 pub fn cloud_dir() -> PathBuf {

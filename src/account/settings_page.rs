@@ -19,7 +19,8 @@ use zeroize::Zeroizing;
 use super::describe::notice_text;
 use super::store::AccountStore;
 use crate::app::{
-    ChangeAccountAvatar, EditAccountNickname, RegisterAccount, SignInAccount, UploadCloudSyncNow,
+    ChangeAccountAvatar, ChangeAccountEmail, ChangeAccountPassword, EditAccountNickname,
+    RegisterAccount, RemoveAccountAvatar, SignInAccount, UploadCloudSyncNow,
 };
 use crate::i18n::t;
 use crate::settings::SettingsPanel;
@@ -101,15 +102,29 @@ fn profile_group(account: &Entity<AccountStore>) -> SettingGroup {
             .avatar
             .map(|path| Avatar::new().src(path).small())
             .unwrap_or_else(|| Avatar::new().name(snapshot.initial).small());
-        h_flex().gap_2().child(picture).child(
-            Button::new("account-avatar-change")
-                .outline()
-                .small()
-                .label(t!("settings.account.change_avatar"))
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(Box::new(ChangeAccountAvatar), cx)
-                }),
-        )
+        h_flex()
+            .gap_2()
+            .child(picture)
+            .child(
+                Button::new("account-avatar-change")
+                    .outline()
+                    .small()
+                    .label(t!("settings.account.change_avatar"))
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(ChangeAccountAvatar), cx)
+                    }),
+            )
+            .when(snapshot.custom_avatar, |row| {
+                row.child(
+                    Button::new("account-avatar-remove")
+                        .ghost()
+                        .small()
+                        .label(t!("settings.account.remove_avatar"))
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(RemoveAccountAvatar), cx)
+                        }),
+                )
+            })
     });
     let nickname_reader = account.clone();
     let nickname = SettingField::render(move |_, _, cx| {
@@ -145,27 +160,46 @@ fn profile_group(account: &Entity<AccountStore>) -> SettingGroup {
     let email_reader = account.clone();
     let email = SettingField::render(move |_, _, cx| {
         let snapshot = email_reader.read(cx).snapshot();
-        div()
+        let shown = if snapshot.email.is_empty() {
+            t!("settings.account.email_empty")
+        } else {
+            snapshot.email.into()
+        };
+        h_flex()
             .min_w_0()
-            .whitespace_normal()
-            .text_sm()
-            .child(if snapshot.email.is_empty() {
-                t!("settings.account.email_empty")
-            } else {
-                snapshot.email.into()
-            })
+            .gap_2()
+            .child(div().min_w_0().whitespace_normal().text_sm().child(shown))
+            .child(
+                Button::new("account-change-email")
+                    .outline()
+                    .small()
+                    .label(t!("settings.account.change_email"))
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(ChangeAccountEmail), cx)
+                    }),
+            )
     });
+    let email_avatar_reader = account.clone();
+    let email_avatar_writer = account.clone();
+    let email_avatar = SettingField::switch(
+        move |cx| email_avatar_reader.read(cx).snapshot().email_avatar,
+        move |enabled, cx| {
+            email_avatar_writer.update(cx, |account, cx| account.set_email_avatar(enabled, cx))
+        },
+    )
+    .default_value(true);
     SettingGroup::new()
         .title(t!("settings.account.group.account"))
         .items([
-            SettingItem::new(t!("settings.account.avatar"), avatar),
+            SettingItem::new(t!("settings.account.avatar"), avatar)
+                .description(t!("settings.account.avatar_description")),
+            SettingItem::new(t!("settings.account.email_avatar"), email_avatar)
+                .description(t!("settings.account.email_avatar_description")),
             SettingItem::new(t!("settings.account.nickname"), nickname)
                 .description(t!("settings.account.nickname_description")),
             SettingItem::new(t!("settings.account.username"), name),
             SettingItem::new(t!("settings.account.email"), email)
                 .description(t!("settings.account.email_description")),
-            // The server has no route for either yet: the buttons stay
-            // disabled and say so rather than pretend to work.
             SettingItem::new(
                 t!("settings.account.password"),
                 SettingField::render(|_, _, _| {
@@ -174,24 +208,13 @@ fn profile_group(account: &Entity<AccountStore>) -> SettingGroup {
                             .outline()
                             .small()
                             .label(t!("settings.account.change_password"))
-                            .disabled(true),
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(ChangeAccountPassword), cx)
+                            }),
                     )
                 }),
             )
-            .description(t!("settings.account.change_unavailable")),
-            SettingItem::new(
-                t!("settings.account.change_email"),
-                SettingField::render(|_, _, _| {
-                    h_flex().gap_2().child(
-                        Button::new("account-change-email")
-                            .outline()
-                            .small()
-                            .label(t!("settings.account.change_email"))
-                            .disabled(true),
-                    )
-                }),
-            )
-            .description(t!("settings.account.change_unavailable")),
+            .description(t!("settings.account.password_description")),
         ])
 }
 
@@ -219,7 +242,11 @@ fn cloud_group(account: &Entity<AccountStore>) -> SettingGroup {
     let uploader = account.clone();
     let upload = SettingField::render(move |_, _, cx| {
         let snapshot = uploader.read(cx).snapshot();
-        let hint = if snapshot.cloud_sync {
+        // A stale cloud copy outranks "off": there is something up there
+        // that this account can no longer open, and the user should know.
+        let hint = if snapshot.sync_stale {
+            t!("settings.account.sync_stale")
+        } else if snapshot.cloud_sync {
             snapshot
                 .last_sync_at
                 .clone()
@@ -227,6 +254,11 @@ fn cloud_group(account: &Entity<AccountStore>) -> SettingGroup {
                 .unwrap_or_else(|| t!("settings.account.never_synced"))
         } else {
             t!("settings.account.sync_off")
+        };
+        let hint_color = if snapshot.sync_stale {
+            cx.theme().warning
+        } else {
+            cx.theme().muted_foreground
         };
         h_flex()
             .min_w_0()
@@ -241,7 +273,14 @@ fn cloud_group(account: &Entity<AccountStore>) -> SettingGroup {
                         window.dispatch_action(Box::new(UploadCloudSyncNow), cx)
                     }),
             )
-            .child(div().min_w_0().whitespace_normal().text_xs().child(hint))
+            .child(
+                div()
+                    .min_w_0()
+                    .whitespace_normal()
+                    .text_xs()
+                    .text_color(hint_color)
+                    .child(hint),
+            )
     });
     SettingGroup::new()
         .title(t!("settings.account.group.cloud"))
@@ -256,7 +295,8 @@ fn cloud_group(account: &Entity<AccountStore>) -> SettingGroup {
         ])
 }
 
-/// 修改昵称: one field, kept local to the account.
+/// 修改昵称: one field, kept local to the account. The server takes
+/// 1–24 characters, and an empty field clears it.
 struct NicknameForm {
     account: Entity<AccountStore>,
     input: Entity<InputState>,
@@ -277,7 +317,7 @@ impl NicknameForm {
 
     fn commit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let value = self.input.read(cx).value().to_string();
-        if value.trim().chars().count() > 40 {
+        if value.trim().chars().count() > 24 {
             self.error = Some(t!("settings.account.nickname_too_long"));
             cx.notify();
             return false;
