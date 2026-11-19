@@ -6,27 +6,12 @@ One section per version, titled `## [version]`, optionally followed by a date. E
 
 ## [0.1.22]
 
-### Added
-
-- Account avatar: upload a picture from this computer as your avatar, cropped square first; delete your own picture to fall back to the mailbox picture or the initial. A picture chosen on one computer comes back on another after signing in, without uploading it again.
-- Use mailbox avatar, in Settings › Account: when on, the mailbox service is asked for a picture by email address and the result is cached locally; when off, nothing is requested.
-- Change password, with the current password or an emailed code. The server ends every session, so this computer signs out and asks you to sign in again.
-- Change email: enter the new address and the code sent to it. The account keeps its old mailbox until the code checks out.
-- The sync password is explained where it is set or changed: it encrypts the hosts and settings that are uploaded and is not the login password. If it is forgotten, the uploaded data cannot be decrypted and can only be reset and uploaded again, and every other device must enter it again.
-
-### Improved
-
-- Assistant conversations: messages can be selected and copied, and each has its own copy button; the text follows the interface font size; once signed in, speakers show the account's avatar and nickname.
-- The assistant's thinking is collapsed by default: a progress title while it runs, a one-line summary after it finishes, and the full text on expanding.
-- The assistant remembers the model you last picked: the built-in trial stays the choice if that is what you used, a named model is kept for next time, and the trial is skipped when it is unavailable.
-- The assistant's new-conversation settings dialog is rearranged: the fields are always there and only the height changes, and the default model says whether one is chosen.
-- Title bar: Settings and the account move next to the window buttons, and the buttons are no longer small, so they are easier to hit. As the window narrows, the app name, then the nickname, then the email are dropped; the avatar stays. The sidebar toggle sits beside the Credentials switch, reading as one group.
-- Settings opens on the category you left it on instead of starting over at the first page.
-- After a password change, the cloud sync page says the sync password has expired and that this computer has to upload again; the cloud copies cannot be opened with the new password, and other devices must enter the new sync password when they next sync.
-
-### Other
-
-- The repository moved from yunerduo/shell-rs to yunerduo/shellas. The old address redirects, and existing installs and auto-updates are unaffected.
+- Upload a picture as your account avatar, cropped square first, and delete it to fall back to the mailbox picture or your initial; the avatar and nickname come back on another computer after signing in.
+- Use mailbox avatar, a new switch in Settings › Account: when off, no picture is fetched by email. The same page changes your password or email, both with an emailed code; a password change signs you out.
+- Assistant messages can be selected or copied with a button, the text follows the interface font size, and once signed in speakers show your avatar and nickname.
+- The assistant's thinking is collapsed by default with a summary when it finishes, your last picked model is remembered, and the new-conversation settings dialog is rearranged to be easier to find things in.
+- Settings and the account move to the right of the title bar, with larger buttons, and as the window narrows the app name, nickname and email drop in turn while the avatar stays.
+- Settings opens on the category you left it on; the sync password is now explained as different from your login password and reset-only if forgotten, a mismatch is pointed out while typing, and a password change prompts you to upload again.
 
 ## [0.1.21]
 
