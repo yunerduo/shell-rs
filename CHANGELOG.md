@@ -6,12 +6,18 @@ One section per version, titled `## [version]`, optionally followed by a date. E
 
 ## [0.1.22]
 
-- Upload a picture as your account avatar, cropped square first, and delete it to fall back to the mailbox picture or your initial; the avatar and nickname come back on another computer after signing in.
-- Use mailbox avatar, a new switch in Settings › Account: when off, no picture is fetched by email. The same page changes your password or email, both with an emailed code; a password change signs you out.
-- Assistant messages can be selected or copied with a button, the text follows the interface font size, and once signed in speakers show your avatar and nickname.
-- The assistant's thinking is collapsed by default with a summary when it finishes, your last picked model is remembered, and the new-conversation settings dialog is rearranged to be easier to find things in.
-- Settings and the account move to the right of the title bar, with larger buttons, and as the window narrows the app name, nickname and email drop in turn while the avatar stays.
-- Settings opens on the category you left it on; the sync password is now explained as different from your login password and reset-only if forgotten, a mismatch is pointed out while typing, and a password change prompts you to upload again.
+### Added
+
+- Upload a picture as your account avatar, cropped square first and removable to fall back to the mailbox picture or your initial; the avatar and nickname come back on another computer after signing in.
+- Change your password or email, both with an emailed code; a password change signs you out.
+
+### Improved
+
+- Assistant messages can be selected and copied in one click, the text follows the interface font size, thinking folds away and your last model is remembered; Settings and the account move to the right of the title bar with larger buttons, and the sync password explanation and mismatch warning are clearer.
+
+### Fixed
+
+- Settings reopens on the category you left it on instead of starting over.
 
 ## [0.1.21]
 
