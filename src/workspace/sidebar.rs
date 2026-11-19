@@ -1,21 +1,15 @@
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, Sizable as _,
-    avatar::Avatar,
-    button::{Button, ButtonVariants as _},
+    ActiveTheme as _,
+    button::Button,
     dock::{BasePanel, Panel, PanelControl, PanelEvent},
-    h_flex,
     menu::PopupMenu,
-    popover::Popover,
     v_flex,
 };
 use gpui_kit::*;
 
-use crate::account::{AccountStore, account_popover};
-use crate::app::{CatalogIcon, OpenSettings};
 use crate::credential::CredentialPanel;
 use crate::forward::ForwardPanel;
 use crate::host::{HostPanel, import_menu_items};
-use crate::i18n::t;
 
 /// Which list the left dock is showing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -39,8 +33,6 @@ pub struct Sidebar {
     hosts: Entity<HostPanel>,
     forwards: Entity<ForwardPanel>,
     credentials: Entity<CredentialPanel>,
-    account: Entity<AccountStore>,
-    _account_subscription: Subscription,
 }
 
 impl Sidebar {
@@ -48,17 +40,12 @@ impl Sidebar {
         hosts: Entity<HostPanel>,
         forwards: Entity<ForwardPanel>,
         credentials: Entity<CredentialPanel>,
-        account: Entity<AccountStore>,
-        cx: &mut Context<Self>,
     ) -> Self {
-        let subscription = cx.observe(&account, |_, _, cx| cx.notify());
         Self {
             mode: SidebarMode::default(),
             hosts,
             forwards,
             credentials,
-            account,
-            _account_subscription: subscription,
         }
     }
 
@@ -174,25 +161,6 @@ impl Render for Sidebar {
             SidebarMode::Forwards => self.forwards.clone().into_any_element(),
             SidebarMode::Credentials => self.credentials.clone().into_any_element(),
         };
-        let account = self.account.read(cx).snapshot();
-        let target = self.focus_handle(cx);
-        let theme = cx.theme().clone();
-        let account_trigger = if account.signed_in {
-            let picture = account
-                .avatar
-                .clone()
-                .map(|path| Avatar::new().src(path).small())
-                .unwrap_or_else(|| Avatar::new().name(account.initial.clone()).small());
-            Button::new("sidebar-account-button")
-                .ghost()
-                .small()
-                .child(picture)
-        } else {
-            Button::new("sidebar-account-button")
-                .ghost()
-                .small()
-                .icon(Icon::new(CatalogIcon::CircleUser))
-        };
         v_flex()
             .id("workspace-sidebar")
             .test_support()
@@ -200,45 +168,5 @@ impl Render for Sidebar {
             .bg(cx.theme().sidebar)
             .text_color(cx.theme().sidebar_foreground)
             .child(div().flex_1().min_h_0().child(list))
-            .child(
-                // The corner is where desktop apps keep settings; the title
-                // bar's copy is the main way in, this one stays for reach.
-                h_flex()
-                    .p_2()
-                    .w_full()
-                    .justify_between()
-                    .border_t_1()
-                    .border_color(cx.theme().sidebar_border)
-                    .child(
-                        Button::new("sidebar-open-settings")
-                            .ghost()
-                            .small()
-                            .icon(Icon::new(CatalogIcon::Settings))
-                            .label(t!("workspace.sidebar.settings"))
-                            .tooltip_with_action(
-                                t!("workspace.sidebar.open_settings"),
-                                &OpenSettings,
-                                None,
-                            )
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(OpenSettings), cx)
-                            }),
-                    )
-                    // The account is optional, so this is a quiet corner:
-                    // signed out it says so and offers a way in, and nothing
-                    // here blocks or asks on start-up.
-                    .child(
-                        Popover::new("sidebar-account-popover")
-                            .anchor(Anchor::TopLeft)
-                            .trigger(
-                                account_trigger
-                                    .tooltip(t!("account.button.tooltip"))
-                                    .accessibility_label(t!("account.button.tooltip")),
-                            )
-                            .content(move |_, _, _| {
-                                account_popover(account.clone(), target.clone(), theme.clone())
-                            }),
-                    ),
-            )
     }
 }
