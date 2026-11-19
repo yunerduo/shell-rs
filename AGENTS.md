@@ -84,7 +84,7 @@ UI 测试（`tests/ui/`）在无头窗口里渲染真实的 `Workspace`，通过
 
 ## 与上游的关系与同步
 
-本仓库是 [since2006/shell-rs](https://github.com/since2006/shell-rs) 的 fork，自己的地址是 [yunerduo/shell-rs](https://github.com/yunerduo/shell-rs)。上游是他人项目，我们只有自己 fork 的写权限。
+本仓库是 [since2006/shell-rs](https://github.com/since2006/shell-rs) 的 fork，自己的地址是 [yunerduo/shellas](https://github.com/yunerduo/shellas)。上游是他人项目，我们只有自己 fork 的写权限。
 
 远端约定：
 

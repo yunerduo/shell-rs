@@ -573,7 +573,7 @@ When a file name can’t be represented exactly, ShellAs reports an error. The r
 
 ## Download and updates
 
-Packages are on [GitHub Releases](https://github.com/yunerduo/shell-rs/releases):
+Packages are on [GitHub Releases](https://github.com/yunerduo/shellas/releases):
 
 | System | First install | Automatic updates |
 |---|---|---|

@@ -28,9 +28,9 @@ AppName=ShellAs
 AppVersion={#AppVersion}
 AppVerName=ShellAs {#AppVersion}
 AppPublisher=ShellAs
-AppPublisherURL=https://github.com/yunerduo/shell-rs
-AppSupportURL=https://github.com/yunerduo/shell-rs
-AppUpdatesURL=https://github.com/yunerduo/shell-rs/releases
+AppPublisherURL=https://github.com/yunerduo/shellas
+AppSupportURL=https://github.com/yunerduo/shellas
+AppUpdatesURL=https://github.com/yunerduo/shellas/releases
 DefaultDirName={autopf}\ShellAs
 ; Never inherit the folder of a copy installed under another name; this setup
 ; writes only its own.
