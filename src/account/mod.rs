@@ -38,8 +38,10 @@ pub use service::{
     AccountError, AccountService, AuthReply, DocumentReply, HttpAccountService, MeReply,
     ProfileReply, Quota, SharedAccountService, SyncKind, UploadError,
 };
-pub use settings_page::{account_groups, open_nickname_dialog, open_sync_password_dialog};
-pub use store::{AccountEvent, AccountStore, CloudConflict, ProfileChange};
+pub use settings_page::{
+    account_groups, open_nickname_dialog, open_sync_content_dialog, open_sync_password_dialog,
+};
+pub use store::{AccountEvent, AccountStore, CloudConflict, ProfileChange, UploadOutcome};
 
 /// A byte count as 「1.2 MB」, for the quota notice.
 pub fn format_size(bytes: u64) -> String {

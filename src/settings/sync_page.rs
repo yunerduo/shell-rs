@@ -39,12 +39,32 @@ pub(super) fn sync_groups(sync: &Entity<SyncService>, cx: &App) -> Vec<SettingGr
         .map(|device| device.name.clone())
         .unwrap_or_default();
     let busy = snapshot.busy;
+    // The round has two halves, and each says how it came out: a password
+    // the keychain refused must not hide behind a round that otherwise
+    // went through.
+    let records = match &snapshot.phase {
+        SyncPhase::Synced { .. } => t!("settings.sync.records_synced"),
+        SyncPhase::Syncing => t!("settings.sync.syncing"),
+        SyncPhase::Failed(_) => t!("settings.sync.records_failed"),
+        SyncPhase::Off | SyncPhase::Waiting => t!("settings.sync.waiting"),
+    };
+    let secrets = match snapshot.secrets {
+        Some(report) if report.failed > 0 => {
+            t!("settings.sync.secrets_failed", count = report.failed)
+        }
+        Some(_) => t!("settings.sync.secrets_synced"),
+        None => t!("settings.sync.waiting"),
+    };
     let this_computer = SettingGroup::new()
         .title(t!("settings.sync.this_computer"))
         .description(t!("settings.sync.this_computer_description", name = name))
         .items(
             [status_item(snapshot.clone())]
                 .into_iter()
+                .chain([
+                    note_item("sync-records", t!("settings.sync.records"), records),
+                    note_item("sync-secrets", t!("settings.sync.secrets"), secrets),
+                ])
                 .chain(location_items(&location, busy))
                 .chain([command_item(
                     t!("settings.sync.turn_off"),
@@ -270,6 +290,38 @@ fn status_item(snapshot: SyncSnapshot) -> SettingItem {
             .child(div().flex_shrink_0().child(button))
     })
     .keywords(keywords(t!("settings.sync.keywords")))
+}
+
+/// A row that only says how one half of the round came out.
+fn note_item(id: &'static str, title: SharedString, text: SharedString) -> SettingItem {
+    SettingItem::render(move |options, _, cx| {
+        let stacked = options.layout() == Axis::Vertical;
+        let row = if stacked {
+            v_flex()
+        } else {
+            h_flex().justify_between().items_center()
+        };
+        row.w_full().gap_3().child(
+            v_flex()
+                .map(|column| {
+                    if stacked {
+                        column.w_full()
+                    } else {
+                        column.flex_1().max_w_3_5()
+                    }
+                })
+                .child(Label::new(title.clone()).text_sm())
+                .child(
+                    div()
+                        .id(id)
+                        .test_support()
+                        .aria_label(text.clone())
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(text.clone()),
+                ),
+        )
+    })
 }
 
 fn phase_text(phase: &SyncPhase) -> SharedString {

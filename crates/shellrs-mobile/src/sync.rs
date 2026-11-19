@@ -546,7 +546,9 @@ impl Inner {
         };
         let ended = run_round(&host, &self.services, &location, opts, accept_removed).await;
         match ended {
-            RoundEnd::Synced { revision, devices } => {
+            RoundEnd::Synced {
+                revision, devices, ..
+            } => {
                 let mut memory = self.memory();
                 memory.synced_revision = Some(revision);
                 memory.devices = devices;

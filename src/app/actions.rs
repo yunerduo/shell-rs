@@ -305,6 +305,9 @@ gpui_kit::actions!(
         RemoveAccountAvatar,
         /// Open the dialog that edits the account's nickname.
         EditAccountNickname,
+        /// Open 选择同步内容: which groups of 软件配置 the settings
+        /// document carries.
+        OpenSyncContent,
         /// Open 修改密码, with the current password or an emailed code.
         ChangeAccountPassword,
         /// Open 修改邮箱, which needs a code sent to the new address.
@@ -323,6 +326,13 @@ pub struct SetCloudSync {
 #[derive(Action, Clone, PartialEq, Eq)]
 #[action(namespace = shellrs, no_json)]
 pub struct SetRememberSyncPassword {
+    pub enabled: bool,
+}
+
+/// Put 软件配置 in or out of the account's sync payload, from 设置 › 账号.
+#[derive(Action, Clone, PartialEq, Eq)]
+#[action(namespace = shellrs, no_json)]
+pub struct SetCloudConfig {
     pub enabled: bool,
 }
 

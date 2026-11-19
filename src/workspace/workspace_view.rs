@@ -24,8 +24,9 @@ use super::editors::describe_files;
 use super::front::follow_focus;
 use crate::account::{
     AccountEvent, AccountStore, HttpAccountService, LoginMode, ProfileChange, SyncKind,
-    account_error, cloud_sync, open_change_email_dialog, open_change_password_dialog,
-    open_login_dialog, open_nickname_dialog, open_sync_password_dialog, upload_error,
+    UploadOutcome, account_error, cloud_sync, open_change_email_dialog,
+    open_change_password_dialog, open_login_dialog, open_nickname_dialog, open_sync_content_dialog,
+    open_sync_password_dialog, upload_error,
 };
 use crate::analytics::{Analytics, AnalyticsServices, Counter};
 use crate::app::ExplorerDispatch as _;
@@ -40,13 +41,13 @@ use crate::app::{
     FindPreviousInTerminal, FocusSearch, InstallAgentSkill, InstallCliCommand, MaximizeWindow,
     MoveHostNode, NewChildGroup, NewGroup, NewHost, NewHostInGroup, NewLocalTerminal,
     NewTemporaryConnection, OpenAccountSettings, OpenExplorer, OpenExplorerHosts, OpenSettings,
-    PasteTerminal, QuickConnect, ReconnectTerminal, RefreshCliIntegration, RegisterAccount,
-    RemoveAccountAvatar, RemoveAgentSkill, RemoveCliCommand, RenameExplorer, RenameGroup,
-    RenameTerminal, RestartLocalTerminal, RestoreWindow, SelectAllTerminal, SendBreak,
-    SetCloudSync, SetFileSizeFormat, SetRememberSyncPassword, ShowOrHideApp, SignInAccount,
-    SignOutAccount, ToggleHiddenFiles, ToggleHostDetails, ToggleHostPanel, ToggleTheme, ToolKind,
-    UploadCloudSyncNow, ZoomIn, ZoomOut, ZoomReset, ZoomTerminalIn, ZoomTerminalOut,
-    ZoomTerminalReset,
+    OpenSyncContent, PasteTerminal, QuickConnect, ReconnectTerminal, RefreshCliIntegration,
+    RegisterAccount, RemoveAccountAvatar, RemoveAgentSkill, RemoveCliCommand, RenameExplorer,
+    RenameGroup, RenameTerminal, RestartLocalTerminal, RestoreWindow, SelectAllTerminal, SendBreak,
+    SetCloudConfig, SetCloudSync, SetFileSizeFormat, SetRememberSyncPassword, ShowOrHideApp,
+    SignInAccount, SignOutAccount, ToggleHiddenFiles, ToggleHostDetails, ToggleHostPanel,
+    ToggleTheme, ToolKind, UploadCloudSyncNow, ZoomIn, ZoomOut, ZoomReset, ZoomTerminalIn,
+    ZoomTerminalOut, ZoomTerminalReset,
 };
 use crate::assistant::panel::AssistantPanel;
 use crate::cli::{CliIntegration, CliServer, IntegrationPaths, SshCliBackend};
@@ -472,15 +473,7 @@ impl Workspace {
         });
         let credential_panel =
             cx.new(|cx| CredentialPanel::new(store.clone(), focus_handle.clone(), window, cx));
-        let sidebar = cx.new(|cx| {
-            Sidebar::new(
-                host_panel.clone(),
-                forward_panel,
-                credential_panel,
-                account.clone(),
-                cx,
-            )
-        });
+        let sidebar = cx.new(|_| Sidebar::new(host_panel.clone(), forward_panel, credential_panel));
         let tools = cx.new(|cx| {
             ToolSidebar::new(
                 store.clone(),
@@ -1736,6 +1729,26 @@ impl Workspace {
             .update(cx, |account, cx| account.set_cloud_sync(enabled, cx));
     }
 
+    fn on_set_cloud_config(
+        &mut self,
+        action: &SetCloudConfig,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let enabled = action.enabled;
+        self.account
+            .update(cx, |account, cx| account.set_cloud_config(enabled, cx));
+    }
+
+    fn on_open_sync_content(
+        &mut self,
+        _: &OpenSyncContent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        open_sync_content_dialog(self.account.clone(), window, cx);
+    }
+
     fn on_set_remember_sync_password(
         &mut self,
         action: &SetRememberSyncPassword,
@@ -1754,14 +1767,22 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let settings = match cloud_sync::settings_document(&self.settings.read(cx).settings()) {
-            Ok(document) => document,
-            Err(error) => {
-                window.push_notification(Notification::error(error), cx);
-                return;
-            }
-        };
+        let include_config = self.account.read(cx).snapshot().cloud_config;
         let hosts = cloud_sync::hosts_document(self.store.read(cx));
+        if !include_config {
+            self.account
+                .update(cx, |account, cx| account.upload(SyncKind::Hosts, hosts, cx));
+            return;
+        }
+        let sections = self.account.read(cx).cloud_sections();
+        let settings =
+            match cloud_sync::settings_document(&self.settings.read(cx).settings(), &sections) {
+                Ok(document) => document,
+                Err(error) => {
+                    window.push_notification(Notification::error(error), cx);
+                    return;
+                }
+            };
         self.account
             .update(cx, |account, cx| account.upload_both(settings, hosts, cx));
     }
@@ -1856,19 +1877,47 @@ impl Workspace {
             AccountEvent::NeedsSyncPassword => {
                 open_sync_password_dialog(self.account.clone(), window, cx);
             }
-            AccountEvent::CloudUploaded { kind, version } => {
-                let what = match kind {
-                    SyncKind::Settings => t!("account.kind.settings"),
-                    SyncKind::Hosts => t!("account.kind.hosts"),
+            AccountEvent::CloudUploadFinished(outcomes) => {
+                if outcomes.is_empty() {
+                    return;
+                }
+                let lines: Vec<String> = outcomes
+                    .iter()
+                    .map(|outcome| {
+                        let what = match outcome.kind() {
+                            SyncKind::Settings => t!("account.kind.settings"),
+                            SyncKind::Hosts => t!("account.kind.hosts"),
+                        };
+                        let state = match outcome {
+                            UploadOutcome::Uploaded(_) => t!("account.notify.upload.ok"),
+                            UploadOutcome::Failed { error, .. } => {
+                                t!("account.notify.upload.failed", error = upload_error(error))
+                            }
+                        };
+                        t!("account.notify.upload.item", kind = what, state = state).to_string()
+                    })
+                    .collect();
+                let uploaded = outcomes
+                    .iter()
+                    .filter(|outcome| matches!(outcome, UploadOutcome::Uploaded(_)))
+                    .count();
+                let body = match lines.as_slice() {
+                    [first, second] => t!(
+                        "account.notify.upload.join",
+                        first = first.clone(),
+                        second = second.clone()
+                    )
+                    .to_string(),
+                    lines => lines.concat(),
                 };
-                window.push_notification(
-                    Notification::success(t!(
-                        "account.notify.uploaded",
-                        kind = what,
-                        version = *version
-                    )),
-                    cx,
-                );
+                let notification = if uploaded == outcomes.len() {
+                    Notification::success(body)
+                } else if uploaded == 0 {
+                    Notification::error(body)
+                } else {
+                    Notification::warning(body)
+                };
+                window.push_notification(notification.title(t!("account.notify.uploaded")), cx);
             }
             AccountEvent::CloudFailed(error) => {
                 window.push_notification(Notification::error(upload_error(error)), cx);
@@ -1878,9 +1927,9 @@ impl Workspace {
             }
             AccountEvent::SettingsDownloaded(bytes) => {
                 match cloud_sync::read_settings_document(bytes) {
-                    Ok(settings) => {
+                    Ok(document) => {
                         self.settings.update(cx, |store, cx| {
-                            store.update(|current| *current = settings, cx)
+                            store.update(|current| document.apply_to(current), cx)
                         });
                         window.push_notification(
                             Notification::success(t!("account.notify.settings_downloaded")),
@@ -1949,17 +1998,12 @@ impl Workspace {
             SyncKind::Settings => t!("account.kind.settings"),
             SyncKind::Hosts => t!("account.kind.hosts"),
         };
-        let latest = conflict.latest.version;
         let account = self.account.clone();
         window.open_dialog(cx, move |dialog, _, _| {
             dialog
                 .title(t!("account.conflict.title"))
                 .overlay_closable(true)
-                .child(t!(
-                    "account.conflict.description",
-                    kind = kind,
-                    version = latest
-                ))
+                .child(t!("account.conflict.description", kind = kind))
                 .footer(
                     DialogFooter::new()
                         .child(
@@ -3680,6 +3724,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_register_account))
             .on_action(cx.listener(Self::on_sign_out_account))
             .on_action(cx.listener(Self::on_set_cloud_sync))
+            .on_action(cx.listener(Self::on_set_cloud_config))
+            .on_action(cx.listener(Self::on_open_sync_content))
             .on_action(cx.listener(Self::on_set_remember_sync_password))
             .on_action(cx.listener(Self::on_upload_cloud_sync_now))
             .on_action(cx.listener(Self::on_change_account_avatar))

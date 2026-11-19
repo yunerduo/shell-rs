@@ -731,6 +731,24 @@ settings.sync.syncing:
 settings.sync.synced:
   zh-CN: 上次同步：%{time}
   en: "Last synced %{time}"
+settings.sync.records:
+  zh-CN: 主机与数据
+  en: Hosts and data
+settings.sync.records_synced:
+  zh-CN: 已同步
+  en: Synced
+settings.sync.records_failed:
+  zh-CN: 同步失败
+  en: Sync failed
+settings.sync.secrets:
+  zh-CN: 密码与私钥
+  en: Passwords and keys
+settings.sync.secrets_synced:
+  zh-CN: 已同步
+  en: Synced
+settings.sync.secrets_failed:
+  zh-CN: "%{count} 项未写入，下次同步会重试。"
+  en: "%{count} could not be written; the next sync tries again."
 settings.sync.failed:
   zh-CN: 未能同步：%{reason}
   en: "Couldn’t sync. %{reason}"

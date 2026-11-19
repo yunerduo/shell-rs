@@ -11,6 +11,7 @@ mod shortcuts_editor;
 mod sidebar_tools;
 mod store;
 mod sync_page;
+mod sync_sections;
 mod terminal_themes;
 
 pub use apply::apply;
@@ -24,3 +25,4 @@ pub use model::{
 };
 pub use settings_panel::{SettingsPanel, SettingsPanelEvent, category_index};
 pub use store::{SettingsProblem, SettingsStore, SettingsStoreEvent};
+pub use sync_sections::ConfigSection;

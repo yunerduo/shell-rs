@@ -4,11 +4,13 @@
 //! network and no login: the profile is a small JSON file beside the
 //! database, and the login token lives in the system keychain only.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
 use crate::app::data_dir;
+use crate::settings::ConfigSection;
 
 /// The account's public state, as `account.json` keeps it. It never holds
 /// the login token or the sync password.
@@ -34,6 +36,15 @@ pub struct AccountProfile {
     pub quota_bytes: u64,
     pub used_bytes: u64,
     pub cloud_sync: bool,
+    /// Whether 软件配置 goes into the cloud settings document. Hosts and
+    /// credentials always sync; turning this off only leaves the settings
+    /// document out, and `cloud_sections` keeps the choice for when it comes
+    /// back on.
+    pub cloud_config: bool,
+    /// Which groups of 应用设置 the cloud settings document carries. `None`
+    /// until the user changes the choice, and then what a fresh account
+    /// syncs; an empty list is the user unchecking every group.
+    pub cloud_sections: Option<Vec<ConfigSection>>,
     /// Whether the cloud sync password is kept in the keychain. Off by
     /// default: it stays in memory for the session only.
     pub remember_sync_password: bool,
@@ -62,6 +73,8 @@ impl Default for AccountProfile {
             quota_bytes: 0,
             used_bytes: 0,
             cloud_sync: false,
+            cloud_config: true,
+            cloud_sections: None,
             remember_sync_password: false,
             settings_version: None,
             hosts_version: None,
@@ -152,6 +165,19 @@ impl AccountProfile {
                 .get("cloud_sync")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            cloud_config: object
+                .get("cloud_config")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+            cloud_sections: object
+                .get("cloud_sections")
+                .and_then(Value::as_array)
+                .map(|keys| {
+                    keys.iter()
+                        .filter_map(Value::as_str)
+                        .filter_map(ConfigSection::from_key)
+                        .collect()
+                }),
             remember_sync_password: object
                 .get("remember_sync_password")
                 .and_then(Value::as_bool)
@@ -183,6 +209,18 @@ impl AccountProfile {
         object.insert("quota_bytes".into(), self.quota_bytes.into());
         object.insert("used_bytes".into(), self.used_bytes.into());
         object.insert("cloud_sync".into(), self.cloud_sync.into());
+        object.insert("cloud_config".into(), self.cloud_config.into());
+        if let Some(sections) = &self.cloud_sections {
+            object.insert(
+                "cloud_sections".into(),
+                Value::Array(
+                    sections
+                        .iter()
+                        .map(|section| Value::String(section.key().to_owned()))
+                        .collect(),
+                ),
+            );
+        }
         object.insert(
             "remember_sync_password".into(),
             self.remember_sync_password.into(),
@@ -252,6 +290,10 @@ pub struct AccountSnapshot {
     pub initial: String,
     pub email_avatar: bool,
     pub cloud_sync: bool,
+    /// Whether 软件配置 goes into the cloud settings document.
+    pub cloud_config: bool,
+    /// The groups of 应用设置 the cloud settings document carries.
+    pub cloud_sections: BTreeSet<ConfigSection>,
     pub remember_sync_password: bool,
     pub quota_bytes: u64,
     pub used_bytes: u64,
@@ -446,6 +488,8 @@ mod tests {
             quota_bytes: 1024,
             used_bytes: 12,
             cloud_sync: true,
+            cloud_config: false,
+            cloud_sections: None,
             remember_sync_password: true,
             settings_version: Some(3),
             hosts_version: None,
@@ -463,6 +507,8 @@ mod tests {
         assert_eq!(profile.username, "alice");
         assert_eq!(profile.quota_bytes, 0);
         assert!(profile.cloud_sync);
+        // Software settings sync unless a profile turns them off.
+        assert!(profile.cloud_config);
         assert_eq!(profile.settings_version, Some(7));
         // The mailbox picture is on unless a profile says otherwise.
         assert!(profile.email_avatar);

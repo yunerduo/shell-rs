@@ -6,6 +6,8 @@
 //! Nothing here runs when the account is signed out or the machine is
 //! offline: cloud sync is an optional feature, never a prerequisite.
 
+use std::collections::BTreeSet;
+
 use aes_gcm::aead::{Aead, Payload};
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use argon2::{Algorithm, Argon2, Params, Version as ArgonVersion};
@@ -16,7 +18,7 @@ use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;
 
 use crate::host::HostStore;
-use crate::settings::AppSettings;
+use crate::settings::{AppSettings, ConfigSection};
 
 /// Bound into every sealed document, so a ciphertext of another format or
 /// version cannot be passed off as one of these.
@@ -122,15 +124,67 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// The settings document: the `settings.json` shape, as it is on this
-/// computer.
-pub fn settings_document(settings: &AppSettings) -> Result<Vec<u8>, String> {
-    serde_json::to_vec(settings).map_err(|error| error.to_string())
+/// The marker naming the groups a settings document carries.
+pub const SECTIONS_KEY: &str = "sync_sections";
+
+/// The settings document: only the groups the user chose, taken from the
+/// `settings.json` shape on this computer.
+pub fn settings_document(
+    settings: &AppSettings,
+    sections: &BTreeSet<ConfigSection>,
+) -> Result<Vec<u8>, String> {
+    let Value::Object(mut object) =
+        serde_json::to_value(settings).map_err(|error| error.to_string())?
+    else {
+        return Err("settings are not an object".to_owned());
+    };
+    let fields: BTreeSet<&str> = sections
+        .iter()
+        .flat_map(|section| section.fields().iter().copied())
+        .collect();
+    object.retain(|key, _| fields.contains(key.as_str()));
+    object.insert(
+        SECTIONS_KEY.to_owned(),
+        Value::Array(
+            sections
+                .iter()
+                .map(|section| Value::String(section.key().to_owned()))
+                .collect(),
+        ),
+    );
+    serde_json::to_vec(&Value::Object(object)).map_err(|error| error.to_string())
 }
 
 /// A settings document read back from the cloud.
-pub fn read_settings_document(bytes: &[u8]) -> Result<AppSettings, String> {
-    serde_json::from_slice(bytes).map_err(|error| error.to_string())
+pub struct SettingsDocument {
+    pub settings: AppSettings,
+    /// The groups it carries. One without the marker predates the choice
+    /// and carries what a fresh account syncs.
+    pub sections: BTreeSet<ConfigSection>,
+}
+
+pub fn read_settings_document(bytes: &[u8]) -> Result<SettingsDocument, String> {
+    let value: Value = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+    let sections = match value.get(SECTIONS_KEY) {
+        Some(Value::Array(keys)) => keys
+            .iter()
+            .filter_map(Value::as_str)
+            .filter_map(ConfigSection::from_key)
+            .collect(),
+        _ => ConfigSection::default_selection(),
+    };
+    let settings = serde_json::from_value(value).map_err(|error| error.to_string())?;
+    Ok(SettingsDocument { settings, sections })
+}
+
+impl SettingsDocument {
+    /// Put the document's groups onto `current`, leaving every group it
+    /// does not carry as this computer had it.
+    pub fn apply_to(&self, current: &mut AppSettings) {
+        for section in &self.sections {
+            section.apply(&self.settings, current);
+        }
+    }
 }
 
 /// The hosts document: the hosts and groups as data, without credentials,
@@ -185,7 +239,7 @@ pub fn hosts_document(store: &HostStore) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{open, seal};
+    use super::*;
 
     fn salt() -> String {
         base64::Engine::encode(
@@ -222,5 +276,58 @@ mod tests {
     #[test]
     fn a_bad_salt_is_refused() {
         assert!(super::derive_key("x", "not base64!").is_err());
+    }
+
+    #[test]
+    fn a_settings_document_carries_only_the_chosen_groups() {
+        let mut settings = AppSettings::default();
+        settings.interface.font_size = 18.0;
+        settings.terminal_font.size = 20.0;
+        let sections = BTreeSet::from([ConfigSection::Appearance]);
+        let bytes = super::settings_document(&settings, &sections).unwrap();
+        let value: Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(value.get("interface").is_some());
+        assert!(value.get("terminal_font").is_none());
+        assert!(value.get("sync").is_none());
+        assert_eq!(value["sync_sections"], serde_json::json!(["appearance"]));
+    }
+
+    #[test]
+    fn reading_a_document_keeps_the_groups_it_leaves_out() {
+        let mut local = AppSettings::default();
+        local.interface.font_size = 13.0;
+        local.terminal_font.size = 12.0;
+        let mut remote = AppSettings::default();
+        remote.interface.font_size = 18.0;
+        remote.terminal_font.size = 20.0;
+        let sections = BTreeSet::from([ConfigSection::Appearance]);
+        let bytes = super::settings_document(&remote, &sections).unwrap();
+        super::read_settings_document(&bytes)
+            .unwrap()
+            .apply_to(&mut local);
+        assert_eq!(local.interface.font_size, 18.0);
+        assert_eq!(local.terminal_font.size, 12.0);
+    }
+
+    #[test]
+    fn an_unmarked_document_keeps_the_computers_own_sync_location() {
+        let mut local = AppSettings::default();
+        local.sync.location = Some(crate::settings::SyncLocation::Folder {
+            path: std::path::PathBuf::from("/local"),
+        });
+        let mut remote = AppSettings::default();
+        remote.sync.location = Some(crate::settings::SyncLocation::Folder {
+            path: std::path::PathBuf::from("/remote"),
+        });
+        let bytes = serde_json::to_vec(&remote).unwrap();
+        super::read_settings_document(&bytes)
+            .unwrap()
+            .apply_to(&mut local);
+        assert_eq!(
+            local.sync.location,
+            Some(crate::settings::SyncLocation::Folder {
+                path: std::path::PathBuf::from("/local"),
+            })
+        );
     }
 }

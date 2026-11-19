@@ -345,8 +345,20 @@ account.kind.hosts:
   zh-CN: 主机
   en: hosts
 account.notify.uploaded:
-  zh-CN: "%{kind}已同步到云端（版本 %{version}）。"
-  en: "%{kind} synced to the cloud (version %{version})."
+  zh-CN: 已同步到云端
+  en: Synced to the cloud
+account.notify.upload.item:
+  zh-CN: "%{kind}：%{state}"
+  en: "%{kind}: %{state}"
+account.notify.upload.ok:
+  zh-CN: 已同步
+  en: synced
+account.notify.upload.failed:
+  zh-CN: 失败（%{error}）
+  en: "failed (%{error})"
+account.notify.upload.join:
+  zh-CN: "%{first}；%{second}"
+  en: "%{first}; %{second}"
 account.notify.settings_downloaded:
   zh-CN: 已应用云端的设置。
   en: The cloud settings are now in use.
@@ -376,8 +388,8 @@ account.conflict.title:
   zh-CN: 云端有更新的版本
   en: A newer version is in the cloud
 account.conflict.description:
-  zh-CN: 云端已有更新的%{kind}（版本 %{version}）。要用哪一份？
-  en: The cloud already has a newer %{kind} (version %{version}). Which one should be kept?
+  zh-CN: 云端已有更新的%{kind}。要用哪一份？
+  en: The cloud already has a newer %{kind}. Which one should be kept?
 account.conflict.later:
   zh-CN: 稍后处理
   en: Later
@@ -504,6 +516,108 @@ settings.account.sync_now:
 settings.account.sync_now_description:
   zh-CN: 用本机的设置与主机更新云端。
   en: Update the cloud with this computer's settings and hosts.
+settings.account.group.sync_content:
+  zh-CN: 同步内容
+  en: What syncs
+settings.account.sync_content_summary:
+  zh-CN: 包含界面、终端、SFTP、通知、窗口与应用锁、隐私、AI 助手等软件设置。主机与凭据始终同步，不受这个开关影响。
+  en: Covers software settings such as the interface, terminal, SFTP, notifications, window and app lock, privacy and the AI assistant. Hosts and credentials always sync, whatever this switch says.
+settings.account.sync_config:
+  zh-CN: 同步软件配置
+  en: Sync software settings
+settings.account.sync_config_on:
+  zh-CN: 已选择 %{count} 组
+  en: "%{count} selected"
+settings.account.sync_config_off:
+  zh-CN: 已关闭：只同步主机与凭据，勾选保留
+  en: "Off: only hosts and credentials sync; your choices are kept"
+settings.account.choose_sync_content:
+  zh-CN: 选择同步内容
+  en: Choose what syncs
+settings.account.sync_content_title:
+  zh-CN: 选择同步内容
+  en: Choose what syncs
+settings.account.sync_content_description:
+  zh-CN: 只上传勾选的项。同步连接信息、背景图和这份勾选本身不会上传。
+  en: Only the groups you check are uploaded. The sync connection, background pictures and this choice itself never leave this computer.
+settings.account.sync_section.appearance:
+  zh-CN: 外观与主题
+  en: Appearance and theme
+settings.account.sync_section.appearance_description:
+  zh-CN: 语言、明暗模式、界面字号、终端主题。
+  en: Language, light or dark, interface size, terminal theme.
+settings.account.sync_section.terminal_font:
+  zh-CN: 终端字体
+  en: Terminal font
+settings.account.sync_section.terminal_font_description:
+  zh-CN: 终端字体、字号与行高。
+  en: Terminal font, size and line height.
+settings.account.sync_section.terminal_interaction:
+  zh-CN: 终端交互与右键菜单
+  en: Terminal input and context menu
+settings.account.sync_section.terminal_interaction_description:
+  zh-CN: 右键行为、光标样式、选中复制。
+  en: Right-click behavior, cursor style, copy on select.
+settings.account.sync_section.keyword_highlight:
+  zh-CN: 关键字高亮
+  en: Keyword highlighting
+settings.account.sync_section.keyword_highlight_description:
+  zh-CN: 高亮开关与规则。
+  en: The switch and the rules.
+settings.account.sync_section.shortcuts:
+  zh-CN: 快捷键
+  en: Keyboard shortcuts
+settings.account.sync_section.shortcuts_description:
+  zh-CN: 自定义的快捷键。
+  en: The shortcuts you changed.
+settings.account.sync_section.sftp:
+  zh-CN: SFTP
+  en: SFTP
+settings.account.sync_section.sftp_description:
+  zh-CN: 传输数量、图标风格、文件侧栏、隐藏文件、大小格式。
+  en: Parallel transfers, icon style, file sidebar, hidden files, size format.
+settings.account.sync_section.notifications:
+  zh-CN: 通知
+  en: Notifications
+settings.account.sync_section.notifications_description:
+  zh-CN: 程序通知与响铃通知。
+  en: Program notifications and bell notifications.
+settings.account.sync_section.local_terminal:
+  zh-CN: 本地终端与命令行
+  en: Local terminal and CLI
+settings.account.sync_section.local_terminal_description:
+  zh-CN: 本机 shell 与外部 CLI。
+  en: The local shell and the external CLI.
+settings.account.sync_section.sidebar:
+  zh-CN: 侧栏与布局
+  en: Sidebars and layout
+settings.account.sync_section.sidebar_description:
+  zh-CN: 侧栏功能、收起状态、撰写窗格、主机详情。
+  en: Sidebar tools, collapsed state, compose pane, host details.
+settings.account.sync_section.window:
+  zh-CN: 窗口与侧栏宽度
+  en: Window and sidebar widths
+settings.account.sync_section.window_description:
+  zh-CN: 窗口大小与位置、关闭到托盘、侧栏宽度。
+  en: Window size and position, close to tray, sidebar widths.
+settings.account.sync_section.maintenance:
+  zh-CN: 应用锁与更新
+  en: App lock and updates
+settings.account.sync_section.maintenance_description:
+  zh-CN: 空闲锁定、CLI 放行、自动更新与更新渠道。
+  en: Idle locking, CLI access, automatic updates and update channel.
+settings.account.sync_section.privacy:
+  zh-CN: 隐私
+  en: Privacy
+settings.account.sync_section.privacy_description:
+  zh-CN: 匿名使用统计。
+  en: Anonymous usage statistics.
+settings.account.sync_section.assistant:
+  zh-CN: AI 助手
+  en: AI assistant
+settings.account.sync_section.assistant_description:
+  zh-CN: 模型服务选择；API 密钥仍在系统钥匙串。
+  en: The model service; the API key stays in the system keychain.
 settings.account.upload_now:
   zh-CN: 立即上传
   en: Upload now

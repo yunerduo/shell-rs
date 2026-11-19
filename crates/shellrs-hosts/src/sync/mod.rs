@@ -14,7 +14,9 @@ pub mod worker;
 
 pub use error::JobError;
 pub use location::SyncLocation;
-pub use round::{Attention, Blocking, OpenStore, RoundEnd, RoundHost, SyncServices, run_round};
+pub use round::{
+    Attention, Blocking, OpenStore, RoundEnd, RoundHost, SecretReport, SyncServices, run_round,
+};
 pub use setup::{
     LoginError, MIN_PASSWORD, PasswordError, S3Form, WebDavForm, check_new_password,
     check_password, random_password,

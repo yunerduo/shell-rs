@@ -16,7 +16,7 @@ use shellrs_sync::{
 };
 
 use super::{JobError, SyncLocation, worker};
-use crate::{ApplyError, HostData};
+use crate::{ApplyError, HostData, SecretsWritten};
 
 /// Tries a round makes when its changes meet newer ones.
 const ATTEMPTS: usize = 3;
@@ -99,6 +99,25 @@ pub enum Attention {
     LoginRefused,
 }
 
+/// What a round's secrets came to. The passwords, passphrases and one-time
+/// keys sync in their own half of the round, apart from the records, so
+/// they are reported on their own: one that could not be kept is brought
+/// again by the next round.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SecretReport {
+    pub written: u32,
+    pub failed: u32,
+}
+
+impl SecretReport {
+    fn of(written: &SecretsWritten) -> Self {
+        Self {
+            written: written.done.len() as u32,
+            failed: written.failures.len() as u32,
+        }
+    }
+}
+
 /// How a round ended.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RoundEnd {
@@ -106,6 +125,8 @@ pub enum RoundEnd {
     Synced {
         revision: u64,
         devices: Vec<RemoteDevice>,
+        /// The other half of the round: the secrets written where they go.
+        secrets: SecretReport,
     },
     Attention(Attention),
     Failed(JobError),
@@ -228,6 +249,7 @@ pub async fn run_round(
         return RoundEnd::Synced {
             revision: export.revision,
             devices: report.devices,
+            secrets: SecretReport::of(&written),
         };
     }
     RoundEnd::Failed(JobError::Busy)

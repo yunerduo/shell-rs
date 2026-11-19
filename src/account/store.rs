@@ -7,7 +7,7 @@
 //! working. The store never blocks the UI thread on the keychain or the
 //! network: both run on the background executor.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use gpui_kit::{AppContext as _, Context, EventEmitter};
@@ -18,6 +18,8 @@ use super::cloud_sync;
 use super::gravatar;
 use super::model::{AccountNotice, AccountPhase, AccountProfile, AccountSnapshot};
 use super::remote_avatar;
+use crate::settings::ConfigSection;
+
 use super::service::{
     AccountError, DocumentReply, MAX_AVATAR_BYTES, MeReply, ProfileReply, SharedAccountService,
     SyncKind, UploadError,
@@ -49,10 +51,9 @@ pub enum AccountEvent {
     /// An upload is waiting for the cloud sync password, which is only in
     /// memory after a restart.
     NeedsSyncPassword,
-    CloudUploaded {
-        kind: SyncKind,
-        version: i64,
-    },
+    /// One upload operation finished: every document it queued, and how
+    /// each came out, in the order they were sent.
+    CloudUploadFinished(Vec<UploadOutcome>),
     CloudFailed(UploadError),
     CloudConflict(CloudConflict),
     /// The cloud settings document, opened and ready to apply.
@@ -71,6 +72,25 @@ pub enum AccountEvent {
         change: ProfileChange,
         error: AccountError,
     },
+}
+
+/// How one document of an upload came out.
+#[derive(Clone, Debug)]
+pub enum UploadOutcome {
+    Uploaded(SyncKind),
+    /// The document did not reach the cloud; the other one still went.
+    Failed {
+        kind: SyncKind,
+        error: UploadError,
+    },
+}
+
+impl UploadOutcome {
+    pub fn kind(&self) -> SyncKind {
+        match self {
+            Self::Uploaded(kind) | Self::Failed { kind, .. } => *kind,
+        }
+    }
 }
 
 /// Which profile change failed, so the notice can name it.
@@ -107,6 +127,9 @@ pub struct AccountStore {
     secrets: SharedSecretStore,
     pending: VecDeque<PendingUpload>,
     uploading: bool,
+    /// What the current upload operation's documents came to, until the
+    /// queue is empty and the result is said in one notice.
+    batch: Vec<UploadOutcome>,
     conflict: Option<CloudConflict>,
     /// Whether a cloud download is in flight, so it is not started twice.
     downloading: bool,
@@ -157,6 +180,7 @@ impl AccountStore {
             secrets,
             pending: VecDeque::new(),
             uploading: false,
+            batch: Vec::new(),
             conflict: None,
             downloading: false,
             email_avatar,
@@ -273,6 +297,12 @@ impl AccountStore {
                 initial: profile.initial(),
                 email_avatar: profile.email_avatar,
                 cloud_sync: profile.cloud_sync,
+                cloud_config: profile.cloud_config,
+                cloud_sections: profile
+                    .cloud_sections
+                    .as_ref()
+                    .map(|sections| sections.iter().copied().collect())
+                    .unwrap_or_else(ConfigSection::default_selection),
                 remember_sync_password: profile.remember_sync_password,
                 quota_bytes: profile.quota_bytes,
                 used_bytes: profile.used_bytes,
@@ -416,6 +446,7 @@ impl AccountStore {
         self.notice = None;
         self.sync_password = None;
         self.pending.clear();
+        self.batch.clear();
         self.conflict = None;
         self.uploading = false;
         self.email_avatar = None;
@@ -443,6 +474,7 @@ impl AccountStore {
         self.login_error = None;
         self.sync_password = None;
         self.pending.clear();
+        self.batch.clear();
         self.uploading = false;
         self.conflict = None;
         self.email_avatar = None;
@@ -464,6 +496,7 @@ impl AccountStore {
         self.notice = None;
         self.sync_password = None;
         self.pending.clear();
+        self.batch.clear();
         self.uploading = false;
         self.downloading = false;
         self.conflict = None;
@@ -517,6 +550,7 @@ impl AccountStore {
         self.phase = AccountPhase::SignedOut;
         self.notice = Some(notice);
         self.pending.clear();
+        self.batch.clear();
         self.uploading = false;
         self.conflict = None;
         self.email_avatar = None;
@@ -1088,6 +1122,50 @@ impl AccountStore {
         cx.notify();
     }
 
+    /// Whether 软件配置 goes into the sync payload. Hosts and credentials
+    /// always sync, so this only leaves the settings document out; the
+    /// groups chosen in `set_cloud_section` are kept for when it is back on.
+    pub fn set_cloud_config(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        let Some(profile) = self.profile.as_mut() else {
+            return;
+        };
+        profile.cloud_config = enabled;
+        self.persist(cx);
+        cx.notify();
+    }
+
+    /// The groups of 应用设置 the settings document carries: the user's
+    /// choice, or what a fresh account syncs.
+    pub fn cloud_sections(&self) -> BTreeSet<ConfigSection> {
+        self.profile
+            .as_ref()
+            .and_then(|profile| profile.cloud_sections.as_ref())
+            .map(|sections| sections.iter().copied().collect())
+            .unwrap_or_else(ConfigSection::default_selection)
+    }
+
+    /// Take one group in or out of the settings document. The choice is
+    /// local to this account and this computer; it never goes to the cloud.
+    pub fn set_cloud_section(
+        &mut self,
+        section: ConfigSection,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let mut sections = self.cloud_sections();
+        if enabled {
+            sections.insert(section);
+        } else {
+            sections.remove(&section);
+        }
+        let Some(profile) = self.profile.as_mut() else {
+            return;
+        };
+        profile.cloud_sections = Some(sections.into_iter().collect());
+        self.persist(cx);
+        cx.notify();
+    }
+
     /// Turn the mailbox avatar service on or off. Off clears the picture in
     /// hand and makes sure nothing is requested; the choice is local only.
     pub fn set_email_avatar(&mut self, enabled: bool, cx: &mut Context<Self>) {
@@ -1106,6 +1184,7 @@ impl AccountStore {
         if !self.is_signed_in() {
             return;
         }
+        self.begin_operation();
         self.pending.push_back(PendingUpload {
             kind,
             plaintext,
@@ -1119,6 +1198,7 @@ impl AccountStore {
         if !self.is_signed_in() {
             return;
         }
+        self.begin_operation();
         self.pending.push_back(PendingUpload {
             kind: SyncKind::Settings,
             plaintext: settings,
@@ -1130,6 +1210,14 @@ impl AccountStore {
             base: None,
         });
         self.start_next(cx);
+    }
+
+    /// Start a fresh operation unless documents of one are still queued or
+    /// being sent: their results belong to it.
+    fn begin_operation(&mut self) {
+        if self.pending.is_empty() && !self.uploading {
+            self.batch.clear();
+        }
     }
 
     fn start_next(&mut self, cx: &mut Context<Self>) {
@@ -1153,6 +1241,7 @@ impl AccountStore {
         };
         let salt = profile.sync_salt.clone();
         if salt.is_empty() {
+            self.batch.clear();
             cx.emit(AccountEvent::CloudFailed(UploadError::Other(
                 AccountError::Server(String::new()),
             )));
@@ -1208,21 +1297,15 @@ impl AccountStore {
                     } else {
                         reply.created_at.clone()
                     });
-                    // Both documents go out together. Once the hosts one
-                    // lands and nothing is queued, the cloud is sealed with
-                    // the password in hand again.
-                    if kind == SyncKind::Hosts && self.pending.is_empty() {
-                        profile.sync_stale = false;
-                    }
                 }
                 self.persist(cx);
-                cx.emit(AccountEvent::CloudUploaded {
-                    kind,
-                    version: reply.version,
-                });
-                self.start_next(cx);
+                self.record_outcome(UploadOutcome::Uploaded(kind));
+                self.finish_upload(cx);
             }
             Err(UploadError::Conflict { latest }) => {
+                // The conflict dialog is this operation's one notice; a
+                // summary beside it would say the same thing twice.
+                self.batch.clear();
                 self.conflict = Some(CloudConflict {
                     kind,
                     latest,
@@ -1233,10 +1316,55 @@ impl AccountStore {
                 ));
             }
             Err(error) => {
-                cx.emit(AccountEvent::CloudFailed(error));
+                self.record_outcome(UploadOutcome::Failed { kind, error });
+                self.finish_upload(cx);
             }
         }
         cx.notify();
+    }
+
+    /// Keep the newest result for a document: a conflict retried later
+    /// replaces what an earlier attempt said.
+    fn record_outcome(&mut self, outcome: UploadOutcome) {
+        let kind = outcome.kind();
+        self.batch.retain(|seen| seen.kind() != kind);
+        self.batch.push(outcome);
+    }
+
+    /// Send the next queued document, or, once none is left, say in one
+    /// notice how the operation's documents came out. A failed document
+    /// does not stop the other one: each is reported on its own.
+    fn finish_upload(&mut self, cx: &mut Context<Self>) {
+        if !self.pending.is_empty() {
+            self.start_next(cx);
+            return;
+        }
+        let outcomes = std::mem::take(&mut self.batch);
+        if outcomes.is_empty() {
+            return;
+        }
+        let all_uploaded = outcomes
+            .iter()
+            .all(|outcome| matches!(outcome, UploadOutcome::Uploaded(_)));
+        let hosts_uploaded = outcomes
+            .iter()
+            .any(|outcome| matches!(outcome, UploadOutcome::Uploaded(SyncKind::Hosts)));
+        let settings_uploaded = outcomes
+            .iter()
+            .any(|outcome| matches!(outcome, UploadOutcome::Uploaded(SyncKind::Settings)));
+        // Both documents sealed with the password in hand puts the cloud
+        // back in step with it. A sync that leaves the settings document
+        // out (软件配置 turned off) cannot clear the mark: that copy is
+        // still sealed with the old password.
+        if all_uploaded
+            && settings_uploaded
+            && hosts_uploaded
+            && let Some(profile) = self.profile.as_mut()
+        {
+            profile.sync_stale = false;
+            self.persist(cx);
+        }
+        cx.emit(AccountEvent::CloudUploadFinished(outcomes));
     }
 
     /// 以本机覆盖云端: send the kept document again, based on the version

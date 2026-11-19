@@ -19,8 +19,8 @@ use shellrs_sync::{
 use zeroize::Zeroizing;
 
 use super::{
-    Attention, Blocking, JobError, RoundEnd, RoundHost, SyncLocation, SyncServices, run_round,
-    worker,
+    Attention, Blocking, JobError, RoundEnd, RoundHost, SecretReport, SyncLocation, SyncServices,
+    run_round, worker,
 };
 use crate::host::{HostData, HostStore};
 use crate::secrets::{SecretStore, SharedSecretStore};
@@ -69,6 +69,9 @@ pub struct SyncSnapshot {
     pub available: bool,
     pub location: Option<SyncLocation>,
     pub phase: SyncPhase,
+    /// What the last round's passwords and keys came to, apart from the
+    /// records above; `None` before the first round this run.
+    pub secrets: Option<SecretReport>,
     pub attention: Option<Attention>,
     /// This computer, as the others list it.
     pub device: Option<DeviceInfo>,
@@ -95,6 +98,7 @@ pub struct SyncService {
     location: Option<SyncLocation>,
     phase: SyncPhase,
     attention: Option<Attention>,
+    secrets: Option<SecretReport>,
     devices: Vec<RemoteDevice>,
     round: Option<Task<()>>,
     /// A job other than a round runs.
@@ -135,6 +139,7 @@ impl SyncService {
             location: None,
             phase: SyncPhase::Off,
             attention: None,
+            secrets: None,
             devices: Vec::new(),
             round: None,
             job_running: false,
@@ -160,6 +165,7 @@ impl SyncService {
             available: self.available(cx),
             location: self.location.clone(),
             phase: self.phase.clone(),
+            secrets: self.secrets,
             attention: self.attention,
             device: self
                 .services
@@ -190,6 +196,7 @@ impl SyncService {
         self.location = location;
         self.devices.clear();
         self.attention = None;
+        self.secrets = None;
         self.synced_revision = None;
         self.phase = if self.location.is_some() {
             SyncPhase::Waiting
@@ -284,9 +291,14 @@ impl SyncService {
         self.round = None;
         self.last_round_at = Some(Instant::now());
         match ended {
-            RoundEnd::Synced { revision, devices } => {
+            RoundEnd::Synced {
+                revision,
+                devices,
+                secrets,
+            } => {
                 self.phase = SyncPhase::Synced { at_ms: now_ms() };
                 self.devices = devices;
+                self.secrets = Some(secrets);
                 self.synced_revision = Some(revision);
             }
             RoundEnd::Attention(attention) => {

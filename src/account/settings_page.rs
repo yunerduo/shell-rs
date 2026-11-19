@@ -6,10 +6,13 @@ use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _,
     avatar::Avatar,
     button::{Button, ButtonVariants as _},
+    dialog::{DialogClose, DialogFooter},
     form::{Field, Form},
     h_flex,
     input::{Input, InputContentType, InputState},
+    scroll::ScrollableElement as _,
     setting::{SettingField, SettingGroup, SettingItem},
+    switch::Switch,
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -20,10 +23,11 @@ use super::describe::notice_text;
 use super::store::AccountStore;
 use crate::app::{
     ChangeAccountAvatar, ChangeAccountEmail, ChangeAccountPassword, EditAccountNickname,
-    RegisterAccount, RemoveAccountAvatar, SignInAccount, UploadCloudSyncNow,
+    OpenSyncContent, RegisterAccount, RemoveAccountAvatar, SetCloudConfig, SignInAccount,
+    UploadCloudSyncNow,
 };
 use crate::i18n::t;
-use crate::settings::SettingsPanel;
+use crate::settings::{ConfigSection, SettingsPanel};
 use crate::shared::commit_footer;
 
 /// The 账号 category: one group signed out, three signed in.
@@ -33,7 +37,11 @@ pub fn account_groups(panel: &SettingsPanel, cx: &App) -> Vec<SettingGroup> {
     if !snapshot.signed_in {
         return signed_out_groups(&account, snapshot.notice);
     }
-    vec![profile_group(&account), cloud_group(&account)]
+    vec![
+        profile_group(&account),
+        cloud_group(&account),
+        sync_content_group(&account),
+    ]
 }
 
 fn signed_out_groups(
@@ -293,6 +301,156 @@ fn cloud_group(account: &Entity<AccountStore>) -> SettingGroup {
                 .description(t!("settings.account.sync_now_description"))
                 .layout(gpui_kit::Axis::Vertical),
         ])
+}
+
+/// 同步内容: one master switch for 软件配置, with the way into the list of
+/// groups it would carry beside it. Hosts and credentials are not behind
+/// that switch, so the description says so.
+fn sync_content_group(account: &Entity<AccountStore>) -> SettingGroup {
+    let reader = account.clone();
+    let row = SettingField::render(move |_, _, cx| {
+        let snapshot = reader.read(cx).snapshot();
+        let status = if snapshot.cloud_config {
+            t!(
+                "settings.account.sync_config_on",
+                count = snapshot.cloud_sections.len()
+            )
+        } else {
+            t!("settings.account.sync_config_off")
+        };
+        h_flex()
+            .min_w_0()
+            .gap_2()
+            .child(
+                Switch::new("account-sync-config")
+                    .checked(snapshot.cloud_config)
+                    .accessibility_label(t!("settings.account.sync_config"))
+                    .on_click(|next, window, cx| {
+                        window.dispatch_action(Box::new(SetCloudConfig { enabled: *next }), cx)
+                    }),
+            )
+            .child(
+                Button::new("account-sync-content")
+                    .outline()
+                    .small()
+                    .label(t!("settings.account.choose_sync_content"))
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(OpenSyncContent), cx)
+                    }),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .whitespace_normal()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(status),
+            )
+    });
+    SettingGroup::new()
+        .title(t!("settings.account.group.sync_content"))
+        .description(t!("settings.account.sync_content_summary"))
+        .items([SettingItem::new(t!("settings.account.sync_config"), row)])
+}
+
+/// 选择同步内容: the groups of 软件配置 the settings document carries. Every
+/// switch writes the choice straight away, so there is nothing to save and
+/// closing the dialog loses nothing.
+struct SyncContentForm {
+    account: Entity<AccountStore>,
+    _subscription: Subscription,
+}
+
+impl SyncContentForm {
+    fn new(account: Entity<AccountStore>, cx: &mut Context<Self>) -> Self {
+        let subscription = cx.observe(&account, |_, _, cx| cx.notify());
+        Self {
+            account,
+            _subscription: subscription,
+        }
+    }
+}
+
+impl Render for SyncContentForm {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let selected = self.account.read(cx).snapshot().cloud_sections;
+        let account = self.account.clone();
+        let rows = ConfigSection::ALL.into_iter().map(move |section| {
+            let writer = account.clone();
+            let checked = selected.contains(&section);
+            h_flex()
+                .id(format!("account-sync-section-row-{}", section.key()))
+                .test_support()
+                .justify_between()
+                .items_start()
+                .gap_4()
+                .child(
+                    v_flex()
+                        .min_w_0()
+                        .gap_1()
+                        .child(div().text_sm().child(section.label()))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .whitespace_normal()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(section.description()),
+                        ),
+                )
+                .child(
+                    Switch::new(format!("account-sync-section-{}", section.key()))
+                        .checked(checked)
+                        .accessibility_label(section.label())
+                        .on_click(move |next, _, cx| {
+                            writer.update(cx, |account, cx| {
+                                account.set_cloud_section(section, *next, cx)
+                            });
+                        }),
+                )
+        });
+        v_flex()
+            .gap_4()
+            .w_full()
+            .child(
+                div()
+                    .min_w_0()
+                    .whitespace_normal()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(t!("settings.account.sync_content_description")),
+            )
+            .child(
+                v_flex()
+                    .gap_3()
+                    .max_h(window.viewport_size().height * 0.6)
+                    .overflow_y_scrollbar()
+                    .children(rows),
+            )
+    }
+}
+
+/// Open 选择同步内容.
+pub fn open_sync_content_dialog(account: Entity<AccountStore>, window: &mut Window, cx: &mut App) {
+    if !account.read(cx).is_signed_in() {
+        return;
+    }
+    let form = cx.new(|cx| SyncContentForm::new(account, cx));
+    window.open_dialog(cx, {
+        let form = form.clone();
+        move |dialog, window, _| {
+            dialog
+                .title(t!("settings.account.sync_content_title"))
+                .w(rems(36.).to_pixels(window.rem_size()))
+                .max_h(window.viewport_size().height * 0.9)
+                .overlay_closable(true)
+                .child(form.clone())
+                .footer(DialogFooter::new().child(
+                    DialogClose::new().trigger(|button| button.primary().label(t!("common.close"))),
+                ))
+        }
+    });
 }
 
 /// 修改昵称: one field, kept local to the account. The server takes
