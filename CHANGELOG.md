@@ -4,6 +4,17 @@
 
 One section per version, titled `## [version]`, optionally followed by a date. Each section is written in English here and in Chinese in [CHANGELOG.zh.md](CHANGELOG.zh.md), in the same change. The release workflow (`.github/workflows/release.yml`) takes the section with the tag’s version, as it is, for the GitHub release. The website’s changelog shows this file in English and Japanese and CHANGELOG.zh.md in Chinese (Agree ShellAs’s update dialog opens it with What’s new). Written in Markdown, for users.
 
+## [0.1.23]
+
+### Added
+
+- Software settings can sync group by group: choose from 13 groups such as appearance and theme, terminal font, context menu and shortcuts; hosts and credentials always sync.
+
+### Improved
+
+- A cloud sync now raises a single notice that says how the settings, and separately the hosts and credentials, came out, naming any password or key that did not reach the keychain so the next sync retries it.
+- Settings and the account entry now sit only at the right end of the title bar; the sidebar no longer repeats them, and when signed out the title bar says “Sign in”.
+
 ## [0.1.22]
 
 ### Added
