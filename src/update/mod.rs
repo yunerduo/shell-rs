@@ -37,7 +37,7 @@ pub use manifest::{Manifest, Offer, Release};
 pub use status::{RestartImpact, Tone, UpdateBadge, UpdateStep, restart_note};
 pub use update_dialog::{ImpactCounter, open_update_dialog};
 pub use updater::{
-    ManualUpdate, Phase, Stage, UpdateServices, UpdateSnapshot, Updater, UpdaterEvent,
-    start_handed_over,
+    ManualUpdate, Phase, Stage, UpdateFailure, UpdateServices, UpdateSnapshot, Updater,
+    UpdaterEvent, start_handed_over,
 };
 pub use verify::{Opened, TrustedKeys, open};

@@ -181,6 +181,14 @@ pub fn detect(at: &Surroundings) -> InstallKind {
     }
 }
 
+/// The Windows setup program's log, kept in the downloads folder so an
+/// update that went wrong can be looked at afterwards.
+pub const INSTALL_LOG: &str = "install.log";
+
+/// What the Windows hand-over script found out: whether the setup ran, and
+/// whether the copy it was started for now runs the new version.
+pub const INSTALL_RESULT: &str = "install-result.json";
+
 /// A verified package, unpacked or copied to where installing it is quick.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Staged {
@@ -272,8 +280,9 @@ impl Installer for NoInstaller {
     fn clean_up(&self, _: &Version) {}
 }
 
-/// The installer for this copy of ShellRS. `bundle` is `cx.app_path()`.
-pub fn system_installer(bundle: Option<PathBuf>) -> Arc<dyn Installer> {
+/// The installer for this copy of ShellRS. `bundle` is `cx.app_path()`;
+/// `folder` is where downloads and the Windows install log live.
+pub fn system_installer(bundle: Option<PathBuf>, folder: PathBuf) -> Arc<dyn Installer> {
     let exe = std::env::current_exe().unwrap_or_default();
     let appimage = std::env::var_os("APPIMAGE").map(PathBuf::from);
     let kind = detect(&Surroundings {
@@ -293,7 +302,7 @@ pub fn system_installer(bundle: Option<PathBuf>) -> Arc<dyn Installer> {
         )),
         #[cfg(windows)]
         InstallKind::WindowsSetup { exe } => {
-            Arc::new(super::install_windows::SetupInstaller::new(exe))
+            Arc::new(super::install_windows::SetupInstaller::new(exe, folder))
         }
         #[cfg(windows)]
         InstallKind::WindowsPortable { root } => {

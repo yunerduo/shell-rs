@@ -21,7 +21,9 @@ use serde::{Deserialize, Serialize};
 use super::build_info::{self, Channel};
 use super::error::UpdateError;
 use super::feed::{HttpFeed, UpdateFeed};
-use super::install::{Installer, Launch, Relaunch, Staged, Unsupported, system_installer};
+use super::install::{
+    INSTALL_RESULT, Installer, Launch, Relaunch, Staged, Unsupported, system_installer,
+};
 use super::manifest::{Offer, Release};
 use super::verify::{Opened, TrustedKeys, open, verify_file};
 use crate::i18n::t;
@@ -60,7 +62,7 @@ impl UpdateServices {
         let folder = crate::app::updates_dir();
         Self {
             feed: Arc::new(HttpFeed::system()),
-            installer: system_installer(bundle),
+            installer: system_installer(bundle, folder.clone()),
             keys: TrustedKeys::builtin(),
             release_build: Channel::of_this_build().is_some(),
             current: build_info::version(),
@@ -148,17 +150,29 @@ pub struct UpdateSnapshot {
     pub download_failures: u32,
 }
 
+/// Why installing did not finish, as far as the hand-over could tell.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UpdateFailure {
+    /// The setup program exited with this code.
+    InstallerFailed { exit_code: i32 },
+    /// The setup reported success, but the copy it was started for is
+    /// still the old version: it installed somewhere else.
+    InstalledElsewhere,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UpdaterEvent {
     /// The phase or the version on offer changed. Download progress alone
     /// does not count: the window does not redraw for every chunk.
     Changed,
     /// This start follows an update. `completed` is false when ShellRS is
-    /// still the version it was before.
+    /// still the version it was before; `failure` says why, when the
+    /// hand-over left an answer.
     Updated {
         from: Version,
         to: Version,
         completed: bool,
+        failure: Option<UpdateFailure>,
     },
 }
 
@@ -424,6 +438,8 @@ impl Updater {
             to: staged.version.clone(),
         };
         let note_file = services.folder.join(APPLIED);
+        // A result left by an earlier attempt must not describe this one.
+        let _ = fs::remove_file(services.folder.join(INSTALL_RESULT));
         let _ = serde_json::to_vec(&note)
             .ok()
             .map(|bytes| fs::write(&note_file, bytes));
@@ -465,6 +481,9 @@ impl Updater {
         let Some(services) = &self.services else {
             return;
         };
+        // Read the hand-over's answer even when there is no note: a stale
+        // answer must not describe a later update.
+        let failure = install_failure(&services.folder);
         let file = services.folder.join(APPLIED);
         let Ok(bytes) = fs::read(&file) else {
             return;
@@ -476,6 +495,7 @@ impl Updater {
                 from: note.from,
                 to: note.to,
                 completed,
+                failure: if completed { None } else { failure },
             });
         }
     }
@@ -685,6 +705,31 @@ const APPLIED: &str = "applied.json";
 struct Applied {
     from: Version,
     to: Version,
+}
+
+/// What the hand-over script wrote after running the Windows setup.
+#[derive(Debug, Deserialize)]
+struct InstallResult {
+    #[serde(default)]
+    reason: String,
+    #[serde(default)]
+    exit_code: i32,
+}
+
+/// Read and remove the hand-over's answer; `None` when it left none or
+/// said the install went through.
+fn install_failure(folder: &Path) -> Option<UpdateFailure> {
+    let path = folder.join(INSTALL_RESULT);
+    let bytes = fs::read(&path).ok()?;
+    let _ = fs::remove_file(&path);
+    let result: InstallResult = serde_json::from_slice(&bytes).ok()?;
+    match result.reason.as_str() {
+        "installer_failed" => Some(UpdateFailure::InstallerFailed {
+            exit_code: result.exit_code,
+        }),
+        "installed_elsewhere" => Some(UpdateFailure::InstalledElsewhere),
+        _ => None,
+    }
 }
 
 /// Download the release's package (or reuse one already verified), check
