@@ -230,9 +230,9 @@ pub struct Workspace {
     /// in UI tests, so it never reaches the network unless a test hands it
     /// fakes.
     pub(super) updater: Entity<Updater>,
-    /// The version whose 强制更新 dialog is open. That dialog cannot be
-    /// dismissed, so this only remembers what was already opened.
-    pub(super) blocking_update: Option<String>,
+    /// The version whose update dialog was opened on its own. It is
+    /// announced once; closing the dialog is an answer.
+    pub(super) announced_update: Option<String>,
     /// 同步. Without services in UI tests, so it never reaches a folder
     /// unless a test hands it a store.
     pub(super) sync: Entity<SyncService>,
@@ -449,7 +449,6 @@ impl Workspace {
         let update_settings = settings.read(cx).settings().update.clone();
         let updater = cx.new(|cx| {
             let mut updater = Updater::new();
-            updater.set_automatic(update_settings.automatic, cx);
             updater.set_channel(update_settings.channel, cx);
             updater
         });
@@ -785,7 +784,7 @@ impl Workspace {
             cli_server: None,
             locked_links: Vec::new(),
             updater,
-            blocking_update: None,
+            announced_update: None,
             sync,
             analytics: None,
             local_terminal_provider,

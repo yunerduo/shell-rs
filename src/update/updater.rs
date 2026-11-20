@@ -26,17 +26,14 @@ use super::manifest::{Offer, Release};
 use super::verify::{Opened, TrustedKeys, open, verify_file};
 use crate::i18n::t;
 
-/// The first look, a while after start so it does not compete with the
-/// window coming up.
+/// When the one look of each start happens: a while after start so it does
+/// not compete with the window coming up.
 const FIRST_CHECK: Duration = Duration::from_secs(30);
-/// Between looks, plus up to [`JITTER`].
-const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
-const JITTER: Duration = Duration::from_secs(30 * 60);
 /// How often a running job's events are collected.
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// A restart that has not ended ShellRS after this long has failed.
 const RESTART_GRACE: Duration = Duration::from_secs(2);
-/// Failed automatic downloads before the title bar offers to retry.
+/// Failed downloads before the title bar offers to retry.
 pub(super) const FAILURES_BEFORE_BADGE: u32 = 2;
 
 /// What the updater works with. Production has the real ones
@@ -99,8 +96,9 @@ pub enum Phase {
     Idle,
     Checking,
     UpToDate,
-    /// A newer version, not downloaded: automatic updates are off, or this
-    /// copy cannot install it, or it needs the download page.
+    /// A newer version found and announced, waiting for the person to
+    /// download it; or one this copy cannot install, or that needs the
+    /// download page.
     Available,
     Downloading {
         done: u64,
@@ -146,8 +144,7 @@ pub struct UpdateSnapshot {
     pub manual: Option<ManualUpdate>,
     /// Why this copy cannot install updates itself, when it cannot.
     pub unsupported: Option<Unsupported>,
-    pub automatic: bool,
-    /// Automatic downloads that failed in a row.
+    /// Downloads that failed in a row.
     pub download_failures: u32,
 }
 
@@ -184,7 +181,6 @@ pub struct Updater {
     release: Option<Release>,
     manual: Option<ManualUpdate>,
     staged: Option<Staged>,
-    automatic: bool,
     channel: Channel,
     download_failures: u32,
     job: Option<Job>,
@@ -211,7 +207,6 @@ impl Updater {
             release: None,
             manual: None,
             staged: None,
-            automatic: true,
             channel: Channel::Stable,
             download_failures: 0,
             job: None,
@@ -235,8 +230,8 @@ impl Updater {
         self.changed(cx);
     }
 
-    /// Look on a schedule, tidy up after the previous update, report it,
-    /// and install a ready update when ShellRS quits. Production only.
+    /// Look once on this start, tidy up after the previous update, report
+    /// it, and install a ready update when ShellRS quits. Production only.
     pub fn start(&mut self, cx: &mut Context<Self>) {
         self.report_previous_update(cx);
         self._quit = Some(cx.on_app_quit(|this, cx| {
@@ -245,20 +240,10 @@ impl Updater {
         }));
         self._schedule = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(FIRST_CHECK).await;
-            if this.update(cx, |this, cx| this.clean_up(cx)).is_err() {
-                return;
-            }
-            loop {
-                let looked = this.update(cx, |this, cx| {
-                    this.check(cx);
-                });
-                if looked.is_err() {
-                    break;
-                }
-                let jitter = rand::rng().random_range(0..JITTER.as_secs());
-                let wait = CHECK_INTERVAL + Duration::from_secs(jitter);
-                cx.background_executor().timer(wait).await;
-            }
+            let _ = this.update(cx, |this, cx| {
+                this.clean_up(cx);
+                this.check(cx);
+            });
         }));
     }
 
@@ -272,7 +257,6 @@ impl Updater {
             release: self.release.clone(),
             manual: self.manual.clone(),
             unsupported: self.unsupported(),
-            automatic: self.automatic,
             download_failures: self.download_failures,
         }
     }
@@ -310,29 +294,9 @@ impl Updater {
         self.unsupported().is_none()
     }
 
-    /// 自动升级: look on a schedule and download what is found. Turning it
-    /// off stops a download in progress unless the version is 强制更新;
-    /// turning it on downloads a version already found.
-    pub fn set_automatic(&mut self, automatic: bool, cx: &mut Context<Self>) {
-        if self.automatic == automatic {
-            return;
-        }
-        self.automatic = automatic;
-        if !automatic
-            && matches!(self.phase, Phase::Downloading { .. })
-            && !self.snapshot().required()
-        {
-            self.cancel_job();
-            self.phase = Phase::Available;
-        } else if automatic && self.phase == Phase::Available {
-            self.download(cx);
-        }
-        self.changed(cx);
-    }
-
     /// 更新渠道. The other channel offers other versions, so what was found,
     /// downloaded or is downloading is dropped, and the new channel is looked
-    /// at right away; 自动升级 only decides whether what is found downloads.
+    /// at right away.
     pub fn set_channel(&mut self, channel: Channel, cx: &mut Context<Self>) {
         if self.channel == channel {
             return;
@@ -683,7 +647,9 @@ impl Updater {
                 self.release = Some(release);
                 self.manual = None;
                 self.phase = Phase::Available;
-                if (self.automatic || required) && self.installable() {
+                // 强制更新 is the only version that downloads without being
+                // asked: everything else waits for the person to choose.
+                if required && self.installable() {
                     self.download(cx);
                 }
             }

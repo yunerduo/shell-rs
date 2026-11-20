@@ -174,18 +174,15 @@ impl UpdateSnapshot {
     }
 
     /// The title bar button's label, when the title bar shows one: a
-    /// version ready to install, one waiting for the person to download it
-    /// (including every version found with 自动升级 switched off), one that
-    /// has to be downloaded by hand, or automatic downloads that keep
+    /// version ready to install, one waiting for the person to download it,
+    /// one that has to be downloaded by hand, or downloads that keep
     /// failing.
     pub fn badge(&self) -> Option<UpdateBadge> {
         let version = self.offered_version()?;
         let version = version.as_str();
         let (label, trouble) = match &self.phase {
             Phase::Ready => (t!("update.badge.ready", version = version), false),
-            Phase::Available if self.needs_download_page() || !self.automatic => {
-                (t!("update.badge.available", version = version), false)
-            }
+            Phase::Available => (t!("update.badge.available", version = version), false),
             Phase::Failed {
                 stage: Stage::Download,
                 ..
@@ -316,7 +313,6 @@ mod tests {
             }),
             manual: None,
             unsupported: None,
-            automatic: true,
             download_failures: 0,
         }
     }
@@ -486,7 +482,10 @@ mod tests {
             label(&snapshot(Phase::Ready)).as_deref(),
             Some("新版本 0.2.0 已就绪")
         );
-        assert_eq!(snapshot(Phase::Available).badge(), None);
+        assert_eq!(
+            label(&snapshot(Phase::Available)).as_deref(),
+            Some("新版本 0.2.0 可用")
+        );
         assert_eq!(
             snapshot(Phase::Downloading { done: 1, total: 2 }).badge(),
             None

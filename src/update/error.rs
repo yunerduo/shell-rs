@@ -34,7 +34,7 @@ pub enum UpdateError {
     Disk(String),
     /// Putting the new version in place failed.
     Install(String),
-    /// Stopped on purpose: a newer check, or automatic updates turned off.
+    /// Stopped on purpose: a newer check replaced this one.
     Cancelled,
 }
 

@@ -14,7 +14,7 @@ use crate::host::ConnectionState;
 use crate::i18n::t;
 use crate::terminal::TerminalLifecycle;
 use crate::update::build_info::{WEBSITE, changelog_page};
-use crate::update::{RestartImpact, UpdaterEvent, open_update_dialog};
+use crate::update::{Phase, RestartImpact, UpdaterEvent, open_update_dialog};
 
 use super::workspace_view::Workspace;
 
@@ -65,18 +65,22 @@ impl Workspace {
         );
     }
 
-    /// 强制更新: the dialog opens on its own and cannot be dismissed, so a
-    /// machine that is blocked does not have to find the title bar first.
-    fn show_required_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// A version just found opens the dialog once, saying what changed and
+    /// leaving the download to the person; 强制更新 opens it too, and cannot
+    /// be dismissed. Once opened, the same version is never announced again
+    /// — closing the dialog is an answer.
+    fn announce_found_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let snapshot = self.updater.read(cx).snapshot();
-        if !snapshot.blocking() {
+        if !matches!(snapshot.phase, Phase::Available) && !snapshot.blocking() {
             return;
         }
-        let version = snapshot.offered_version();
-        if version.is_none() || version == self.blocking_update {
+        let Some(version) = snapshot.offered_version() else {
+            return;
+        };
+        if self.announced_update.as_deref() == Some(version.as_str()) {
             return;
         }
-        self.blocking_update = version;
+        self.announced_update = Some(version);
         self.open_update(window, cx);
     }
 
@@ -129,7 +133,7 @@ impl Workspace {
         match event {
             UpdaterEvent::Changed => {
                 cx.notify();
-                self.show_required_update(window, cx);
+                self.announce_found_update(window, cx);
             }
             UpdaterEvent::Updated {
                 to,
@@ -148,11 +152,10 @@ impl Workspace {
         }
     }
 
-    /// 自动升级 and 更新渠道, from the settings.
+    /// 更新渠道, from the settings.
     pub(super) fn sync_updater(&self, cx: &mut App) {
         let settings = self.settings().read(cx).settings().update.clone();
         self.updater.update(cx, |updater, cx| {
-            updater.set_automatic(settings.automatic, cx);
             updater.set_channel(settings.channel, cx);
         });
     }
