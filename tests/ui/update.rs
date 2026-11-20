@@ -818,3 +818,44 @@ async fn the_first_start_after_an_update_says_so(cx: &mut TestAppContext) {
     .await;
     assert!(!fixture.folder.path().join("applied.json").exists());
 }
+
+/// Writes the note the previous version leaves before installing, and the
+/// hand-over's answer, then starts the updater as a new start does.
+async fn start_after_failed_update(cx: &mut TestAppContext, result: &str) -> tempfile::TempDir {
+    let (handle, workspace) = open_workspace(cx);
+    let fixture = serve_updates(cx, &workspace, Ok(RUNNING_VERSION), installable());
+    let folder = fixture.folder.path().to_path_buf();
+    std::fs::write(
+        folder.join("applied.json"),
+        r#"{"from":"0.0.9","to":"0.1.0"}"#,
+    )
+    .unwrap();
+    std::fs::write(folder.join("install-result.json"), result).unwrap();
+    workspace.update(cx, |workspace, cx| {
+        workspace
+            .updater()
+            .update(cx, |updater, cx| updater.start(cx));
+    });
+    cx.wait_for(handle.into(), Duration::from_secs(2), |window, cx| {
+        window.notifications(cx).len() == 1
+    })
+    .await;
+    fixture.folder
+}
+
+#[gpui_kit::test]
+async fn a_setup_that_failed_is_reported_with_its_exit_code(cx: &mut TestAppContext) {
+    let folder =
+        start_after_failed_update(cx, r#"{"reason":"installer_failed","exit_code":5}"#).await;
+    // The answer was used and removed: it must not describe a later update.
+    assert!(!folder.path().join("install-result.json").exists());
+    assert!(!folder.path().join("applied.json").exists());
+}
+
+#[gpui_kit::test]
+async fn a_setup_that_installed_elsewhere_is_said_so(cx: &mut TestAppContext) {
+    let folder =
+        start_after_failed_update(cx, r#"{"reason":"installed_elsewhere","exit_code":0}"#).await;
+    assert!(!folder.path().join("install-result.json").exists());
+    assert!(!folder.path().join("applied.json").exists());
+}
