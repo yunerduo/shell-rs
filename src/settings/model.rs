@@ -527,9 +527,6 @@ pub struct SyncSettings {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UpdateSettings {
-    /// 自动升级: look for a newer ShellRS in the background and download
-    /// it. On unless the user turns it off.
-    pub automatic: bool,
     /// 更新渠道. A release build starts on the channel it was built for.
     pub channel: Channel,
 }
@@ -537,7 +534,6 @@ pub struct UpdateSettings {
 impl Default for UpdateSettings {
     fn default() -> Self {
         Self {
-            automatic: true,
             channel: Channel::of_this_build().unwrap_or(Channel::Stable),
         }
     }
@@ -1292,17 +1288,6 @@ mod tests {
             TerminalCursorStyle::Underline
         );
         assert!(!settings.terminal_interaction.cursor_blinking);
-    }
-
-    #[test]
-    fn automatic_updates_are_on_unless_the_file_says_otherwise() {
-        let settings: AppSettings = serde_json::from_str("{}").unwrap();
-        assert!(settings.update.automatic);
-        let settings: AppSettings = serde_json::from_str(r#"{"update":{}}"#).unwrap();
-        assert!(settings.update.automatic);
-        let settings: AppSettings =
-            serde_json::from_str(r#"{"update":{"automatic":false}}"#).unwrap();
-        assert!(!settings.update.automatic);
     }
 
     #[test]

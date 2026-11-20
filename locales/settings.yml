@@ -561,12 +561,6 @@ settings.about.channel:
 settings.about.channel_description:
   zh-CN: 稳定版适合日常使用，Beta 可提前接收测试版本。
   en: Stable is for everyday use. Beta gets test versions early.
-settings.about.automatic:
-  zh-CN: 自动升级
-  en: Automatic updates
-settings.about.automatic_description:
-  zh-CN: 始终检查更新。打开时，检测到新版本会在后台下载，下载完成后点击「重启并安装」完成更新；关闭后只提示新版本，由你决定何时下载。
-  en: Updates are always checked. When this is on, a new version downloads by itself; once it’s ready, click Restart to update. When it’s off, a new version is only announced and you decide when to download it.
 settings.about.privacy:
   zh-CN: 隐私
   en: Privacy

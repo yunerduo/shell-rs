@@ -268,7 +268,6 @@ pub struct Snapshot {
     pub ui_follows_theme: bool,
     pub highlight: bool,
     pub external_cli: bool,
-    pub auto_update: bool,
     /// `stable` or `beta`.
     pub update_channel: &'static str,
     /// Whether any keyboard shortcut was changed.
@@ -297,7 +296,6 @@ impl Snapshot {
             ("ui_follows_theme", switch(self.ui_follows_theme)),
             ("highlight", switch(self.highlight)),
             ("external_cli", switch(self.external_cli)),
-            ("auto_update", switch(self.auto_update)),
             ("update_channel", self.update_channel),
             (
                 "custom_shortcuts",

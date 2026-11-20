@@ -1177,11 +1177,10 @@ fn external_cli_groups(panel: &SettingsPanel, cx: &App) -> Vec<SettingGroup> {
     ]
 }
 
-/// 关于: 应用更新, as three rows: the version with where updating stands,
-/// the channel, and 自动升级; then 隐私, whether usage statistics are sent.
+/// 关于: 应用更新, as two rows: the version with where updating stands and
+/// the channel; then 隐私, whether usage statistics are sent.
 fn about_groups(panel: &SettingsPanel, cx: &App) -> Vec<SettingGroup> {
     let snapshot = panel.updater.read(cx).snapshot();
-    let (reader, writer) = (panel.store.clone(), panel.store.clone());
     let (analytics_reader, analytics_writer) = (panel.store.clone(), panel.store.clone());
     vec![
         SettingGroup::new()
@@ -1197,19 +1196,6 @@ fn about_groups(panel: &SettingsPanel, cx: &App) -> Vec<SettingGroup> {
                     ),
                 )
                 .description(t!("settings.about.channel_description")),
-                SettingItem::new(
-                    t!("settings.about.automatic"),
-                    SettingField::switch(
-                        move |cx| reader.read(cx).settings().update.automatic,
-                        move |automatic, cx| {
-                            writer.update(cx, |store, cx| {
-                                store.update(|settings| settings.update.automatic = automatic, cx)
-                            });
-                        },
-                    )
-                    .default_value(true),
-                )
-                .description(t!("settings.about.automatic_description")),
             ]),
         SettingGroup::new()
             .title(t!("settings.about.privacy"))

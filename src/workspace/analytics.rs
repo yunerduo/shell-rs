@@ -198,7 +198,6 @@ impl Workspace {
             ui_follows_theme: settings.terminal_theme.app_follows,
             highlight: settings.terminal_highlight.enabled,
             external_cli: settings.external_cli.enabled,
-            auto_update: settings.update.automatic,
             update_channel: settings.update.channel.key(),
             custom_shortcuts: settings.shortcuts != ShortcutOverrides::default(),
             file_icons: settings.file_icon_style.key(),
