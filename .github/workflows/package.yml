@@ -190,7 +190,16 @@ jobs:
     steps:
       - name: Build dependencies
         run: |
-          apt-get update
+          # GitHub 的 runner 到 archive.ubuntu.com 时常超时，20.04 的容器里尤其
+          # 明显（0.1.23 第一次就卡在这里，apt 一个包都没装上）。Azure 的官方
+          # 镜像离 runner 近得多，连得上就换过去，连不上再按原来的源更新。
+          if (exec 3<>/dev/tcp/azure.archive.ubuntu.com/80) 2>/dev/null; then
+            sed -i \
+              -e 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
+              -e 's|http://security.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
+              /etc/apt/sources.list
+          fi
+          apt-get update -o Acquire::Retries=5 -o Acquire::http::Timeout=30
           apt-get install -y --no-install-recommends ca-certificates curl git file \
             build-essential cmake clang pkg-config libfontconfig-dev \
             libfreetype-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
