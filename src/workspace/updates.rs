@@ -14,7 +14,7 @@ use crate::host::ConnectionState;
 use crate::i18n::t;
 use crate::terminal::TerminalLifecycle;
 use crate::update::build_info::{WEBSITE, changelog_page};
-use crate::update::{Phase, RestartImpact, UpdaterEvent, open_update_dialog};
+use crate::update::{Phase, RestartImpact, UpdateFailure, UpdaterEvent, open_update_dialog};
 
 use super::workspace_view::Workspace;
 
@@ -142,6 +142,35 @@ impl Workspace {
             } => window.push_notification(
                 Notification::success(t!("workspace.update.done", version = to))
                     .title(t!("workspace.update.done_title")),
+                cx,
+            ),
+            UpdaterEvent::Updated {
+                from,
+                to,
+                failure: Some(UpdateFailure::InstallerFailed { exit_code }),
+                ..
+            } => window.push_notification(
+                Notification::error(t!(
+                    "workspace.update.installer_failed",
+                    code = exit_code,
+                    to = to,
+                    from = from
+                ))
+                .title(t!("workspace.update.failed_title")),
+                cx,
+            ),
+            UpdaterEvent::Updated {
+                from,
+                to,
+                failure: Some(UpdateFailure::InstalledElsewhere),
+                ..
+            } => window.push_notification(
+                Notification::error(t!(
+                    "workspace.update.installed_elsewhere",
+                    to = to,
+                    from = from
+                ))
+                .title(t!("workspace.update.failed_title")),
                 cx,
             ),
             UpdaterEvent::Updated { from, to, .. } => window.push_notification(
