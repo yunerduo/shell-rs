@@ -5,9 +5,10 @@
 ;
 ; The same program updates an installed copy: ShellAs downloads the next
 ; version's setup and runs it with /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
-; /SP- once it has exited, then starts itself again. It was renamed before
-; 0.1.20 shipped; from then on AppId must never change, or the update
-; installs a second copy beside the first.
+; /SP- /DIR=<the folder it runs from> /LOG=<install.log> once it has exited,
+; then starts itself again if the setup exits 0. It was renamed before 0.1.20
+; shipped; from then on AppId must never change, or the update installs a
+; second copy beside the first.
 
 #ifndef AppVersion
   #error Pass /DAppVersion=<version>
@@ -32,9 +33,11 @@ AppPublisherURL=https://github.com/yunerduo/shellas
 AppSupportURL=https://github.com/yunerduo/shellas
 AppUpdatesURL=https://github.com/yunerduo/shellas/releases
 DefaultDirName={autopf}\ShellAs
-; Never inherit the folder of a copy installed under another name; this setup
-; writes only its own.
-UsePreviousAppDir=no
+; An update always passes /DIR with the folder it runs from, so it lands
+; beside the copy being replaced even when several copies share this AppId.
+; For a setup run by hand, inheriting the registered folder updates that
+; copy instead of quietly adding a second one under the default folder.
+UsePreviousAppDir=yes
 DisableDirPage=auto
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
