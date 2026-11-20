@@ -191,7 +191,7 @@ The “Settings” button at the right end of the title bar, or ⌘, (Ctrl+, on 
   - Shortcuts in the SFTP file list and the image preview, and fixed keys such as Enter, the arrow keys, Tab and Esc, aren’t changed here.
 - **External CLI**: see the next section.
 - **General → Window**: “Remember window size” restores the last window size and whether it was maximized, and “Remember window position” puts the window back on the screen and in the place it last was. Both are on by default and take effect at the next launch. If that screen is gone, or the window would be mostly off screen, it opens in the middle of the screen; a window larger than the screen shrinks to fit. On a first launch (or with “Remember window size” off), if the screen has no room for the default size, say a 1920 × 1080 laptop at 150%, the window opens maximized and restores to a size that fits. Full screen isn’t remembered: the window comes back at its size from before full screen. The window’s size and position are recorded in `window.json` in the data folder as it moves. The widths you drag the sidebars to are kept in `settings.json` for the next launch; “Restore defaults” under “Sidebar widths” puts both back to their defaults (280 pixels on the left, 320 on the right), and so does the page’s reset button.
-- **About**: the “Updates” group, with the current version and checking for updates, the update channel and automatic updates (see “Download and updates”); “Send anonymous usage statistics” in the “Privacy” group, off by default (see “Privacy”); and “Website” in the “ShellAs” group, which opens the GitHub repository in your browser.
+- **About**: the “Updates” group, with the current version and checking for updates, and the update channel (see “Download and updates”); “Send anonymous usage statistics” in the “Privacy” group, off by default (see “Privacy”); and “Website” in the “ShellAs” group, which opens the GitHub repository in your browser.
 
 ## External CLI
 
@@ -582,13 +582,14 @@ Packages are on [GitHub Releases](https://github.com/yunerduo/shellas/releases):
 | Windows x64 portable | Zip; unzip it into any folder you can write to and run it, with its data in the `data` folder beside it (see “Windows portable” below) | Yes |
 | Linux x64 | AppImage | Yes |
 
-ShellAs checks for a new version 30 seconds after it starts, then every 6 hours. When there is one, it downloads and verifies it in the background, and then a green update button appears at the top right of the title bar. Click it: “What’s new” opens the release page on GitHub, and “Restart to update” switches to the new version and reopens. Restarting closes open connections and stops transfers (keeping their progress for resuming) and port forwards; the dialog lists exactly which.
+ShellAs checks for a new version once, 30 seconds after each start. When there is one, a dialog opens with the version number and what changed; whether to download it is your decision, and nothing is downloaded unless you ask. A button stays at the top right of the title bar meanwhile. Once downloaded and verified, that button becomes “Restart to update”, which switches to the new version and reopens. Restarting closes open connections and stops transfers (keeping their progress for resuming) and port forwards; the dialog lists exactly which.
 
-“Updates” in “Settings › About” has just three rows:
+A required update needs no click: it downloads by itself, ShellAs can’t be used until it’s installed, and its dialog cannot be closed.
 
-- **Current version**: below it, the current state (up to date, downloading, downloaded and so on); at the right, the version number and a button, normally “Check for updates”, which becomes “Restart to update…” once an update is downloaded. The build number and platform are in the version number’s tooltip.
+“Updates” in “Settings › About” has just two rows:
+
+- **Current version**: below it, the current state (up to date, downloading, downloaded and so on); at the right, the version number and a button, normally “Check for updates”, then “Download” when a new version was found, and “Restart to update…” once it is downloaded. “Check for updates” only checks and never starts a download. The build number and platform are in the version number’s tooltip.
 - **Update channel**: Stable is for everyday use; Beta gets test versions early, and stable releases too when they come out. After you switch, ShellAs checks the new channel right away.
-- **Automatic updates**: updates are always checked, at launch and every six hours. When this is on, a new version downloads by itself and the title bar says when it’s ready to install; when it’s off, a new version is only announced and you decide when to download it. A required update ignores this switch: it still downloads by itself, and ShellAs can’t be used until it’s installed.
 
 - **Verification**: updates come from the public repository on GitHub over HTTPS only. The package is checked against the SHA-256 digest GitHub publishes for it; a package without a digest, or one that doesn’t match, is never installed. On macOS, the new version’s developer signature is checked as well.
 - **Privacy**: checking for updates sends only ShellAs’s version number, the operating system and the CPU architecture, nothing that could identify this computer or you. For anonymous usage statistics, see “Privacy”.
@@ -602,7 +603,7 @@ The portable copy is a zip (`ShellAs-<version>-windows-x86_64-portable.zip`) hol
 - Unzip first: a `shellas.exe` opened inside the zip has no `data` beside it, so it runs as an ordinary copy and keeps its data in `%APPDATA%\shellas`.
 - Keep it in a folder you can write to, such as `D:\Tools\ShellAs` or a USB stick, not in `Program Files` and not in a folder OneDrive or the like syncs. When the folder can’t be written to, it can’t update itself, and “Open download page” gives the portable zip.
 - Don’t rename `shellas.exe` (updates replace the file by that name) and don’t delete `data` (without it, the copy is no longer portable). A `data` folder in the installed copy’s folder doesn’t make that copy portable (uninstalling deletes the whole folder).
-- Automatic updates download and verify in the background as for the installed copy; “Restart to update”, or quitting, swaps `shellas.exe` and `shellas-cli.exe` and leaves `data` and `bin` alone. The old files are renamed to hidden names like `.shellas.exe.old-…` and deleted once the new version has started.
+- Updates download and verify as for the installed copy; “Restart to update”, or quitting, swaps `shellas.exe` and `shellas-cli.exe` and leaves `data` and `bin` alone. The old files are renamed to hidden names like `.shellas.exe.old-…` and deleted once the new version has started.
 - Use one portable folder from one Windows account at a time. It can run beside the installed copy, each with its own data and its own taskbar button.
 - **Moving over from the installed copy**: quit both, then copy the files in `%APPDATA%\shellas` into the portable copy’s `data`. Pasted and generated private keys switch to the copies in `data\keys` by themselves; on the same computer, saved passwords keep working.
 - **What stays on the computer**:
