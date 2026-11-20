@@ -340,15 +340,6 @@ fn update_status(cx: &mut TestAppContext, handle: WindowHandle<Root>) -> String 
     })
 }
 
-fn set_automatic_updates(cx: &mut TestAppContext, workspace: &Entity<Workspace>, on: bool) {
-    workspace.update(cx, |workspace, cx| {
-        workspace.settings().update(cx, |settings, cx| {
-            settings.update(|settings| settings.update.automatic = on, cx)
-        });
-    });
-    cx.run_until_parked();
-}
-
 /// Write 更新渠道 the way its dropdown does (menus are not driven here, see
 /// `appearance_dropdown`).
 fn set_update_channel(cx: &mut TestAppContext, workspace: &Entity<Workspace>, channel: Channel) {
@@ -402,18 +393,28 @@ async fn checking_by_hand_says_when_shellrs_is_up_to_date(cx: &mut TestAppContex
 }
 
 #[gpui_kit::test]
-async fn a_found_update_downloads_by_itself_and_the_title_bar_offers_it(cx: &mut TestAppContext) {
+async fn a_found_update_is_announced_and_waits_for_download(cx: &mut TestAppContext) {
     let (handle, workspace) = open_workspace(cx);
     let fixture = serve_updates(cx, &workspace, Ok("0.2.0"), installable());
-    open_about_settings(cx, handle);
-
     in_frame(cx, handle, |window, cx| {
-        window.click("check-for-updates", cx)
+        window.dispatch_action(Box::new(CheckForUpdates), cx)
     });
+
+    // Found: the dialog opens itself with what changed, and nothing is
+    // downloaded until the person asks for it.
     cx.wait_for(handle.into(), Duration::from_secs(3), |window, _| {
-        window
-            .try_find("update-available")
-            .is_some_and(|button| button.label() == Some("新版本 0.2.0 已就绪"))
+        window.try_find("update-dialog").is_some() && window.try_find("update-notes").is_some()
+    })
+    .await;
+    assert_eq!(fixture.downloads(), 0);
+    in_frame(cx, handle, |window, _| {
+        assert!(window.try_find("download-update").is_some());
+        assert!(window.try_find("restart-to-update").is_none());
+    });
+
+    in_frame(cx, handle, |window, cx| window.click("download-update", cx));
+    cx.wait_for(handle.into(), Duration::from_secs(3), |window, _| {
+        window.try_find("restart-to-update").is_some()
     })
     .await;
     assert_eq!(fixture.downloads(), 1);
@@ -421,22 +422,11 @@ async fn a_found_update_downloads_by_itself_and_the_title_bar_offers_it(cx: &mut
         *fixture.installer.staged.lock().unwrap(),
         [Version::new(0, 2, 0)]
     );
-    assert_eq!(
-        update_status(cx, handle),
-        "新版本 0.2.0 已下载，重启 ShellAs 即可完成更新。"
-    );
-    in_frame(cx, handle, |window, _| {
-        // One button: restarting takes the place of 检查更新.
-        assert!(window.try_find("show-update").is_some());
-        assert!(window.try_find("check-for-updates").is_none());
-        assert!(window.try_find("download-update").is_none());
-    });
 }
 
 #[gpui_kit::test]
-async fn with_automatic_updates_off_a_found_update_waits_for_download(cx: &mut TestAppContext) {
+async fn checking_from_the_settings_page_only_checks(cx: &mut TestAppContext) {
     let (handle, workspace) = open_workspace(cx);
-    set_automatic_updates(cx, &workspace, false);
     let fixture = serve_updates(cx, &workspace, Ok("0.2.0"), installable());
     open_about_settings(cx, handle);
 
@@ -447,15 +437,11 @@ async fn with_automatic_updates_off_a_found_update_waits_for_download(cx: &mut T
     assert_eq!(fixture.downloads(), 0);
     // Found but not downloaded: the title bar says so until it is.
     in_frame(cx, handle, |window, _| {
-        assert!(window.try_find("update-available").is_some());
+        assert_eq!(
+            window.find("update-available").label(),
+            Some("新版本 0.2.0 可用")
+        );
     });
-
-    in_frame(cx, handle, |window, cx| window.click("download-update", cx));
-    wait_for_update_status(cx, handle, |status| {
-        status.starts_with("新版本 0.2.0 已下载")
-    })
-    .await;
-    assert_eq!(fixture.downloads(), 1);
 }
 
 #[gpui_kit::test]
@@ -468,16 +454,18 @@ async fn the_update_dialog_links_the_changelog_and_restarts_into_the_new_version
         window.dispatch_action(Box::new(CheckForUpdates), cx)
     });
     cx.wait_for(handle.into(), Duration::from_secs(3), |window, _| {
-        window.try_find("update-available").is_some()
+        window.try_find("update-dialog").is_some()
     })
     .await;
 
-    in_frame(cx, handle, |window, cx| {
-        window.click("update-available", cx)
-    });
+    // Downloading is the person's decision, made here.
+    in_frame(cx, handle, |window, cx| window.click("download-update", cx));
+    cx.wait_for(handle.into(), Duration::from_secs(3), |window, _| {
+        window.try_find("restart-to-update").is_some()
+    })
+    .await;
     in_frame(cx, handle, |window, _| {
         assert!(window.try_find("update-ready").is_some());
-        assert!(window.try_find("restart-to-update").is_some());
         // The version's notes are in the dialog, not only on the website.
         assert!(window.try_find("update-notes").is_some());
         assert!(window.try_find("update-required").is_none());
@@ -536,12 +524,10 @@ async fn the_update_dialog_says_what_restarting_interrupts(cx: &mut TestAppConte
         window.dispatch_action(Box::new(CheckForUpdates), cx)
     });
     cx.wait_for(handle.into(), Duration::from_secs(3), |window, _| {
-        window.try_find("update-available").is_some()
+        window.try_find("download-update").is_some()
     })
     .await;
-    in_frame(cx, handle, |window, cx| {
-        window.click("update-available", cx)
-    });
+    in_frame(cx, handle, |window, cx| window.click("download-update", cx));
     // web-01 and staging-api start out connected, each with a terminal.
     cx.wait_for(handle.into(), Duration::from_secs(3), |window, _| {
         window
@@ -574,10 +560,17 @@ async fn a_ready_update_is_installed_on_quit_once(cx: &mut TestAppContext) {
         });
     });
     cx.wait_for(handle.into(), Duration::from_secs(3), |window, _| {
-        window.try_find("update-available").is_some()
+        window.try_find("download-update").is_some()
     })
     .await;
     assert!(fixture.installer.applied().is_empty());
+
+    // A ready update comes from the person asking for the download.
+    in_frame(cx, handle, |window, cx| window.click("download-update", cx));
+    cx.wait_for(handle.into(), Duration::from_secs(3), |window, _| {
+        window.try_find("restart-to-update").is_some()
+    })
+    .await;
 
     cx.update(|cx| cx.shutdown());
     assert_eq!(fixture.installer.applied(), [false]);
@@ -604,8 +597,19 @@ async fn an_unsupported_install_offers_the_download_page(cx: &mut TestAppContext
     .await;
     assert_eq!(fixture.downloads(), 0);
     in_frame(cx, handle, |window, _| {
-        assert!(window.try_find("open-download-page").is_some());
-        assert!(window.try_find("download-update").is_none());
+        // The dialog that announced it only offers the download page.
+        assert!(
+            window
+                .within("dialog")
+                .try_find("open-download-page")
+                .is_some()
+        );
+        assert!(
+            window
+                .within("dialog")
+                .try_find("download-update")
+                .is_none()
+        );
         assert_eq!(
             window.find("update-available").label(),
             Some("新版本 0.2.0 可用")
@@ -628,6 +632,13 @@ async fn a_portable_copy_downloads_the_portable_zip(cx: &mut TestAppContext) {
     open_about_settings(cx, handle);
     in_frame(cx, handle, |window, cx| {
         window.click("check-for-updates", cx)
+    });
+    cx.wait_for(handle.into(), Duration::from_secs(3), |window, _| {
+        window.try_find("update-notes").is_some()
+    })
+    .await;
+    in_frame(cx, handle, |window, cx| {
+        window.within("dialog").click("download-update", cx)
     });
     cx.wait_for(handle.into(), Duration::from_secs(3), |_, _| {
         !fixture.downloaded().is_empty()
@@ -658,7 +669,7 @@ async fn a_read_only_portable_copy_links_the_portable_zip(cx: &mut TestAppContex
     .await;
     assert_eq!(fixture.downloads(), 0);
     in_frame(cx, handle, |window, cx| {
-        window.click("open-download-page", cx)
+        window.within("dialog").click("open-download-page", cx)
     });
     assert_eq!(cx.opened_url().as_deref(), Some(PORTABLE_INSTALLER));
     // Still counted as portable.
@@ -686,10 +697,10 @@ async fn a_failed_check_says_why_on_the_about_page(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-async fn automatic_downloads_off_still_checks_and_announces(cx: &mut TestAppContext) {
+async fn a_launch_checks_once_and_announces(cx: &mut TestAppContext) {
     let (handle, workspace) = open_workspace(cx);
-    set_automatic_updates(cx, &workspace, false);
     let fixture = serve_updates(cx, &workspace, Ok("0.2.0"), installable());
+    open_about_settings(cx, handle);
     workspace.update(cx, |workspace, cx| {
         workspace
             .updater()
@@ -698,33 +709,23 @@ async fn automatic_downloads_off_still_checks_and_announces(cx: &mut TestAppCont
     cx.run_until_parked();
     assert_eq!(fixture.fetches(), 0, "nothing before the first wait");
 
-    // The schedule checks whether or not automatic downloads are on.
+    // One look per start, without anyone opening the settings.
     cx.executor().advance_clock(Duration::from_secs(31));
-    open_about_settings(cx, handle);
     wait_for_update_status(cx, handle, |status| status == "发现新版本 0.2.0。").await;
     assert_eq!(fixture.fetches(), 1);
     assert_eq!(fixture.downloads(), 0, "nothing downloads by itself");
-
-    // What was found is announced in the title bar, ready to act on.
     in_frame(cx, handle, |window, _| {
+        assert!(window.try_find("update-dialog").is_some());
+        assert!(window.try_find("update-notes").is_some());
         assert!(window.try_find("update-available").is_some());
     });
 
-    // Six hours later it looks again, still without downloading.
+    // The look is not repeated later in the same run.
     cx.executor()
         .advance_clock(Duration::from_secs(7 * 60 * 60));
-    cx.wait_for(handle.into(), Duration::from_secs(3), |_, _| {
-        fixture.fetches() == 2
-    })
-    .await;
+    cx.run_until_parked();
+    assert_eq!(fixture.fetches(), 1);
     assert_eq!(fixture.downloads(), 0);
-
-    // Switching automatic downloads on takes the version already found.
-    set_automatic_updates(cx, &workspace, true);
-    cx.wait_for(handle.into(), Duration::from_secs(3), |_, _| {
-        fixture.downloads() == 1
-    })
-    .await;
 }
 
 #[gpui_kit::test]
@@ -739,19 +740,17 @@ async fn switching_the_update_channel_looks_at_that_channel(cx: &mut TestAppCont
     });
     wait_for_update_status(cx, handle, |status| status == "当前已是最新版本。").await;
 
-    // With 自动升级 on, the other channel is looked at right away.
+    // The other channel is looked at right away, and what it offers waits
+    // for the person to download it.
     set_update_channel(cx, &workspace, Channel::Beta);
-    wait_for_update_status(cx, handle, |status| {
-        status == "新版本 0.2.0-beta.1 已下载，重启 ShellAs 即可完成更新。"
-    })
-    .await;
+    wait_for_update_status(cx, handle, |status| status == "发现新版本 0.2.0-beta.1。").await;
     assert_eq!(fixture.channels(), [Channel::Stable, Channel::Beta]);
     assert_eq!(update_channel_label(cx, handle).as_deref(), Some("Beta"));
     in_frame(cx, handle, |window, _| {
         assert!(window.try_find("update-available").is_some());
     });
 
-    // Back on stable, the beta downloaded is no longer offered.
+    // Back on stable, the beta version is no longer offered.
     set_update_channel(cx, &workspace, Channel::Stable);
     wait_for_update_status(cx, handle, |status| status == "当前已是最新版本。").await;
     assert_eq!(
