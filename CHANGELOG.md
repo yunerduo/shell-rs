@@ -4,6 +4,17 @@
 
 One section per version, titled `## [version]`, optionally followed by a date. Each section is written in English here and in Chinese in [CHANGELOG.zh.md](CHANGELOG.zh.md), in the same change. The release workflow (`.github/workflows/release.yml`) takes the section with the tag’s version, as it is, for the GitHub release. The website’s changelog shows this file in English and Japanese and CHANGELOG.zh.md in Chinese (Agree ShellAs’s update dialog opens it with What’s new). Written in Markdown, for users.
 
+## [0.1.24]
+
+### Added
+
+- ShellAs checks for updates once, 30 seconds after each start; a new version opens a dialog with its version and what changed, and you decide whether to download it — except required updates, which still download and block until installed.
+
+### Fixed
+
+- A Windows copy installed in a folder of your own (such as `D:\SOFT\ShellAs`) now updates in place instead of adding a second copy under the default folder.
+- When an update fails, the message now says whether the download failed, the installer returned an error (with its exit code), or the new version went to another folder.
+
 ## [0.1.23]
 
 ### Added
